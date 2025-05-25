@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use axum::{
     Router,
     extract::{
@@ -9,6 +7,13 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use std::net::SocketAddr;
+use uuid::Uuid;
+
+struct Player {
+    id: Uuid,
+    username: Option<String>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -35,9 +40,16 @@ async fn ws_handler(
 }
 
 async fn handle_socket(mut socket: WebSocket) {
+    let player = Player {
+        id: Uuid::new_v4(),
+        username: None,
+    };
+
+    println!("New player join with ID: {}", player.id);
+
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Text(text) = msg {
-            println!("Received message: {}", text);
+            println!("{} says: {}", player.id, text);
             let _ = socket
                 .send(Message::Text(format!("Echo: {}", text).into()))
                 .await;
