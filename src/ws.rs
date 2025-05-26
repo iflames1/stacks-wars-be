@@ -29,6 +29,13 @@ pub fn load_word_list() -> HashSet<String> {
     serde_json::from_str(json).expect("Failed to parse words.json")
 }
 
+fn next_turn(players: &[Player], current_id: Uuid) -> Option<Uuid> {
+    players.iter().position(|p| p.id == current_id).map(|i| {
+        let next_index = (i + 1) % players.len(); // wrap around
+        players[next_index].id
+    })
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -56,6 +63,8 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
         let new_room = GameRoom {
             id: room_id,
             players: vec![player.clone()],
+            current_turn_id: player.id,
+            used_words: HashSet::new(),
         };
         locked_rooms.insert(room_id, new_room);
 
@@ -112,9 +121,35 @@ async fn handle_incoming_messages(
 
             let cleaned_word = text.trim().to_lowercase();
 
-            if !words.contains(&cleaned_word) {
-                println!("invalid word from {}: {}", player.id, text);
-                continue;
+            {
+                let mut rooms_guard = rooms.lock().await;
+                let room = rooms_guard.get_mut(&room_id).unwrap();
+
+                // check turn
+                if player.id != room.current_turn_id {
+                    println!("Not {}'s turn", player.id);
+                    continue;
+                }
+
+                // check if word is valid
+                if !words.contains(&cleaned_word) {
+                    println!("invalid word from {}: {}", player.id, cleaned_word);
+                    continue;
+                }
+
+                // check if word is used
+                if room.used_words.contains(&cleaned_word) {
+                    println!("This word have been used: {}", cleaned_word);
+                    continue;
+                }
+
+                // add to used words
+                room.used_words.insert(cleaned_word.clone());
+
+                // store next player id
+                if let Some(next_id) = next_turn(&room.players, player.id) {
+                    room.current_turn_id = next_id;
+                }
             }
 
             broadcast_to_room(player, &cleaned_word, room_id, &rooms, connections).await;
