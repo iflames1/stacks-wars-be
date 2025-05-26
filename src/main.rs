@@ -1,24 +1,21 @@
 mod models;
+mod state;
 mod ws;
 
-use axum::{Router, routing::get};
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::net::SocketAddr;
 
-use models::Rooms;
+use state::{AppState, Connections, Rooms};
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let rooms: Rooms = Arc::new(Mutex::new(HashMap::new()));
+    let rooms: Rooms = Default::default();
+    let connections: Connections = Default::default();
 
-    let app = Router::new()
-        .route("/ws", get(ws::ws_handler))
-        .with_state(rooms.clone());
+    let state = AppState { rooms, connections };
+
+    let app = ws::create_app(state);
 
     let addr = "127.0.0.1:3001";
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
