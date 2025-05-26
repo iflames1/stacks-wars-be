@@ -8,8 +8,8 @@ use axum::{
     routing::get,
 };
 use futures::{SinkExt, StreamExt, stream::SplitSink};
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
-use tokio::sync::Mutex;
+use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, time::timeout};
 
 use crate::{models::GameRoom, state::AppState};
 use crate::{
@@ -115,11 +115,13 @@ async fn handle_incoming_messages(
     connections: &Connections,
     words: Arc<HashSet<String>>,
 ) {
-    while let Some(Ok(msg)) = receiver.next().await {
+    while let Ok(Some(Ok(msg))) = timeout(Duration::from_secs(15), receiver.next()).await {
         if let Message::Text(text) = msg {
             println!("Received from {}: {}", player.id, text);
 
             let cleaned_word = text.trim().to_lowercase();
+
+            let advance_turn: bool;
 
             {
                 let mut rooms_guard = rooms.lock().await;
@@ -150,9 +152,38 @@ async fn handle_incoming_messages(
                 if let Some(next_id) = next_turn(&room.players, player.id) {
                     room.current_turn_id = next_id;
                 }
+
+                advance_turn = true;
             }
 
-            broadcast_to_room(player, &cleaned_word, room_id, &rooms, connections).await;
+            if advance_turn {
+                broadcast_to_room(player, &cleaned_word, room_id, &rooms, connections).await;
+            }
+        }
+    }
+
+    {
+        let mut rooms_guard = rooms.lock().await;
+        if let Some(room) = rooms_guard.get_mut(&room_id) {
+            let was_current_turn = room.current_turn_id == player.id;
+
+            println!("player {} timed out", player.id);
+
+            // Remove the timed-out
+            room.players.retain(|p| p.id != player.id);
+
+            if room.players.is_empty() {
+                println!("Room {} is empty", room.id);
+                return;
+            }
+
+            if was_current_turn {
+                if let Some(next_id) = next_turn(&room.players, player.id) {
+                    room.current_turn_id = next_id;
+                } else {
+                    println!("No players left to take the turn in room {}", room.id);
+                }
+            }
         }
     }
 }
