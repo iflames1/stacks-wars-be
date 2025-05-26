@@ -7,8 +7,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use futures::{SinkExt, StreamExt};
-use std::{net::SocketAddr, sync::Arc};
+use futures::{SinkExt, StreamExt, stream::SplitSink};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{models::GameRoom, state::AppState};
@@ -24,6 +24,11 @@ pub fn create_app(state: AppState) -> Router {
         .with_state(state)
 }
 
+pub fn load_word_list() -> HashSet<String> {
+    let json = include_str!("assets/words.json");
+    serde_json::from_str(json).expect("Failed to parse words.json")
+}
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -34,11 +39,102 @@ pub async fn ws_handler(
 
     println!("New WebSocket connection from {}", addr);
 
-    ws.on_upgrade(move |socket| handle_socket(socket, rooms, connections))
+    let words = Arc::new(load_word_list());
+
+    ws.on_upgrade(move |socket| handle_socket(socket, rooms, connections, words))
 }
 
-async fn handle_socket(stream: WebSocket, rooms: Rooms, connections: Connections) {
-    let (sender, mut receiver) = stream.split();
+async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
+    let mut locked_rooms = rooms.lock().await;
+
+    if let Some((id, room)) = locked_rooms.iter_mut().find(|(_, r)| r.players.len() == 1) {
+        println!("Adding player {} to existing room {}", player.id, room.id);
+        room.players.push(player.clone());
+        *id
+    } else {
+        let room_id = Uuid::new_v4();
+        let new_room = GameRoom {
+            id: room_id,
+            players: vec![player.clone()],
+        };
+        locked_rooms.insert(room_id, new_room);
+
+        println!("Created new room {} for player {}", room_id, player.id);
+        room_id
+    }
+}
+
+async fn broadcast_to_room(
+    sender_player: &Player,
+    message: &str,
+    room_id: Uuid,
+    rooms: &Rooms,
+    connections: &Connections,
+) {
+    let rooms_guard = rooms.lock().await;
+    if let Some(room) = rooms_guard.get(&room_id) {
+        let connection_guard = connections.lock().await;
+        for p in &room.players {
+            if p.id != sender_player.id {
+                if let Some(sender_arc) = connection_guard.get(&p.id) {
+                    let mut sender = sender_arc.lock().await;
+                    let _ = sender
+                        .send(Message::Text(
+                            format!("{}: {}", sender_player.id, message).into(),
+                        ))
+                        .await;
+                }
+            }
+        }
+    }
+}
+
+async fn store_connection(
+    player: &Player,
+    sender: SplitSink<WebSocket, Message>,
+    connections: &Connections,
+) {
+    let mut conns = connections.lock().await;
+    conns.insert(player.id, Arc::new(Mutex::new(sender)));
+}
+
+async fn handle_incoming_messages(
+    player: &Player,
+    room_id: Uuid,
+    mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
+    rooms: Rooms,
+    connections: &Connections,
+    words: Arc<HashSet<String>>,
+) {
+    while let Some(Ok(msg)) = receiver.next().await {
+        if let Message::Text(text) = msg {
+            println!("Received from {}: {}", player.id, text);
+
+            let cleaned_word = text.trim().to_lowercase();
+
+            if !words.contains(&cleaned_word) {
+                println!("invalid word from {}: {}", player.id, text);
+                continue;
+            }
+
+            broadcast_to_room(player, &cleaned_word, room_id, &rooms, connections).await;
+        }
+    }
+}
+
+async fn remove_connection(player: &Player, connections: &Connections) {
+    let mut conns = connections.lock().await;
+    conns.remove(&player.id);
+    println!("Player {} disconnected", player.id);
+}
+
+async fn handle_socket(
+    stream: WebSocket,
+    rooms: Rooms,
+    connections: Connections,
+    words: Arc<HashSet<String>>,
+) {
+    let (sender, receiver) = stream.split();
 
     let player = Player {
         id: Uuid::new_v4(),
@@ -46,72 +142,12 @@ async fn handle_socket(stream: WebSocket, rooms: Rooms, connections: Connections
     };
 
     // Add player to a room
-    {
-        let mut locked_rooms = rooms.lock().await;
-
-        if let Some((_id, room)) = locked_rooms.iter_mut().find(|(_, r)| r.players.len() == 1) {
-            println!("Adding player {} to existing room {}", player.id, room.id);
-            room.players.push(player.clone());
-        } else {
-            let room_id = Uuid::new_v4();
-            let new_room = GameRoom {
-                id: room_id,
-                players: vec![player.clone()],
-            };
-            locked_rooms.insert(room_id, new_room);
-
-            println!("Created new room {} for player {}", room_id, player.id);
-        }
-    }
+    let room_id = setup_player_and_room(&player, &rooms).await;
 
     // Store sender (tx) for others to send to this player
-    {
-        let mut conns = connections.lock().await;
-        conns.insert(player.id, Arc::new(Mutex::new(sender)));
-    }
+    store_connection(&player, sender, &connections).await;
 
-    // Clone handles for the receive task
-    let connections_clone = connections.clone();
-    let rooms_clone = rooms.clone();
-    let player_id = player.id;
+    handle_incoming_messages(&player, room_id, receiver, rooms, &connections, words).await;
 
-    tokio::spawn(async move {
-        while let Some(Ok(msg)) = receiver.next().await {
-            if let Message::Text(text) = msg {
-                let room_id = {
-                    let rooms_guard = rooms_clone.lock().await;
-                    rooms_guard.iter().find_map(|(id, room)| {
-                        if room.players.iter().any(|p| p.id == player_id) {
-                            Some(*id)
-                        } else {
-                            None
-                        }
-                    })
-                };
-
-                if let Some(room_id) = room_id {
-                    let rooms_guard = rooms_clone.lock().await;
-                    let room = rooms_guard.get(&room_id).unwrap();
-
-                    let connections_guard = connections_clone.lock().await;
-
-                    for p in &room.players {
-                        if p.id != player_id {
-                            if let Some(sender_arc) = connections_guard.get(&p.id) {
-                                let mut sender = sender_arc.lock().await;
-                                let _ = sender
-                                    .send(Message::Text(format!("{}: {}", player_id, text).into()))
-                                    .await;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // On disconnect
-        let mut conns = connections.lock().await;
-        conns.remove(&player_id);
-        println!("Player {} disconnected", player_id);
-    });
+    remove_connection(&player, &connections).await;
 }
