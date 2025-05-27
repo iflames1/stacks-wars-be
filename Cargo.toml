@@ -1,5 +1,5 @@
 [package]
-name = "stacks-wars-be"
+name = "stacks_wars_be"
 version = "0.1.0"
 edition = "2024"
 
