@@ -17,4 +17,6 @@ pub struct GameRoom {
     pub used_words: HashSet<String>,
     pub rule_context: RuleContext,
     pub rule_index: usize,
+    pub game_over: bool,
+    pub rankings: Vec<(Uuid, usize)>,
 }

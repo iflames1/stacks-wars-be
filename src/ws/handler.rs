@@ -49,6 +49,8 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
+            game_over: false,
+            rankings: Vec::new(),
         };
         locked_rooms.insert(room_id, new_room);
 
