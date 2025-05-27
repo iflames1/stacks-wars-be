@@ -8,10 +8,11 @@ use axum::{
     routing::get,
 };
 use futures::{StreamExt, stream::SplitSink};
+use rand::{Rng, rng};
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::ws::game_loop::handle_incoming_messages;
+use crate::ws::{game_loop::handle_incoming_messages, rules::RuleContext};
 use crate::{models::GameRoom, state::AppState};
 use crate::{
     models::Player,
@@ -22,6 +23,11 @@ use uuid::Uuid;
 fn load_word_list() -> HashSet<String> {
     let json = include_str!("../assets/words.json");
     serde_json::from_str(json).expect("Failed to parse words.json")
+}
+
+pub fn generate_random_letter() -> char {
+    let letter = rng().random_range(0..26);
+    (b'a' + letter as u8) as char
 }
 
 async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
@@ -38,6 +44,11 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
             players: vec![player.clone()],
             current_turn_id: player.id,
             used_words: HashSet::new(),
+            rule_context: RuleContext {
+                min_word_length: 4,
+                random_letter: generate_random_letter(),
+            },
+            rule_index: 0,
         };
         locked_rooms.insert(room_id, new_room);
 

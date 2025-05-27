@@ -1,11 +1,12 @@
 [package]
-name = "stacks-wars-be"
+name = "stacks_wars_be"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 axum = {version = "0.8.4", features = ["ws"]}
 futures = "0.3.31"
+rand = "0.9.1"
 serde_json = "1.0.140"
 tokio = { version = "1.45.1", features = ["full"] }
 tower = "0.5.2"
