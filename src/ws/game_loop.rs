@@ -4,16 +4,45 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    models::Player,
+    models::{GameRoom, Player},
     state::{Connections, Rooms},
+    ws::{
+        handler::generate_random_letter,
+        rules::{get_rule_by_index, get_rules},
+    },
 };
 use uuid::Uuid;
 
-fn next_turn(players: &[Player], current_id: Uuid) -> Option<Uuid> {
+fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uuid> {
+    let players = &room.players;
+
     players.iter().position(|p| p.id == current_id).map(|i| {
-        let next_index = (i + 1) % players.len(); // wrap around
-        players[next_index].id
+        let next_index = (i + 1) % players.len();
+        let next_id = players[next_index].id;
+        let wrapped = next_index == 0;
+
+        if wrapped {
+            let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
+
+            // If we wrapped to first rule again, increase difficulty
+            if next_rule_index == 0 {
+                room.rule_context.min_word_length += 2;
+            }
+
+            room.rule_index = next_rule_index;
+            room.rule_context.random_letter = generate_random_letter();
+        }
+
+        next_id
     })
+}
+
+async fn broadcast_to_player(target_player_id: Uuid, message: &str, connections: &Connections) {
+    let connection_guard = connections.lock().await;
+    if let Some(sender_arc) = connection_guard.get(&target_player_id) {
+        let mut sender = sender_arc.lock().await;
+        let _ = sender.send(Message::Text(message.into())).await;
+    }
 }
 
 async fn broadcast_to_room(
@@ -47,7 +76,7 @@ fn start_turn_timer(
     words: Arc<HashSet<String>>,
 ) {
     tokio::spawn(async move {
-        for i in (1..=10).rev() {
+        for i in (0..=10).rev() {
             {
                 let rooms_guard = rooms.lock().await;
                 if let Some(room) = rooms_guard.get(&room_id) {
@@ -94,23 +123,25 @@ fn start_turn_timer(
                 }
 
                 if let Some(idx) = current_index {
-                    let next_index = if idx >= room.players.len() {
-                        0 // wrap around if needed
+                    let current_player_id = if idx >= room.players.len() {
+                        room.players[0].id
                     } else {
-                        idx
+                        room.players[idx].id
                     };
-                    let next_id = room.players[next_index].id;
-                    room.current_turn_id = next_id;
 
-                    start_turn_timer(
-                        next_id,
-                        room_id,
-                        rooms.clone(),
-                        connections.clone(),
-                        words.clone(),
-                    );
-                } else {
-                    println!("Couldn't find timed-out player index in room {}", room.id);
+                    if let Some(next_id) = get_next_player_and_wrap(room, current_player_id) {
+                        room.current_turn_id = next_id;
+
+                        start_turn_timer(
+                            next_id,
+                            room_id,
+                            rooms.clone(),
+                            connections.clone(),
+                            words.clone(),
+                        );
+                    } else {
+                        println!("Couldn't find timed-out player index in room {}", room.id);
+                    }
                 }
             }
         }
@@ -143,15 +174,26 @@ pub async fn handle_incoming_messages(
                     continue;
                 }
 
-                // check if word is valid
-                if !words.contains(&cleaned_word) {
-                    println!("invalid word from {}: {}", player.id, cleaned_word);
-                    continue;
-                }
-
                 // check if word is used
                 if room.used_words.contains(&cleaned_word) {
                     println!("This word have been used: {}", cleaned_word);
+                    continue;
+                }
+
+                // apply rule
+                if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                    if let Err(reason) = (rule.validate)(&cleaned_word, &room.rule_context) {
+                        println!("Rule failed: {}", reason);
+                        broadcast_to_player(player.id, &reason, connections).await;
+                        continue;
+                    }
+                } else {
+                    println!("fix nvalid rule index {}", room.rule_index);
+                }
+
+                // check if word is valid
+                if !words.contains(&cleaned_word) {
+                    println!("invalid word from {}: {}", player.id, cleaned_word);
                     continue;
                 }
 
@@ -159,9 +201,11 @@ pub async fn handle_incoming_messages(
                 room.used_words.insert(cleaned_word.clone());
 
                 // store next player id
-                if let Some(next_id) = next_turn(&room.players, player.id) {
+                if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
                     room.current_turn_id = next_id;
-                }
+                } else {
+                    println!("couldn't find next player");
+                };
 
                 // start game loop
                 start_turn_timer(

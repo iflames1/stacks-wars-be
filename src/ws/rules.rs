@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct RuleContext {
     pub min_word_length: usize,
     pub random_letter: char,
 }
 
+#[derive(Clone)]
 pub struct Rule {
     pub name: String,
     pub description: String,
@@ -330,7 +332,10 @@ pub fn get_rules(ctx: &RuleContext) -> Vec<Rule> {
     ]
 }
 
-// Helper function to find a rule by name
 pub fn find_rule_by_name<'a>(rules: &'a [Rule], name: &str) -> Option<&'a Rule> {
     rules.iter().find(|rule| rule.name == name)
+}
+
+pub fn get_rule_by_index(index: usize, ctx: &RuleContext) -> Option<Rule> {
+    get_rules(ctx).get(index).cloned()
 }
