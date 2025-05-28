@@ -42,6 +42,7 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
         let new_room = GameRoom {
             id: room_id,
             players: vec![player.clone()],
+            eliminated_players: Vec::new(),
             current_turn_id: player.id,
             used_words: HashSet::new(),
             rule_context: RuleContext {

@@ -13,6 +13,7 @@ pub struct Player {
 pub struct GameRoom {
     pub id: Uuid,
     pub players: Vec<Player>,
+    pub eliminated_players: Vec<Player>,
     pub current_turn_id: Uuid,
     pub used_words: HashSet<String>,
     pub rule_context: RuleContext,

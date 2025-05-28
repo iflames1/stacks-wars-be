@@ -45,10 +45,10 @@ async fn broadcast_to_player(target_player_id: Uuid, message: &str, connections:
     }
 }
 
-async fn broadcast_to_room(message: &str, players: &[Player], connections: &Connections) {
+async fn broadcast_to_room(message: &str, room: &GameRoom, connections: &Connections) {
     let connection_guard = connections.lock().await;
 
-    for player in players {
+    for player in room.players.iter().chain(room.eliminated_players.iter()) {
         if let Some(sender_arc) = connection_guard.get(&player.id) {
             let mut sender = sender_arc.lock().await;
             let _ = sender.send(Message::Text(message.to_string().into())).await;
@@ -123,52 +123,64 @@ fn start_turn_timer(
             if room.current_turn_id == player_id {
                 println!("Player {} timed out", player_id);
 
-                // Find index BEFORE removing the player
-                let current_index = room.players.iter().position(|p| p.id == player_id);
+                if let Some(pos) = room.players.iter().position(|p| p.id == player_id) {
+                    let player = room.players.remove(pos);
+                    room.eliminated_players.push(player.clone());
 
-                //room.players.retain(|p| p.id != player_id);
-
-                if let Some(idx) = current_index {
-                    let eliminated_player = room.players.remove(idx);
                     let position = room.players.len() + 1;
-                    room.rankings.push((eliminated_player.id, position));
+                    room.rankings.push((player.id, position));
 
+                    broadcast_to_player(
+                        player_id,
+                        &format!("you took {} position", 1 + room.players.len()),
+                        &connections,
+                    )
+                    .await;
+                }
+
+                // check game over
+                if room.players.len() == 1 {
+                    let winner = room.players.remove(0);
+                    room.eliminated_players.push(winner.clone());
+                    room.rankings.push((winner.id, 1));
+                    broadcast_to_player(
+                        winner.id,
+                        &format!("you took {}st position", 1),
+                        &connections,
+                    )
+                    .await;
+
+                    // Prepare and send rankings
+                    let mut rankings = room.eliminated_players.clone();
+                    rankings.reverse();
+
+                    // broadcast final result
+                    let standing = rankings
+                        .iter()
+                        .enumerate()
+                        .map(|(index, player)| {
+                            format!("Player {} - {} place", player.id, index + 1)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    // Notify everyone
+                    broadcast_to_room("🏁 Game Over!", &room, &connections).await;
+
+                    broadcast_to_room(
+                        &format!("Final standing: {}", standing),
+                        &room,
+                        &connections,
+                    )
+                    .await;
+                    return;
+                }
+
+                //continue game
+                let current_index = room.players.iter().position(|p| p.id == player_id);
+                if let Some(idx) = current_index {
                     if room.players.is_empty() {
-                        println!("Room {} is now empty", room.id);
-                        return;
-                    }
-
-                    // check game over
-                    println!("players left: {}", room.players.len());
-                    if room.players.len() == 1 {
-                        let winner = &room.players[0];
-                        room.rankings.push((winner.id, 1));
-                        room.game_over = true;
-
-                        // broadcast final result
-                        let standing = room
-                            .rankings
-                            .iter()
-                            .map(|(id, pos)| format!("Player {} - {} place", id, pos))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-
-                        broadcast_to_room("Game Over!", &room.players, &connections).await;
-
-                        broadcast_to_room(
-                            &format!("Final standing: {}", standing),
-                            &room.players,
-                            &connections,
-                        )
-                        .await;
-
-                        broadcast_to_player(
-                            winner.id,
-                            &format!("🏆 You're the Winner: {}.", winner.id),
-                            &connections,
-                        )
-                        .await;
-
+                        println!("fix: room {} is now empty", room.id);
                         return;
                     }
 
