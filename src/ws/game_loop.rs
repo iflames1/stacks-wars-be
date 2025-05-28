@@ -45,25 +45,32 @@ async fn broadcast_to_player(target_player_id: Uuid, message: &str, connections:
     }
 }
 
-async fn broadcast_to_room(
+async fn broadcast_to_room(message: &str, room: &GameRoom, connections: &Connections) {
+    let connection_guard = connections.lock().await;
+
+    for player in room.players.iter().chain(room.eliminated_players.iter()) {
+        if let Some(sender_arc) = connection_guard.get(&player.id) {
+            let mut sender = sender_arc.lock().await;
+            let _ = sender.send(Message::Text(message.to_string().into())).await;
+        }
+    }
+}
+
+async fn broadcast_to_room_from_player(
     sender_player: &Player,
     message: &str,
-    room_id: Uuid,
-    rooms: &Rooms,
+    room: &GameRoom,
     connections: &Connections,
 ) {
-    let rooms_guard = rooms.lock().await;
-    if let Some(room) = rooms_guard.get(&room_id) {
-        let connection_guard = connections.lock().await;
-        for p in &room.players {
-            if let Some(sender_arc) = connection_guard.get(&p.id) {
-                let mut sender = sender_arc.lock().await;
-                let _ = sender
-                    .send(Message::Text(
-                        format!("{}: {}", sender_player.id, message).into(),
-                    ))
-                    .await;
-            }
+    let connection_guard = connections.lock().await;
+    for player in &room.players {
+        if let Some(sender_arc) = connection_guard.get(&player.id) {
+            let mut sender = sender_arc.lock().await;
+            let _ = sender
+                .send(Message::Text(
+                    format!("{}: {}", sender_player.id, message).into(),
+                ))
+                .await;
         }
     }
 }
@@ -84,24 +91,14 @@ fn start_turn_timer(
                         println!("turn changed, stopping timer");
                         return;
                     }
+                    let countdown_msg = format!("{} seconds left", i);
+                    broadcast_to_player(player_id, &countdown_msg, &connections).await;
                 } else {
                     println!("room not found, stopping timer");
                     return;
                 }
             }
 
-            let countdown_msg = format!("{} seconds left", i);
-            broadcast_to_room(
-                &Player {
-                    id: player_id,
-                    username: None,
-                },
-                &countdown_msg,
-                room_id,
-                &rooms,
-                &connections,
-            )
-            .await;
             println!("{} seconds left for player {}", i, player_id);
             sleep(Duration::from_secs(1)).await;
         }
@@ -112,17 +109,67 @@ fn start_turn_timer(
             if room.current_turn_id == player_id {
                 println!("Player {} timed out", player_id);
 
-                // Find index BEFORE removing the player
-                let current_index = room.players.iter().position(|p| p.id == player_id);
+                if let Some(pos) = room.players.iter().position(|p| p.id == player_id) {
+                    let player = room.players.remove(pos);
+                    room.eliminated_players.push(player.clone());
 
-                room.players.retain(|p| p.id != player_id);
+                    let position = room.players.len() + 1;
+                    room.rankings.push((player.id, position));
 
-                if room.players.is_empty() {
-                    println!("Room {} is now empty", room.id);
+                    broadcast_to_player(
+                        player_id,
+                        &format!("you took {} position", 1 + room.players.len()),
+                        &connections,
+                    )
+                    .await;
+                }
+
+                // check game over
+                if room.players.len() == 1 {
+                    let winner = room.players.remove(0);
+                    room.eliminated_players.push(winner.clone());
+                    room.rankings.push((winner.id, 1));
+                    broadcast_to_player(
+                        winner.id,
+                        &format!("you took {}st position", 1),
+                        &connections,
+                    )
+                    .await;
+
+                    // Prepare and send rankings
+                    let mut rankings = room.eliminated_players.clone();
+                    rankings.reverse();
+
+                    // broadcast final result
+                    let standing = rankings
+                        .iter()
+                        .enumerate()
+                        .map(|(index, player)| {
+                            format!("Player {} - {} place", player.id, index + 1)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    // Notify everyone
+                    broadcast_to_room("🏁 Game Over!", &room, &connections).await;
+
+                    broadcast_to_room(
+                        &format!("Final standing: {}", standing),
+                        &room,
+                        &connections,
+                    )
+                    .await;
                     return;
                 }
 
+                //continue game
+                let current_index = room.players.iter().position(|p| p.id == player_id);
                 if let Some(idx) = current_index {
+                    if room.players.is_empty() {
+                        println!("fix: room {} is now empty", room.id);
+                        return;
+                    }
+
                     let current_player_id = if idx >= room.players.len() {
                         room.players[0].id
                     } else {
@@ -220,7 +267,9 @@ pub async fn handle_incoming_messages(
             }
 
             if advance_turn {
-                broadcast_to_room(player, &cleaned_word, room_id, &rooms, connections).await;
+                let room_gaurd = rooms.lock().await;
+                let room = room_gaurd.get(&room_id).unwrap();
+                broadcast_to_room_from_player(player, &cleaned_word, &room, connections).await;
             }
         }
     }
