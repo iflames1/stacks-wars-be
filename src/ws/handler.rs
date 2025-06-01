@@ -45,7 +45,7 @@ async fn store_connection(
 async fn remove_connection(player: &Player, connections: &Connections) {
     let mut conns = connections.lock().await;
     conns.remove(&player.id);
-    println!("Player {} disconnected", player.id);
+    println!("Player {:?} disconnected", player.username);
 }
 
 async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
