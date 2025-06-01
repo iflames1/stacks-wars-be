@@ -66,14 +66,24 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
         rankings: vec![],
     });
 
-    room.players.push(player.clone());
-    println!(
-        "Player {} ({}) joined room {} ({} players)",
-        player.username.as_deref().unwrap_or("Unknown"),
-        player.id,
-        room_id,
-        room.players.len()
-    );
+    let already_exists = room.players.iter().any(|p| p.username == player.username);
+
+    if !already_exists {
+        room.players.push(player.clone());
+        println!(
+            "Player {} ({}) joined room {} ({} players)",
+            player.username.as_deref().unwrap_or("Unknown"),
+            player.id,
+            room_id,
+            room.players.len()
+        );
+    } else {
+        println!(
+            "Player {} already in room {}, skipping re-add",
+            player.username.as_deref().unwrap_or("Unknown"),
+            room_id
+        );
+    }
 }
 
 async fn handle_socket(
