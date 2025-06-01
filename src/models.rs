@@ -9,6 +9,11 @@ pub struct Player {
     pub username: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct QueryParams {
+    pub username: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct GameRoom {
     pub id: Uuid,

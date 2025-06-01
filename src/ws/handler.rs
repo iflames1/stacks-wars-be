@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::{
-        ConnectInfo, State, WebSocketUpgrade,
+        ConnectInfo, Path, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     response::IntoResponse,
@@ -12,11 +12,14 @@ use rand::{Rng, rng};
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::ws::{game_loop::handle_incoming_messages, rules::RuleContext};
 use crate::{models::GameRoom, state::AppState};
 use crate::{
     models::Player,
     state::{Connections, Rooms},
+};
+use crate::{
+    models::QueryParams,
+    ws::{game_loop::handle_incoming_messages, rules::RuleContext},
 };
 use uuid::Uuid;
 
@@ -28,36 +31,6 @@ fn load_word_list() -> HashSet<String> {
 pub fn generate_random_letter() -> char {
     let letter = rng().random_range(0..26);
     (b'a' + letter as u8) as char
-}
-
-async fn setup_player_and_room(player: &Player, rooms: &Rooms) -> Uuid {
-    let mut locked_rooms = rooms.lock().await;
-
-    if let Some((id, room)) = locked_rooms.iter_mut().find(|(_, r)| r.players.len() == 1) {
-        println!("Adding player {} to existing room {}", player.id, room.id);
-        room.players.push(player.clone());
-        *id
-    } else {
-        let room_id = Uuid::new_v4();
-        let new_room = GameRoom {
-            id: room_id,
-            players: vec![player.clone()],
-            eliminated_players: Vec::new(),
-            current_turn_id: player.id,
-            used_words: HashSet::new(),
-            rule_context: RuleContext {
-                min_word_length: 4,
-                random_letter: generate_random_letter(),
-            },
-            rule_index: 0,
-            game_over: false,
-            rankings: Vec::new(),
-        };
-        locked_rooms.insert(room_id, new_room);
-
-        println!("Created new room {} for player {}", room_id, player.id);
-        room_id
-    }
 }
 
 async fn store_connection(
@@ -75,8 +48,38 @@ async fn remove_connection(player: &Player, connections: &Connections) {
     println!("Player {} disconnected", player.id);
 }
 
+async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
+    let mut locked_rooms = rooms.lock().await;
+
+    let room = locked_rooms.entry(room_id).or_insert_with(|| GameRoom {
+        id: room_id,
+        players: vec![],
+        eliminated_players: vec![],
+        current_turn_id: player.id,
+        used_words: HashSet::new(),
+        rule_context: RuleContext {
+            min_word_length: 4,
+            random_letter: generate_random_letter(),
+        },
+        rule_index: 0,
+        game_over: false,
+        rankings: vec![],
+    });
+
+    room.players.push(player.clone());
+    println!(
+        "Player {} ({}) joined room {} ({} players)",
+        player.username.as_deref().unwrap_or("Unknown"),
+        player.id,
+        room_id,
+        room.players.len()
+    );
+}
+
 async fn handle_socket(
     stream: WebSocket,
+    room_id: Uuid,
+    username: Option<String>,
     rooms: Rooms,
     connections: Connections,
     words: Arc<HashSet<String>>,
@@ -85,11 +88,11 @@ async fn handle_socket(
 
     let player = Player {
         id: Uuid::new_v4(),
-        username: None,
+        username,
     };
 
-    // Add player to a room
-    let room_id = setup_player_and_room(&player, &rooms).await;
+    // Add to the specified room (create if missing)
+    setup_player_and_room(&player, &rooms, room_id).await;
 
     // Store sender (tx) for others to send to this player
     store_connection(&player, sender, &connections).await;
@@ -99,23 +102,27 @@ async fn handle_socket(
     remove_connection(&player, &connections).await;
 }
 
+#[axum::debug_handler]
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    Path(room_id): Path<Uuid>,
+    Query(params): Query<QueryParams>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let rooms = state.rooms.clone();
-    let connections = state.connections.clone();
+    let rooms = state.rooms;
+    let connections = state.connections;
 
     println!("New WebSocket connection from {}", addr);
 
+    let username = params.username;
     let words = Arc::new(load_word_list());
 
-    ws.on_upgrade(move |socket| handle_socket(socket, rooms, connections, words))
+    ws.on_upgrade(move |socket| handle_socket(socket, room_id, username, rooms, connections, words))
 }
 
 pub fn create_app(state: AppState) -> Router {
     Router::new()
-        .route("/ws", get(ws_handler))
+        .route("/ws/{room_id}", get(ws_handler))
         .with_state(state)
 }
