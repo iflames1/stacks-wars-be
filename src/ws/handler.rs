@@ -45,7 +45,7 @@ async fn store_connection(
 async fn remove_connection(player: &Player, connections: &Connections) {
     let mut conns = connections.lock().await;
     conns.remove(&player.id);
-    println!("Player {} disconnected", player.id);
+    println!("Player {:?} disconnected", player.username);
 }
 
 async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
@@ -66,14 +66,24 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
         rankings: vec![],
     });
 
-    room.players.push(player.clone());
-    println!(
-        "Player {} ({}) joined room {} ({} players)",
-        player.username.as_deref().unwrap_or("Unknown"),
-        player.id,
-        room_id,
-        room.players.len()
-    );
+    let already_exists = room.players.iter().any(|p| p.username == player.username);
+
+    if !already_exists {
+        room.players.push(player.clone());
+        println!(
+            "Player {} ({}) joined room {} ({} players)",
+            player.username.as_deref().unwrap_or("Unknown"),
+            player.id,
+            room_id,
+            room.players.len()
+        );
+    } else {
+        println!(
+            "Player {} already in room {}, skipping re-add",
+            player.username.as_deref().unwrap_or("Unknown"),
+            room_id
+        );
+    }
 }
 
 async fn handle_socket(
