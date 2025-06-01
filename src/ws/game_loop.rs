@@ -145,7 +145,7 @@ fn start_turn_timer(
                         .iter()
                         .enumerate()
                         .map(|(index, player)| {
-                            format!("Player {:?} - {} place", player.username, index + 1)
+                            format!("Player {} - {} place", player.username, index + 1)
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -205,7 +205,7 @@ pub async fn handle_incoming_messages(
 ) {
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
-            println!("Received from {:?}: {}", player.username, text);
+            println!("Received from {}: {}", player.username, text);
 
             let cleaned_word = text.trim().to_lowercase();
 
@@ -217,7 +217,7 @@ pub async fn handle_incoming_messages(
 
                 // check turn
                 if player.id != room.current_turn_id {
-                    println!("Not {:?}'s turn", player.username);
+                    println!("Not {}'s turn", player.username);
                     continue;
                 }
 
@@ -240,7 +240,7 @@ pub async fn handle_incoming_messages(
 
                 // check if word is valid
                 if !words.contains(&cleaned_word) {
-                    println!("invalid word from {:?}: {}", player.username, cleaned_word);
+                    println!("invalid word from {}: {}", player.username, cleaned_word);
                     continue;
                 }
 

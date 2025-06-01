@@ -6,12 +6,12 @@ use crate::ws::rules::RuleContext;
 #[derive(Debug, Clone)]
 pub struct Player {
     pub id: Uuid,
-    pub username: Option<String>,
+    pub username: String,
 }
 
 #[derive(serde::Deserialize)]
 pub struct QueryParams {
-    pub username: Option<String>,
+    pub username: String,
 }
 
 #[derive(Debug)]
