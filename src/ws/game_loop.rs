@@ -1,11 +1,12 @@
 use axum::extract::ws::Message;
 use futures::{SinkExt, StreamExt};
+use serde::Serialize;
 use serde_json::json;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    models::{GameRoom, Player},
+    models::{GameRoom, Player, Standing},
     state::{Connections, Rooms},
     ws::{
         handler::generate_random_letter,
@@ -56,8 +57,18 @@ async fn broadcast_to_player(
     }
 }
 
-async fn broadcast_to_room(message: &str, room: &GameRoom, connections: &Connections) {
+async fn broadcast_to_room<T: Serialize>(
+    msg_type: &str,
+    data: &T,
+    room: &GameRoom,
+    connections: &Connections,
+) {
     let connection_guard = connections.lock().await;
+
+    let message = json!({
+        "type": msg_type,
+        "data": data,
+    });
 
     for player in room.players.iter().chain(room.eliminated_players.iter()) {
         if let Some(sender_arc) = connection_guard.get(&player.id) {
@@ -139,29 +150,23 @@ fn start_turn_timer(
                     room.rankings.push((winner.id, 1));
                     broadcast_to_player(winner.id, "rank", "1", &connections).await;
 
-                    // Prepare and send rankings
-                    let mut rankings = room.eliminated_players.clone();
-                    rankings.reverse();
+                    let standings: Vec<Standing> = room
+                        .eliminated_players
+                        .iter()
+                        .rev()
+                        .enumerate()
+                        .map(|(index, player)| Standing {
+                            username: player.username.clone(),
+                            rank: index + 1,
+                        })
+                        .collect();
+
+                    let game_over = "🏁 Game Over!".to_string();
 
                     // broadcast final result
-                    let standing = rankings
-                        .iter()
-                        .enumerate()
-                        .map(|(index, player)| {
-                            format!("Player {} - {} place", player.username, index + 1)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                    broadcast_to_room("game_over", &game_over, &room, &connections).await;
 
-                    // Notify everyone
-                    broadcast_to_room("🏁 Game Over!", &room, &connections).await;
-
-                    broadcast_to_room(
-                        &format!("Final standing: {}", standing),
-                        &room,
-                        &connections,
-                    )
-                    .await;
+                    broadcast_to_room("final_standing", &standings, &room, &connections).await;
                     return;
                 }
 

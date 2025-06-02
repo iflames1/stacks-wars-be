@@ -26,3 +26,9 @@ pub struct GameRoom {
     pub game_over: bool,
     pub rankings: Vec<(Uuid, usize)>,
 }
+
+#[derive(serde::Serialize)]
+pub struct Standing {
+    pub username: String,
+    pub rank: usize,
+}
