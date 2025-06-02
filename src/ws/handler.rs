@@ -23,6 +23,8 @@ use crate::{
 };
 use uuid::Uuid;
 
+use super::game_loop::broadcast_to_room;
+
 fn load_word_list() -> HashSet<String> {
     let json = include_str!("../assets/words.json");
     serde_json::from_str(json).expect("Failed to parse words.json")
@@ -48,7 +50,12 @@ async fn remove_connection(player: &Player, connections: &Connections) {
     println!("Player {} disconnected", player.username);
 }
 
-async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
+async fn setup_player_and_room(
+    player: &Player,
+    rooms: &Rooms,
+    room_id: Uuid,
+    connections: &Connections,
+) {
     let mut locked_rooms = rooms.lock().await;
 
     let room = locked_rooms.entry(room_id).or_insert_with(|| GameRoom {
@@ -83,6 +90,17 @@ async fn setup_player_and_room(player: &Player, rooms: &Rooms, room_id: Uuid) {
             player.username, room_id
         );
     }
+
+    // unexpected behavior: does send current turn to only previous joiners
+    if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id) {
+        broadcast_to_room(
+            "current_turn",
+            &current_player.username,
+            &room,
+            &connections,
+        )
+        .await;
+    }
 }
 
 async fn handle_socket(
@@ -100,11 +118,11 @@ async fn handle_socket(
         username,
     };
 
-    // Add to the specified room (create if missing)
-    setup_player_and_room(&player, &rooms, room_id).await;
-
     // Store sender (tx) for others to send to this player
     store_connection(&player, sender, &connections).await;
+
+    // Add to the specified room (create if missing)
+    setup_player_and_room(&player, &rooms, room_id, &connections).await;
 
     handle_incoming_messages(&player, room_id, receiver, rooms, &connections, words).await;
 

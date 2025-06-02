@@ -57,7 +57,7 @@ async fn broadcast_to_player(
     }
 }
 
-async fn broadcast_to_room<T: Serialize>(
+pub async fn broadcast_to_room<T: Serialize>(
     msg_type: &str,
     data: &T,
     room: &GameRoom,
@@ -192,6 +192,17 @@ fn start_turn_timer(
                     if let Some(next_id) = get_next_player_and_wrap(room, current_player_id) {
                         room.current_turn_id = next_id;
 
+                        if let Some(current_player) = room.players.iter().find(|p| p.id == next_id)
+                        {
+                            broadcast_to_room(
+                                "current_turn",
+                                &current_player.username,
+                                &room,
+                                &connections,
+                            )
+                            .await;
+                        }
+
                         start_turn_timer(
                             next_id,
                             room_id,
@@ -279,6 +290,16 @@ pub async fn handle_incoming_messages(
                 // store next player id
                 if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
                     room.current_turn_id = next_id;
+
+                    if let Some(current_player) = room.players.iter().find(|p| p.id == next_id) {
+                        broadcast_to_room(
+                            "current_turn",
+                            &current_player.username,
+                            &room,
+                            &connections,
+                        )
+                        .await;
+                    }
                 } else {
                     println!("couldn't find next player");
                 };
