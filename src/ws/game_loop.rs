@@ -114,6 +114,7 @@ fn start_turn_timer(
                 let rooms_guard = rooms.lock().await;
                 if let Some(room) = rooms_guard.get(&room_id) {
                     if room.current_turn_id != player_id {
+                        broadcast_to_player(player_id, "countdown", "10", &connections).await;
                         println!("turn changed, stopping timer");
                         return;
                     }
