@@ -1,10 +1,12 @@
 use axum::extract::ws::Message;
 use futures::{SinkExt, StreamExt};
+use serde::Serialize;
+use serde_json::json;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    models::{GameRoom, Player},
+    models::{GameRoom, Player, Standing},
     state::{Connections, Rooms},
     ws::{
         handler::generate_random_letter,
@@ -37,16 +39,36 @@ fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uui
     })
 }
 
-async fn broadcast_to_player(target_player_id: Uuid, message: &str, connections: &Connections) {
+async fn broadcast_to_player(
+    target_player_id: Uuid,
+    msg_type: &str,
+    data: &str,
+    connections: &Connections,
+) {
     let connection_guard = connections.lock().await;
     if let Some(sender_arc) = connection_guard.get(&target_player_id) {
+        let message = json!({
+            "type": msg_type,
+            "data": data,
+        })
+        .to_string();
         let mut sender = sender_arc.lock().await;
         let _ = sender.send(Message::Text(message.into())).await;
     }
 }
 
-async fn broadcast_to_room(message: &str, room: &GameRoom, connections: &Connections) {
+async fn broadcast_to_room<T: Serialize>(
+    msg_type: &str,
+    data: &T,
+    room: &GameRoom,
+    connections: &Connections,
+) {
     let connection_guard = connections.lock().await;
+
+    let message = json!({
+        "type": msg_type,
+        "data": data,
+    });
 
     for player in room.players.iter().chain(room.eliminated_players.iter()) {
         if let Some(sender_arc) = connection_guard.get(&player.id) {
@@ -58,19 +80,23 @@ async fn broadcast_to_room(message: &str, room: &GameRoom, connections: &Connect
 
 async fn broadcast_to_room_from_player(
     sender_player: &Player,
-    message: &str,
+    msg_type: &str,
+    data: &str,
     room: &GameRoom,
     connections: &Connections,
 ) {
     let connection_guard = connections.lock().await;
+
+    let message = json!({
+        "type": msg_type,
+        "data": data,
+        "sender": sender_player.username,
+    });
+
     for player in &room.players {
         if let Some(sender_arc) = connection_guard.get(&player.id) {
             let mut sender = sender_arc.lock().await;
-            let _ = sender
-                .send(Message::Text(
-                    format!("{}: {}", sender_player.id, message).into(),
-                ))
-                .await;
+            let _ = sender.send(Message::Text(message.to_string().into())).await;
         }
     }
 }
@@ -88,11 +114,12 @@ fn start_turn_timer(
                 let rooms_guard = rooms.lock().await;
                 if let Some(room) = rooms_guard.get(&room_id) {
                     if room.current_turn_id != player_id {
+                        broadcast_to_player(player_id, "countdown", "10", &connections).await;
                         println!("turn changed, stopping timer");
                         return;
                     }
-                    let countdown_msg = format!("{} seconds left", i);
-                    broadcast_to_player(player_id, &countdown_msg, &connections).await;
+                    let countdown = &i.to_string();
+                    broadcast_to_player(player_id, "countdown", countdown, &connections).await;
                 } else {
                     println!("room not found, stopping timer");
                     return;
@@ -116,12 +143,9 @@ fn start_turn_timer(
                     let position = room.players.len() + 1;
                     room.rankings.push((player.id, position)); // TODO: update to push username
 
-                    broadcast_to_player(
-                        player_id,
-                        &format!("you took {} position", 1 + room.players.len()),
-                        &connections,
-                    )
-                    .await;
+                    let rank = room.rankings.len() + 1;
+                    let rank = &rank.to_string();
+                    broadcast_to_player(player_id, "rank", rank, &connections).await;
                 }
 
                 // check game over
@@ -129,36 +153,25 @@ fn start_turn_timer(
                     let winner = room.players.remove(0);
                     room.eliminated_players.push(winner.clone());
                     room.rankings.push((winner.id, 1));
-                    broadcast_to_player(
-                        winner.id,
-                        &format!("you took {}st position", 1),
-                        &connections,
-                    )
-                    .await;
+                    broadcast_to_player(winner.id, "rank", "1", &connections).await;
 
-                    // Prepare and send rankings
-                    let mut rankings = room.eliminated_players.clone();
-                    rankings.reverse();
+                    let game_over = "🏁 Game Over!".to_string();
+
+                    broadcast_to_room("game_over", &game_over, &room, &connections).await;
+
+                    let standings: Vec<Standing> = room
+                        .eliminated_players
+                        .iter()
+                        .rev()
+                        .enumerate()
+                        .map(|(index, player)| Standing {
+                            username: player.username.clone(),
+                            rank: index + 1,
+                        })
+                        .collect();
 
                     // broadcast final result
-                    let standing = rankings
-                        .iter()
-                        .enumerate()
-                        .map(|(index, player)| {
-                            format!("Player {:?} - {} place", player.username, index + 1)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    // Notify everyone
-                    broadcast_to_room("🏁 Game Over!", &room, &connections).await;
-
-                    broadcast_to_room(
-                        &format!("Final standing: {}", standing),
-                        &room,
-                        &connections,
-                    )
-                    .await;
+                    broadcast_to_room("final_standing", &standings, &room, &connections).await;
                     return;
                 }
 
@@ -205,7 +218,7 @@ pub async fn handle_incoming_messages(
 ) {
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
-            println!("Received from {:?}: {}", player.username, text);
+            println!("Received from {}: {}", player.username, text);
 
             let cleaned_word = text.trim().to_lowercase();
 
@@ -217,30 +230,46 @@ pub async fn handle_incoming_messages(
 
                 // check turn
                 if player.id != room.current_turn_id {
-                    println!("Not {:?}'s turn", player.username);
+                    println!("Not {}'s turn", player.username); // broadcast turn to players
                     continue;
                 }
 
                 // check if word is used
                 if room.used_words.contains(&cleaned_word) {
-                    println!("This word have been used: {}", cleaned_word);
+                    println!("This word have been used: {}", cleaned_word); // broadcast to players
+                    broadcast_to_player(player.id, "used_word", &cleaned_word, connections).await;
                     continue;
                 }
 
                 // apply rule
                 if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                    // untested check
+                    if rule.name != "min_length" {
+                        if cleaned_word.len() < room.rule_context.min_word_length {
+                            let reason = format!(
+                                "Word must be at least {} characters!",
+                                room.rule_context.min_word_length
+                            );
+                            println!("Rule failed: {}", reason);
+                            broadcast_to_player(player.id, "validation_msg", &reason, connections)
+                                .await;
+                            continue;
+                        }
+                    }
+                    broadcast_to_room("rule", &rule.description, &room, &connections).await;
                     if let Err(reason) = (rule.validate)(&cleaned_word, &room.rule_context) {
                         println!("Rule failed: {}", reason);
-                        broadcast_to_player(player.id, &reason, connections).await;
+                        broadcast_to_player(player.id, "validation_msg", &reason, connections)
+                            .await;
                         continue;
                     }
                 } else {
-                    println!("fix nvalid rule index {}", room.rule_index);
+                    println!("fix invalid rule index {}", room.rule_index);
                 }
 
                 // check if word is valid
                 if !words.contains(&cleaned_word) {
-                    println!("invalid word from {:?}: {}", player.username, cleaned_word);
+                    println!("invalid word from {}: {}", player.username, cleaned_word);
                     continue;
                 }
 
@@ -269,7 +298,14 @@ pub async fn handle_incoming_messages(
             if advance_turn {
                 let room_gaurd = rooms.lock().await;
                 let room = room_gaurd.get(&room_id).unwrap();
-                broadcast_to_room_from_player(player, &cleaned_word, &room, connections).await;
+                broadcast_to_room_from_player(
+                    player,
+                    "word_entry",
+                    &cleaned_word,
+                    &room,
+                    connections,
+                )
+                .await;
             }
         }
     }
