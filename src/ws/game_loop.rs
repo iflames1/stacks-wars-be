@@ -1,5 +1,6 @@
 use axum::extract::ws::Message;
 use futures::{SinkExt, StreamExt};
+use serde_json::json;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
@@ -37,9 +38,19 @@ fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uui
     })
 }
 
-async fn broadcast_to_player(target_player_id: Uuid, message: &str, connections: &Connections) {
+async fn broadcast_to_player(
+    target_player_id: Uuid,
+    msg_type: &str,
+    data: &str,
+    connections: &Connections,
+) {
     let connection_guard = connections.lock().await;
     if let Some(sender_arc) = connection_guard.get(&target_player_id) {
+        let message = json!({
+            "type": msg_type,
+            "data": data,
+        })
+        .to_string();
         let mut sender = sender_arc.lock().await;
         let _ = sender.send(Message::Text(message.into())).await;
     }
@@ -91,8 +102,8 @@ fn start_turn_timer(
                         println!("turn changed, stopping timer");
                         return;
                     }
-                    let countdown_msg = format!("{} seconds left", i);
-                    broadcast_to_player(player_id, &countdown_msg, &connections).await;
+                    let countdown = &i.to_string();
+                    broadcast_to_player(player_id, "countdown", countdown, &connections).await;
                 } else {
                     println!("room not found, stopping timer");
                     return;
@@ -116,12 +127,9 @@ fn start_turn_timer(
                     let position = room.players.len() + 1;
                     room.rankings.push((player.id, position)); // TODO: update to push username
 
-                    broadcast_to_player(
-                        player_id,
-                        &format!("you took {} position", 1 + room.players.len()),
-                        &connections,
-                    )
-                    .await;
+                    let rank = room.rankings.len() + 1;
+                    let rank = &rank.to_string();
+                    broadcast_to_player(player_id, "rank", rank, &connections).await;
                 }
 
                 // check game over
@@ -129,12 +137,7 @@ fn start_turn_timer(
                     let winner = room.players.remove(0);
                     room.eliminated_players.push(winner.clone());
                     room.rankings.push((winner.id, 1));
-                    broadcast_to_player(
-                        winner.id,
-                        &format!("you took {}st position", 1),
-                        &connections,
-                    )
-                    .await;
+                    broadcast_to_player(winner.id, "rank", "1", &connections).await;
 
                     // Prepare and send rankings
                     let mut rankings = room.eliminated_players.clone();
@@ -217,13 +220,13 @@ pub async fn handle_incoming_messages(
 
                 // check turn
                 if player.id != room.current_turn_id {
-                    println!("Not {}'s turn", player.username);
+                    println!("Not {}'s turn", player.username); // broadcast turn to players
                     continue;
                 }
 
                 // check if word is used
                 if room.used_words.contains(&cleaned_word) {
-                    println!("This word have been used: {}", cleaned_word);
+                    println!("This word have been used: {}", cleaned_word); // broadcast to players
                     continue;
                 }
 
@@ -231,11 +234,12 @@ pub async fn handle_incoming_messages(
                 if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
                     if let Err(reason) = (rule.validate)(&cleaned_word, &room.rule_context) {
                         println!("Rule failed: {}", reason);
-                        broadcast_to_player(player.id, &reason, connections).await;
+                        broadcast_to_player(player.id, "validation_msg", &reason, connections)
+                            .await;
                         continue;
                     }
                 } else {
-                    println!("fix nvalid rule index {}", room.rule_index);
+                    println!("fix invalid rule index {}", room.rule_index);
                 }
 
                 // check if word is valid
