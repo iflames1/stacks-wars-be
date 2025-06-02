@@ -237,11 +237,26 @@ pub async fn handle_incoming_messages(
                 // check if word is used
                 if room.used_words.contains(&cleaned_word) {
                     println!("This word have been used: {}", cleaned_word); // broadcast to players
+                    broadcast_to_player(player.id, "used_word", &cleaned_word, connections).await;
                     continue;
                 }
 
                 // apply rule
                 if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                    // untested check
+                    if rule.name != "min_length" {
+                        if cleaned_word.len() < room.rule_context.min_word_length {
+                            let reason = format!(
+                                "Word must be at least {} characters!",
+                                room.rule_context.min_word_length
+                            );
+                            println!("Rule failed: {}", reason);
+                            broadcast_to_player(player.id, "validation_msg", &reason, connections)
+                                .await;
+                            continue;
+                        }
+                    }
+                    broadcast_to_room("rule", &rule.description, &room, &connections).await;
                     if let Err(reason) = (rule.validate)(&cleaned_word, &room.rule_context) {
                         println!("Rule failed: {}", reason);
                         broadcast_to_player(player.id, "validation_msg", &reason, connections)
