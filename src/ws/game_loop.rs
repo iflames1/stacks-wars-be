@@ -80,19 +80,23 @@ async fn broadcast_to_room<T: Serialize>(
 
 async fn broadcast_to_room_from_player(
     sender_player: &Player,
-    message: &str,
+    msg_type: &str,
+    data: &str,
     room: &GameRoom,
     connections: &Connections,
 ) {
     let connection_guard = connections.lock().await;
+
+    let message = json!({
+        "type": msg_type,
+        "data": data,
+        "sender": sender_player.username,
+    });
+
     for player in &room.players {
         if let Some(sender_arc) = connection_guard.get(&player.id) {
             let mut sender = sender_arc.lock().await;
-            let _ = sender
-                .send(Message::Text(
-                    format!("{}: {}", sender_player.id, message).into(),
-                ))
-                .await;
+            let _ = sender.send(Message::Text(message.to_string().into())).await;
         }
     }
 }
@@ -150,6 +154,10 @@ fn start_turn_timer(
                     room.rankings.push((winner.id, 1));
                     broadcast_to_player(winner.id, "rank", "1", &connections).await;
 
+                    let game_over = "🏁 Game Over!".to_string();
+
+                    broadcast_to_room("game_over", &game_over, &room, &connections).await;
+
                     let standings: Vec<Standing> = room
                         .eliminated_players
                         .iter()
@@ -161,11 +169,7 @@ fn start_turn_timer(
                         })
                         .collect();
 
-                    let game_over = "🏁 Game Over!".to_string();
-
                     // broadcast final result
-                    broadcast_to_room("game_over", &game_over, &room, &connections).await;
-
                     broadcast_to_room("final_standing", &standings, &room, &connections).await;
                     return;
                 }
@@ -278,7 +282,14 @@ pub async fn handle_incoming_messages(
             if advance_turn {
                 let room_gaurd = rooms.lock().await;
                 let room = room_gaurd.get(&room_id).unwrap();
-                broadcast_to_room_from_player(player, &cleaned_word, &room, connections).await;
+                broadcast_to_room_from_player(
+                    player,
+                    "word_entry",
+                    &cleaned_word,
+                    &room,
+                    connections,
+                )
+                .await;
             }
         }
     }
