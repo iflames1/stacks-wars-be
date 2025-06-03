@@ -136,6 +136,9 @@ fn start_turn_timer(
             if room.current_turn_id == player_id {
                 println!("Player {} timed out", player_id);
 
+                let next_player_id = get_next_player_and_wrap(room, player_id);
+
+                // remove player from room and save position
                 if let Some(pos) = room.players.iter().position(|p| p.id == player_id) {
                     let player = room.players.remove(pos);
                     room.eliminated_players.push(player.clone());
@@ -143,11 +146,10 @@ fn start_turn_timer(
                     println!("players left: {}", room.players.len());
 
                     let position = room.players.len() + 1;
-                    room.rankings.push((player.id, position)); // TODO: update to push username
+                    room.rankings.push((player.id, position)); // TODO: check usage
 
-                    let rank = position;
-                    let rank = &rank.to_string();
-                    broadcast_to_player(player_id, "rank", rank, &connections).await;
+                    let rank = position.to_string();
+                    broadcast_to_player(player_id, "rank", &rank, &connections).await;
                 }
 
                 // check game over
@@ -177,44 +179,34 @@ fn start_turn_timer(
                     return;
                 }
 
-                //continue game
-                let current_index = room.players.iter().position(|p| p.id == player_id);
-                if let Some(idx) = current_index {
-                    if room.players.is_empty() {
-                        println!("fix: room {} is now empty", room.id);
-                        return;
+                if room.players.is_empty() {
+                    println!("fix: room {} is now empty", room.id); // never really gets here
+                    return;
+                }
+
+                //continue game if players > 1
+                if let Some(next_id) = next_player_id {
+                    room.current_turn_id = next_id;
+
+                    if let Some(current_player) = room.players.iter().find(|p| p.id == next_id) {
+                        broadcast_to_room(
+                            "current_turn",
+                            &current_player.username,
+                            &room,
+                            &connections,
+                        )
+                        .await;
                     }
 
-                    let current_player_id = if idx >= room.players.len() {
-                        room.players[0].id
-                    } else {
-                        room.players[idx].id
-                    };
-
-                    if let Some(next_id) = get_next_player_and_wrap(room, current_player_id) {
-                        room.current_turn_id = next_id;
-
-                        if let Some(current_player) = room.players.iter().find(|p| p.id == next_id)
-                        {
-                            broadcast_to_room(
-                                "current_turn",
-                                &current_player.username,
-                                &room,
-                                &connections,
-                            )
-                            .await;
-                        }
-
-                        start_turn_timer(
-                            next_id,
-                            room_id,
-                            rooms.clone(),
-                            connections.clone(),
-                            words.clone(),
-                        );
-                    } else {
-                        println!("Couldn't find timed-out player index in room {}", room.id);
-                    }
+                    start_turn_timer(
+                        next_id,
+                        room_id,
+                        rooms.clone(),
+                        connections.clone(),
+                        words.clone(),
+                    );
+                } else {
+                    println!("No next player found in room {}", room.id);
                 }
             }
         }
