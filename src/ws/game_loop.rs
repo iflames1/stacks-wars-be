@@ -140,10 +140,12 @@ fn start_turn_timer(
                     let player = room.players.remove(pos);
                     room.eliminated_players.push(player.clone());
 
+                    println!("players left: {}", room.players.len());
+
                     let position = room.players.len() + 1;
                     room.rankings.push((player.id, position)); // TODO: update to push username
 
-                    let rank = room.rankings.len() + 1;
+                    let rank = position;
                     let rank = &rank.to_string();
                     broadcast_to_player(player_id, "rank", rank, &connections).await;
                 }
