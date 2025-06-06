@@ -1,0 +1,3 @@
+# Spaghetti Server 😭
+
+### Send help 🆘🆘🆘
