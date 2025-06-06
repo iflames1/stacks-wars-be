@@ -1,6 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
+use bb8::Pool;
+use bb8_redis::RedisConnectionManager;
 use futures::stream::SplitSink;
-use redis::aio::ConnectionManager;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -20,4 +21,4 @@ pub type Sender = Arc<Mutex<SplitSink<WebSocket, Message>>>;
 
 pub type Connections = Arc<Mutex<HashMap<Uuid, Sender>>>;
 
-pub type RedisClient = Arc<ConnectionManager>;
+pub type RedisClient = Pool<RedisConnectionManager>;

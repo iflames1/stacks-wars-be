@@ -2,19 +2,17 @@ mod models;
 mod state;
 pub mod ws;
 
+use bb8::Pool;
+use bb8_redis::RedisConnectionManager;
 use state::{AppState, Connections, Rooms};
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 pub async fn start_server() {
     tracing_subscriber::fmt::init();
 
-    let client = redis::Client::open("redis://127.0.0.1/").expect("Failed to create Redis client");
-    let connection = client
-        .get_connection_manager()
-        .await
-        .expect("Failed to connect to Redis");
+    let manager = RedisConnectionManager::new("redis://127.0.0.1/").unwrap();
 
-    let redis = Arc::new(connection);
+    let redis_pool = Pool::builder().build(manager).await.unwrap();
 
     let rooms: Rooms = Default::default();
     let connections: Connections = Default::default();
@@ -22,7 +20,7 @@ pub async fn start_server() {
     let state = AppState {
         rooms,
         connections,
-        redis,
+        redis: redis_pool,
     };
     let app = ws::create_app(state);
 

@@ -9,10 +9,14 @@ use axum::{
 };
 use futures::{StreamExt, stream::SplitSink};
 use rand::{Rng, rng};
+use redis::AsyncCommands;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-use crate::{models::GameRoom, state::AppState};
+use crate::{
+    models::GameRoom,
+    state::{AppState, RedisClient},
+};
 use crate::{
     models::Player,
     state::{Connections, Rooms},
@@ -109,6 +113,7 @@ async fn handle_socket(
     username: String,
     rooms: Rooms,
     connections: Connections,
+    redis: RedisClient,
     words: Arc<HashSet<String>>,
 ) {
     let (sender, receiver) = stream.split();
@@ -117,6 +122,11 @@ async fn handle_socket(
         id: Uuid::new_v4(),
         username,
     };
+
+    // Save player to Redis
+    let player_key = format!("player:{}", player.id);
+    let mut conn = redis.get().await.unwrap();
+    let _: () = conn.set(&player_key, &player.username).await.unwrap();
 
     // Store sender (tx) for others to send to this player
     store_connection(&player, sender, &connections).await;
@@ -142,10 +152,13 @@ async fn ws_handler(
 
     println!("New WebSocket connection from {}", addr);
 
+    let redis = state.redis.clone();
     let username = params.username;
     let words = Arc::new(load_word_list());
 
-    ws.on_upgrade(move |socket| handle_socket(socket, room_id, username, rooms, connections, words))
+    ws.on_upgrade(move |socket| {
+        handle_socket(socket, room_id, username, rooms, connections, redis, words)
+    })
 }
 
 pub fn create_app(state: AppState) -> Router {
