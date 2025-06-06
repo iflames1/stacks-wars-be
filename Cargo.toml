@@ -5,8 +5,11 @@ edition = "2024"
 
 [dependencies]
 axum = {version = "0.8.4", features = ["ws", "macros"]}
+bb8 = "0.9.0"
+bb8-redis = "0.23.0"
 futures = "0.3.31"
 rand = "0.9.1"
+redis = {version = "0.31.0", features = ["tokio-comp", "connection-manager"]}
 serde = {version ="1.0.219", features = ["serde_derive"]}
 serde_json = "1.0.140"
 tokio = { version = "1.45.1", features = ["full"] }
