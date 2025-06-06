@@ -6,7 +6,8 @@ use crate::ws::rules::RuleContext;
 #[derive(Debug, Clone)]
 pub struct Player {
     pub id: Uuid,
-    pub username: String,
+    pub wallet_address: String,
+    pub display_name: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
