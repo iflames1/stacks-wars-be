@@ -1,7 +1,8 @@
 use uuid::Uuid;
 
 use crate::{
-    models::{GameRoomInfo, GameState},
+    db::user::get_user_by_id,
+    models::{GameRoomInfo, GameState, RoomPlayer},
     state::RedisClient,
 };
 
@@ -26,14 +27,26 @@ pub async fn create_room(
     let room_info_key = format!("room:{}:info", room_id);
     let room_info_json = serde_json::to_string(&room_info).unwrap();
 
+    let creator_user = get_user_by_id(creator_id, redis.clone())
+        .await
+        .expect("Failed to get creator user");
+
+    let room_player = RoomPlayer {
+        id: creator_user.id,
+        wallet_address: creator_user.wallet_address,
+        display_name: creator_user.display_name,
+    };
+
+    let room_player_json = serde_json::to_string(&room_player).unwrap();
+
     let _: () = redis::pipe()
         .cmd("SET")
         .arg(&room_info_key)
         .arg(room_info_json)
         .ignore()
-        .cmd("SADD") // Add creator as first player in the room
+        .cmd("SADD")
         .arg(format!("room:{}:players", room_id))
-        .arg(creator_id.to_string())
+        .arg(room_player_json)
         .query_async(&mut *conn)
         .await
         .unwrap();
