@@ -7,8 +7,11 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    db::{create_room, join_room, leave_room, user::create_user},
-    models::User,
+    db::{
+        create_room, join_room, leave_room, update_game_state, update_player_state,
+        user::create_user,
+    },
+    models::{GameState, PlayerState, User},
     state::AppState,
 };
 
@@ -81,4 +84,39 @@ pub async fn leave_room_handler(
         Ok(_) => Ok(Json("Left room")),
         Err(e) => Err((StatusCode::BAD_REQUEST, e)),
     }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateGameStatePayload {
+    pub new_state: GameState,
+}
+
+pub async fn update_game_state_handler(
+    Path(room_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(payload): Json<UpdateGameStatePayload>,
+) -> Json<Result<(), String>> {
+    let res = update_game_state(room_id, payload.new_state, state.redis.clone()).await;
+    Json(res)
+}
+
+#[derive(Deserialize)]
+pub struct UpdatePlayerStatePayload {
+    pub user_id: Uuid,
+    pub new_state: PlayerState,
+}
+
+pub async fn update_player_state_handler(
+    Path(room_id): Path<Uuid>,
+    State(state): State<AppState>,
+    Json(payload): Json<UpdatePlayerStatePayload>,
+) -> Json<Result<(), String>> {
+    let res = update_player_state(
+        room_id,
+        payload.user_id,
+        payload.new_state,
+        state.redis.clone(),
+    )
+    .await;
+    Json(res)
 }
