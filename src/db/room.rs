@@ -108,3 +108,35 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
 
     Ok(())
 }
+
+pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Result<(), String> {
+    let mut conn = redis
+        .get()
+        .await
+        .map_err(|_| "Failed to get Redis connection")?;
+
+    let players_key = format!("room:{}:players", room_id);
+
+    let players: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&players_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to fetch players")?;
+
+    let Some(player_to_remove) = players.iter().find(|p| {
+        serde_json::from_str::<RoomPlayer>(p)
+            .map(|rp| rp.id == user_id)
+            .unwrap_or(false)
+    }) else {
+        return Err("User not in room".into());
+    };
+
+    let _: () = redis::cmd("SREM")
+        .arg(&players_key)
+        .arg(player_to_remove)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to remove player from room")?;
+
+    Ok(())
+}
