@@ -9,7 +9,7 @@ use crate::{
     models::{GameRoom, Player, Standing},
     state::{Connections, Rooms},
     ws::{
-        handler::generate_random_letter,
+        handlers::generate_random_letter,
         rules::{get_rule_by_index, get_rules},
     },
 };

@@ -1,5 +1,6 @@
 pub mod game_loop;
-pub mod handler;
+pub mod handlers;
+pub mod routes;
 pub mod rules;
 
-pub use handler::create_app;
+pub use routes::create_ws_routes;
