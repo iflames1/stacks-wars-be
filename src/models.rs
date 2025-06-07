@@ -11,11 +11,19 @@ pub struct User {
     pub display_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayerState {
+    NotReady,
+    Ready,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomPlayer {
     pub id: Uuid,
     pub wallet_address: String,
     pub display_name: Option<String>,
+    pub state: PlayerState,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +56,8 @@ pub struct Standing {
     pub rank: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum GameState {
     Waiting,
     InProgress,

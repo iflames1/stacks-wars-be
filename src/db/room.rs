@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use crate::models::PlayerState;
 use crate::{
     db::user::get_user_by_id,
     models::{GameRoomInfo, GameState, RoomPlayer},
@@ -35,6 +36,7 @@ pub async fn create_room(
         id: creator_user.id,
         wallet_address: creator_user.wallet_address,
         display_name: creator_user.display_name,
+        state: PlayerState::Ready,
     };
 
     let room_player_json = serde_json::to_string(&room_player).unwrap();
@@ -95,6 +97,7 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         id: user.id,
         wallet_address: user.wallet_address,
         display_name: user.display_name,
+        state: PlayerState::NotReady,
     };
 
     let player_json = serde_json::to_string(&room_player).unwrap();
@@ -137,6 +140,95 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         .query_async(&mut *conn)
         .await
         .map_err(|_| "Failed to remove player from room")?;
+
+    Ok(())
+}
+
+// should only creator update state
+pub async fn update_game_state(
+    room_id: Uuid,
+    new_state: GameState,
+    redis: RedisClient,
+) -> Result<(), String> {
+    let mut conn = redis
+        .get()
+        .await
+        .map_err(|_| "Failed to get Redis connection")?;
+
+    let room_info_key = format!("room:{}:info", room_id);
+    let info_json: String = redis::cmd("GET")
+        .arg(&room_info_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to get room info")?;
+
+    let mut info: GameRoomInfo =
+        serde_json::from_str(&info_json).map_err(|_| "Invalid room data")?;
+    if info.state == new_state {
+        return Ok(());
+    }
+    info.state = new_state;
+
+    let updated_json = serde_json::to_string(&info).map_err(|_| "Serialization error")?;
+
+    let _: () = redis::cmd("SET")
+        .arg(&room_info_key)
+        .arg(updated_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to update room state")?;
+
+    Ok(())
+}
+
+pub async fn update_player_state(
+    room_id: Uuid,
+    user_id: Uuid,
+    new_state: PlayerState,
+    redis: RedisClient,
+) -> Result<(), String> {
+    let mut conn = redis
+        .get()
+        .await
+        .map_err(|_| "Failed to get Redis connection")?;
+
+    let players_key = format!("room:{}:players", room_id);
+
+    let players_json: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&players_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to fetch players")?;
+
+    let mut players: Vec<RoomPlayer> = players_json
+        .into_iter()
+        .filter_map(|p| serde_json::from_str(&p).ok())
+        .collect();
+
+    let Some(player) = players.iter_mut().find(|p| p.id == user_id) else {
+        return Err("Player not found in room".into());
+    };
+
+    if player.state == new_state {
+        return Ok(());
+    }
+    player.state = new_state;
+
+    let _: () = redis::cmd("DEL")
+        .arg(&players_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to clear players set")?;
+
+    for p in players {
+        let player_json = serde_json::to_string(&p).map_err(|_| "Serialization error")?;
+        let _: () = redis::cmd("SADD")
+            .arg(&players_key)
+            .arg(player_json)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|_| "Failed to add player to room")?;
+    }
 
     Ok(())
 }
