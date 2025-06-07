@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::ws::rules::RuleContext;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: Uuid,
     pub wallet_address: String,
