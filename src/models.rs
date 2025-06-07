@@ -34,7 +34,7 @@ pub struct Player {
 
 #[derive(Deserialize)]
 pub struct QueryParams {
-    pub username: String,
+    pub player_id: Uuid,
 }
 
 #[derive(Debug)]

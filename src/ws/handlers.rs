@@ -12,7 +12,8 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    models::GameRoom,
+    db,
+    models::{GameRoom, GameState, PlayerState, RoomPlayer},
     state::{AppState, RedisClient},
 };
 use crate::{
@@ -108,29 +109,19 @@ async fn setup_player_and_room(
 async fn handle_socket(
     stream: WebSocket,
     room_id: Uuid,
-    username: String,
+    room_player: RoomPlayer,
     rooms: Rooms,
     connections: Connections,
-    _redis: RedisClient,
     words: Arc<HashSet<String>>,
 ) {
     let (sender, receiver) = stream.split();
 
     let player = Player {
-        id: Uuid::new_v4(),
-        username,
+        id: room_player.id,
+        username: room_player.wallet_address.clone(),
     };
 
-    // Save player to Redis
-    //let player_key = format!("player:{}", player.id);
-    //let mut conn = redis.get().await.unwrap();
-    //let _: () = conn.set(&player_key, &player.username).await.unwrap();
-
-    // Store sender (tx) for others to send to this player
     store_connection(&player, sender, &connections).await;
-
-    // Add to the specified room (create if missing)
-    setup_player_and_room(&player, &rooms, room_id, &connections).await;
 
     handle_incoming_messages(&player, room_id, receiver, rooms, &connections, words).await;
 
@@ -145,16 +136,53 @@ pub async fn ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let rooms = state.rooms;
-    let connections = state.connections;
-
     println!("New WebSocket connection from {}", addr);
 
     let redis = state.redis.clone();
-    let username = params.username;
+    let rooms = state.rooms.clone();
+    let connections = state.connections.clone();
     let words = Arc::new(load_word_list());
 
-    ws.on_upgrade(move |socket| {
-        handle_socket(socket, room_id, username, rooms, connections, redis, words)
-    })
+    let player_id = params.player_id;
+
+    let room = match db::room::get_room_info(room_id, &redis).await {
+        Some(room) => room,
+        None => return Err((axum::http::StatusCode::FORBIDDEN, "Room not found")),
+    };
+
+    if room.state != GameState::InProgress {
+        return Err((axum::http::StatusCode::FORBIDDEN, "Game not in progress"));
+    }
+
+    let players = match db::room::get_room_players(room_id, &redis).await {
+        Some(players) => players,
+        None => {
+            return Err((
+                axum::http::StatusCode::FORBIDDEN,
+                "No players found in room",
+            ));
+        }
+    };
+
+    let matched_player = match players
+        .into_iter()
+        .find(|p| p.id == player_id && p.state == PlayerState::Ready)
+    {
+        Some(player) => player,
+        None => {
+            return Err((
+                axum::http::StatusCode::FORBIDDEN,
+                "Player not found or not ready",
+            ));
+        }
+    };
+
+    println!(
+        "Player {} allowed to join room {}",
+        matched_player.wallet_address, room_id
+    );
+
+    Ok(ws.on_upgrade(move |socket| {
+        handle_socket(socket, room_id, matched_player, rooms, connections, words)
+    }))
 }

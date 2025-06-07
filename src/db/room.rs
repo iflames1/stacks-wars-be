@@ -232,3 +232,25 @@ pub async fn update_player_state(
 
     Ok(())
 }
+
+pub async fn get_room_info(room_id: Uuid, redis: &RedisClient) -> Option<GameRoomInfo> {
+    let key = format!("room:{}:info", room_id);
+    let mut conn = redis.get().await.ok()?;
+    let value: String = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .ok()?;
+    serde_json::from_str(&value).ok()
+}
+
+pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<RoomPlayer>> {
+    let key = format!("room:{}:players", room_id);
+    let mut conn = redis.get().await.ok()?;
+    let value: String = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .ok()?;
+    serde_json::from_str(&value).ok()
+}
