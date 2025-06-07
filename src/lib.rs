@@ -13,7 +13,6 @@ pub async fn start_server() {
     tracing_subscriber::fmt::init();
 
     let manager = RedisConnectionManager::new("redis://127.0.0.1/").unwrap();
-
     let redis_pool = Pool::builder().build(manager).await.unwrap();
 
     let rooms: Rooms = Default::default();
@@ -24,14 +23,16 @@ pub async fn start_server() {
         connections,
         redis: redis_pool,
     };
-    let app = ws::create_app(state);
+
+    let ws_app = ws::create_ws_routes(state.clone());
+    let http_app = http::create_http_routes(state);
+
+    let app = ws_app.merge(http_app);
 
     let addr = "127.0.0.1:3001";
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind address");
-
-    println!("Websocket server running at ws://{}", addr);
 
     axum::serve(
         listener,
