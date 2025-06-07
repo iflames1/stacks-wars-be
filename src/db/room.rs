@@ -36,7 +36,7 @@ pub async fn create_room(
         id: creator_user.id,
         wallet_address: creator_user.wallet_address,
         display_name: creator_user.display_name,
-        state: PlayerState::NotReady,
+        state: PlayerState::Ready,
     };
 
     let room_player_json = serde_json::to_string(&room_player).unwrap();
