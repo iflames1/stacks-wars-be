@@ -4,8 +4,15 @@ use uuid::Uuid;
 
 use crate::ws::rules::RuleContext;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
+    pub id: Uuid,
+    pub wallet_address: String,
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomPlayer {
     pub id: Uuid,
     pub wallet_address: String,
     pub display_name: Option<String>,
