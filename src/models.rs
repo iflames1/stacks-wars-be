@@ -1,16 +1,23 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::ws::rules::RuleContext;
 
 #[derive(Debug, Clone)]
-pub struct Player {
+pub struct User {
     pub id: Uuid,
     pub wallet_address: String,
     pub display_name: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, Clone)]
+pub struct Player {
+    pub id: Uuid,
+    pub username: String,
+}
+
+#[derive(Deserialize)]
 pub struct QueryParams {
     pub username: String,
 }
@@ -28,8 +35,24 @@ pub struct GameRoom {
     pub rankings: Vec<(Uuid, usize)>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct Standing {
     pub username: String,
     pub rank: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum GameState {
+    Waiting,
+    InProgress,
+    Finished,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GameRoomInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub creator_id: Uuid,
+    pub max_participants: usize,
+    pub state: GameState,
 }

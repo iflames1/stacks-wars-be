@@ -1,15 +1,13 @@
 use axum::{
-    Router,
     extract::{
         ConnectInfo, Path, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     response::IntoResponse,
-    routing::get,
 };
 use futures::{StreamExt, stream::SplitSink};
 use rand::{Rng, rng};
-use redis::AsyncCommands;
+//use redis::AsyncCommands;
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -113,7 +111,7 @@ async fn handle_socket(
     username: String,
     rooms: Rooms,
     connections: Connections,
-    redis: RedisClient,
+    _redis: RedisClient,
     words: Arc<HashSet<String>>,
 ) {
     let (sender, receiver) = stream.split();
@@ -124,9 +122,9 @@ async fn handle_socket(
     };
 
     // Save player to Redis
-    let player_key = format!("player:{}", player.id);
-    let mut conn = redis.get().await.unwrap();
-    let _: () = conn.set(&player_key, &player.username).await.unwrap();
+    //let player_key = format!("player:{}", player.id);
+    //let mut conn = redis.get().await.unwrap();
+    //let _: () = conn.set(&player_key, &player.username).await.unwrap();
 
     // Store sender (tx) for others to send to this player
     store_connection(&player, sender, &connections).await;
@@ -140,7 +138,7 @@ async fn handle_socket(
 }
 
 #[axum::debug_handler]
-async fn ws_handler(
+pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Path(room_id): Path<Uuid>,
     Query(params): Query<QueryParams>,
@@ -159,10 +157,4 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| {
         handle_socket(socket, room_id, username, rooms, connections, redis, words)
     })
-}
-
-pub fn create_app(state: AppState) -> Router {
-    Router::new()
-        .route("/ws/{room_id}", get(ws_handler))
-        .with_state(state)
 }
