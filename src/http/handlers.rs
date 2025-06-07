@@ -1,4 +1,8 @@
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -54,25 +58,26 @@ pub async fn create_room_handler(
 
 #[derive(Deserialize)]
 pub struct RoomActionPayload {
-    pub room_id: Uuid,
     pub user_id: Uuid,
 }
 
 pub async fn join_room_handler(
+    Path(room_id): Path<Uuid>,
     State(state): State<AppState>,
     Json(payload): Json<RoomActionPayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
-    match join_room(payload.room_id, payload.user_id, state.redis.clone()).await {
+    match join_room(room_id, payload.user_id, state.redis.clone()).await {
         Ok(_) => Ok(Json("Joined room")),
         Err(e) => Err((StatusCode::BAD_REQUEST, e)),
     }
 }
 
 pub async fn leave_room_handler(
+    Path(room_id): Path<Uuid>,
     State(state): State<AppState>,
     Json(payload): Json<RoomActionPayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
-    match leave_room(payload.room_id, payload.user_id, state.redis.clone()).await {
+    match leave_room(room_id, payload.user_id, state.redis.clone()).await {
         Ok(_) => Ok(Json("Left room")),
         Err(e) => Err((StatusCode::BAD_REQUEST, e)),
     }

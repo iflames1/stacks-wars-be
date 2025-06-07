@@ -1,4 +1,7 @@
-use axum::{Router, routing::post};
+use axum::{
+    Router,
+    routing::{post, put},
+};
 
 use crate::{
     http::{
@@ -12,7 +15,7 @@ pub fn create_http_routes(state: AppState) -> Router {
     Router::new()
         .route("/user", post(create_user_handler))
         .route("/room", post(create_room_handler))
-        .route("/room/join", post(join_room_handler))
-        .route("/room/leave", post(leave_room_handler))
+        .route("/room/{room_id}/join", put(join_room_handler))
+        .route("/room/{room_id}/leave", put(leave_room_handler))
         .with_state(state)
 }
