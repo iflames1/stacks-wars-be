@@ -251,10 +251,17 @@ pub async fn get_room_info(room_id: Uuid, redis: &RedisClient) -> Option<GameRoo
 pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<RoomPlayer>> {
     let key = format!("room:{}:players", room_id);
     let mut conn = redis.get().await.ok()?;
-    let value: String = redis::cmd("GET")
+
+    let values: Vec<String> = redis::cmd("SMEMBERS")
         .arg(&key)
         .query_async(&mut *conn)
         .await
         .ok()?;
-    serde_json::from_str(&value).ok()
+
+    let players: Vec<RoomPlayer> = values
+        .into_iter()
+        .filter_map(|v| serde_json::from_str(&v).ok())
+        .collect();
+
+    Some(players)
 }
