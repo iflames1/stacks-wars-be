@@ -148,16 +148,21 @@ pub async fn ws_handler(
 
     let room = match db::room::get_room_info(room_id, &redis).await {
         Some(room) => room,
-        None => return Err((axum::http::StatusCode::FORBIDDEN, "Room not found")),
+        None => {
+            println!("Room {} not found", room_id);
+            return Err((axum::http::StatusCode::FORBIDDEN, "Room not found"));
+        }
     };
 
     if room.state != GameState::InProgress {
+        println!("Game in room {} is not in progress", room_id);
         return Err((axum::http::StatusCode::FORBIDDEN, "Game not in progress"));
     }
 
     let players = match db::room::get_room_players(room_id, &redis).await {
         Some(players) => players,
         None => {
+            println!("No players found in room {}", room_id);
             return Err((
                 axum::http::StatusCode::FORBIDDEN,
                 "No players found in room",
@@ -172,6 +177,10 @@ pub async fn ws_handler(
     {
         Some(player) => player,
         None => {
+            println!(
+                "Player with ID {} not found or not ready in room {}",
+                player_id, room_id
+            );
             return Err((
                 axum::http::StatusCode::FORBIDDEN,
                 "Player not found or not ready",
