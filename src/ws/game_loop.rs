@@ -180,7 +180,7 @@ fn start_turn_timer(
                 }
 
                 if room.players.is_empty() {
-                    println!("fix: room {} is now empty", room.id); // never really gets here
+                    println!("fix: room {} is now empty", room.info.id); // never really gets here
                     return;
                 }
 
@@ -206,7 +206,7 @@ fn start_turn_timer(
                         words.clone(),
                     );
                 } else {
-                    println!("No next player found in room {}", room.id);
+                    println!("No next player found in room {}", room.info.id);
                 }
             }
         }
