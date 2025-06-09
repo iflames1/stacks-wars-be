@@ -1,5 +1,6 @@
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::ws::rules::RuleContext;
@@ -9,7 +10,8 @@ pub struct GameRoom {
     pub info: GameRoomInfo,
     pub players: Vec<RoomPlayer>,
     pub rankings: Vec<(Uuid, usize)>,
-    pub used_words: HashSet<String>,
+    pub used_words_global: HashSet<String>,
+    pub used_words: HashMap<Uuid, Vec<String>>,
 
     pub current_turn_id: Uuid,
     pub rule_context: RuleContext,

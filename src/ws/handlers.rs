@@ -7,7 +7,11 @@ use axum::{
 };
 use futures::{StreamExt, stream::SplitSink};
 use rand::{Rng, rng};
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -65,7 +69,8 @@ async fn setup_player_and_room(
             players: players.clone(),
             eliminated_players: vec![],
             current_turn_id: room_info.creator_id,
-            used_words: HashSet::new(),
+            used_words: HashMap::new(),
+            used_words_global: HashSet::new(),
             rule_context: RuleContext {
                 min_word_length: 4,
                 random_letter: generate_random_letter(),

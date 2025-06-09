@@ -240,7 +240,7 @@ pub async fn handle_incoming_messages(
                 }
 
                 // check if word is used
-                if room.used_words.contains(&cleaned_word) {
+                if room.used_words_global.contains(&cleaned_word) {
                     println!("This word have been used: {}", cleaned_word); // broadcast to players
                     broadcast_to_player(player.id, "used_word", &cleaned_word, connections).await;
                     continue;
@@ -282,7 +282,11 @@ pub async fn handle_incoming_messages(
                 }
 
                 // add to used words
-                room.used_words.insert(cleaned_word.clone());
+                room.used_words_global.insert(cleaned_word.clone());
+                room.used_words
+                    .entry(player.id)
+                    .or_default()
+                    .push(cleaned_word.clone());
 
                 // store next player id
                 if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
