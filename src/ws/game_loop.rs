@@ -6,7 +6,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    models::{GameRoom, Player, Standing},
+    models::{GameRoom, RoomPlayer, Standing},
     state::{Connections, Rooms},
     ws::{
         handlers::generate_random_letter,
@@ -79,7 +79,7 @@ pub async fn broadcast_to_room<T: Serialize>(
 }
 
 async fn broadcast_to_room_from_player(
-    sender_player: &Player,
+    sender_player: &RoomPlayer,
     msg_type: &str,
     data: &str,
     room: &GameRoom,
@@ -90,7 +90,7 @@ async fn broadcast_to_room_from_player(
     let message = json!({
         "type": msg_type,
         "data": data,
-        "sender": sender_player.username,
+        "sender": sender_player.wallet_address,
     });
 
     for player in &room.players {
@@ -169,7 +169,7 @@ fn start_turn_timer(
                         .rev()
                         .enumerate()
                         .map(|(index, player)| Standing {
-                            username: player.username.clone(),
+                            wallet_address: player.wallet_address.clone(),
                             rank: index + 1,
                         })
                         .collect();
@@ -180,7 +180,7 @@ fn start_turn_timer(
                 }
 
                 if room.players.is_empty() {
-                    println!("fix: room {} is now empty", room.id); // never really gets here
+                    println!("fix: room {} is now empty", room.info.id); // never really gets here
                     return;
                 }
 
@@ -191,7 +191,7 @@ fn start_turn_timer(
                     if let Some(current_player) = room.players.iter().find(|p| p.id == next_id) {
                         broadcast_to_room(
                             "current_turn",
-                            &current_player.username,
+                            &current_player.wallet_address,
                             &room,
                             &connections,
                         )
@@ -206,7 +206,7 @@ fn start_turn_timer(
                         words.clone(),
                     );
                 } else {
-                    println!("No next player found in room {}", room.id);
+                    println!("No next player found in room {}", room.info.id);
                 }
             }
         }
@@ -214,7 +214,7 @@ fn start_turn_timer(
 }
 
 pub async fn handle_incoming_messages(
-    player: &Player,
+    player: &RoomPlayer,
     room_id: Uuid,
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
     rooms: Rooms,
@@ -223,7 +223,7 @@ pub async fn handle_incoming_messages(
 ) {
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
-            println!("Received from {}: {}", player.username, text);
+            println!("Received from {}: {}", player.wallet_address, text);
 
             let cleaned_word = text.trim().to_lowercase();
 
@@ -235,12 +235,12 @@ pub async fn handle_incoming_messages(
 
                 // check turn
                 if player.id != room.current_turn_id {
-                    println!("Not {}'s turn", player.username); // broadcast turn to players
+                    println!("Not {}'s turn", player.wallet_address); // broadcast turn to players
                     continue;
                 }
 
                 // check if word is used
-                if room.used_words.contains(&cleaned_word) {
+                if room.used_words_global.contains(&cleaned_word) {
                     println!("This word have been used: {}", cleaned_word); // broadcast to players
                     broadcast_to_player(player.id, "used_word", &cleaned_word, connections).await;
                     continue;
@@ -274,12 +274,19 @@ pub async fn handle_incoming_messages(
 
                 // check if word is valid
                 if !words.contains(&cleaned_word) {
-                    println!("invalid word from {}: {}", player.username, cleaned_word);
+                    println!(
+                        "invalid word from {}: {}",
+                        player.wallet_address, cleaned_word
+                    );
                     continue;
                 }
 
                 // add to used words
-                room.used_words.insert(cleaned_word.clone());
+                room.used_words_global.insert(cleaned_word.clone());
+                room.used_words
+                    .entry(player.id)
+                    .or_default()
+                    .push(cleaned_word.clone());
 
                 // store next player id
                 if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
@@ -288,7 +295,7 @@ pub async fn handle_incoming_messages(
                     if let Some(current_player) = room.players.iter().find(|p| p.id == next_id) {
                         broadcast_to_room(
                             "current_turn",
-                            &current_player.username,
+                            &current_player.wallet_address,
                             &room,
                             &connections,
                         )

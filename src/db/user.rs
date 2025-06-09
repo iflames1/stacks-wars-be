@@ -1,6 +1,7 @@
 use crate::{models::User, state::RedisClient};
 use uuid::Uuid;
 
+// TODO: should we not check if user with wallet already exists?
 pub async fn create_user(
     wallet_address: String,
     display_name: Option<String>,

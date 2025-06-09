@@ -37,6 +37,8 @@ pub async fn create_room(
         wallet_address: creator_user.wallet_address,
         display_name: creator_user.display_name,
         state: PlayerState::Ready,
+        used_words: Vec::new(),
+        rank: None,
     };
 
     let room_player_json = serde_json::to_string(&room_player).unwrap();
@@ -98,6 +100,8 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         wallet_address: user.wallet_address,
         display_name: user.display_name,
         state: PlayerState::NotReady,
+        used_words: Vec::new(),
+        rank: None,
     };
 
     let player_json = serde_json::to_string(&room_player).unwrap();
@@ -231,4 +235,33 @@ pub async fn update_player_state(
     }
 
     Ok(())
+}
+
+pub async fn get_room_info(room_id: Uuid, redis: &RedisClient) -> Option<GameRoomInfo> {
+    let key = format!("room:{}:info", room_id);
+    let mut conn = redis.get().await.ok()?;
+    let value: String = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .ok()?;
+    serde_json::from_str(&value).ok()
+}
+
+pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<RoomPlayer>> {
+    let key = format!("room:{}:players", room_id);
+    let mut conn = redis.get().await.ok()?;
+
+    let values: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .ok()?;
+
+    let players: Vec<RoomPlayer> = values
+        .into_iter()
+        .filter_map(|v| serde_json::from_str(&v).ok())
+        .collect();
+
+    Some(players)
 }
