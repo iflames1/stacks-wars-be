@@ -37,6 +37,8 @@ pub async fn create_room(
         wallet_address: creator_user.wallet_address,
         display_name: creator_user.display_name,
         state: PlayerState::Ready,
+        used_words: Vec::new(),
+        rank: None,
     };
 
     let room_player_json = serde_json::to_string(&room_player).unwrap();
@@ -98,6 +100,8 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         wallet_address: user.wallet_address,
         display_name: user.display_name,
         state: PlayerState::NotReady,
+        used_words: Vec::new(),
+        rank: None,
     };
 
     let player_json = serde_json::to_string(&room_player).unwrap();
