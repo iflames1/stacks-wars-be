@@ -6,8 +6,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    db::room::update_room_player_after_game,
-    models::{GameRoom, RoomPlayer, Standing},
+    db::{room::update_room_player_after_game, update_game_state},
+    models::{GameRoom, GameState, RoomPlayer, Standing},
     state::{Connections, RedisClient, Rooms},
     ws::{
         handlers::generate_random_letter,
@@ -205,6 +205,13 @@ fn start_turn_timer(
 
                     // broadcast final result
                     broadcast_to_room("final_standing", &standings, &room, &connections).await;
+
+                    if let Err(e) =
+                        update_game_state(room_id, GameState::Finished, redis.clone()).await
+                    {
+                        println!("Error updating game state in Redis: {}", e);
+                    }
+
                     return;
                 }
 
