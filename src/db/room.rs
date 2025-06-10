@@ -265,3 +265,55 @@ pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<
 
     Some(players)
 }
+
+pub async fn update_room_player_after_game(
+    room_id: Uuid,
+    player_id: Uuid,
+    new_rank: usize,
+    new_used_words: Vec<String>,
+    redis: RedisClient,
+) -> Result<(), String> {
+    let players_key = format!("room:{}:players", room_id);
+    let mut conn = redis
+        .get()
+        .await
+        .map_err(|_| "Failed to get Redis connection")?;
+
+    // Fetch all players
+    let players_json: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&players_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to fetch players from Redis")?;
+
+    let mut players: Vec<RoomPlayer> = players_json
+        .into_iter()
+        .filter_map(|p| serde_json::from_str(&p).ok())
+        .collect();
+
+    let Some(player) = players.iter_mut().find(|p| p.id == player_id) else {
+        return Err("Player not found in room".into());
+    };
+
+    player.rank = Some(new_rank);
+    player.used_words = new_used_words;
+
+    // Replace entire player set
+    let _: () = redis::cmd("DEL")
+        .arg(&players_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| "Failed to clear old players")?;
+
+    for p in players {
+        let p_json = serde_json::to_string(&p).map_err(|_| "Serialization error")?;
+        let _: () = redis::cmd("SADD")
+            .arg(&players_key)
+            .arg(p_json)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|_| "Failed to re-add player")?;
+    }
+
+    Ok(())
+}

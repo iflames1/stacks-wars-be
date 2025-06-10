@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use crate::{
     db,
     models::{GameRoom, GameRoomInfo, GameState, PlayerState, RoomPlayer},
-    state::AppState,
+    state::{AppState, RedisClient},
     ws::game_loop::broadcast_to_room,
 };
 use crate::{models::QueryParams, ws::game_loop::handle_incoming_messages};
@@ -116,6 +116,7 @@ async fn handle_socket(
     connections: Connections,
     words: Arc<HashSet<String>>,
     room_info: GameRoomInfo,
+    redis: RedisClient,
 ) {
     let (sender, receiver) = stream.split();
 
@@ -123,7 +124,16 @@ async fn handle_socket(
 
     setup_player_and_room(&player, room_info, players, &rooms, &connections).await;
 
-    handle_incoming_messages(&player, room_id, receiver, rooms, &connections, words).await;
+    handle_incoming_messages(
+        &player,
+        room_id,
+        receiver,
+        rooms,
+        &connections,
+        words,
+        redis,
+    )
+    .await;
 
     remove_connection(&player, &connections).await;
 }
@@ -204,6 +214,7 @@ pub async fn ws_handler(
             connections,
             words,
             room_info,
+            redis,
         )
     }))
 }
