@@ -16,7 +16,6 @@ pub struct GameRoom {
     pub current_turn_id: Uuid,
     pub rule_context: RuleContext,
     pub rule_index: usize,
-    pub game_over: bool,
     pub eliminated_players: Vec<RoomPlayer>,
 }
 

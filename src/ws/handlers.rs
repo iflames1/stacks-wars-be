@@ -76,7 +76,6 @@ async fn setup_player_and_room(
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
-            game_over: false,
             rankings: vec![],
         }
     });
