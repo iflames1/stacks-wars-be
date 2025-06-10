@@ -6,8 +6,9 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
+    db::room::update_room_player_after_game,
     models::{GameRoom, RoomPlayer, Standing},
-    state::{Connections, Rooms},
+    state::{Connections, RedisClient, Rooms},
     ws::{
         handlers::generate_random_letter,
         rules::{get_rule_by_index, get_rules},
@@ -107,6 +108,7 @@ fn start_turn_timer(
     rooms: Rooms,
     connections: Connections,
     words: Arc<HashSet<String>>,
+    redis: RedisClient,
 ) {
     tokio::spawn(async move {
         for i in (0..=10).rev() {
@@ -143,13 +145,25 @@ fn start_turn_timer(
                     let player = room.players.remove(pos);
                     room.eliminated_players.push(player.clone());
 
-                    println!("players left: {}", room.players.len());
-
                     let position = room.players.len() + 1;
                     room.rankings.push((player.id, position)); // TODO: check usage
 
                     let rank = position.to_string();
                     broadcast_to_player(player_id, "rank", &rank, &connections).await;
+
+                    let player_used_words = room.used_words.remove(&player.id).unwrap_or_default();
+
+                    if let Err(e) = update_room_player_after_game(
+                        room_id,
+                        player_id,
+                        position,
+                        player_used_words,
+                        redis.clone(),
+                    )
+                    .await
+                    {
+                        println!("Error updating player in Redis: {}", e);
+                    }
                 }
 
                 // check game over
@@ -157,7 +171,22 @@ fn start_turn_timer(
                     let winner = room.players.remove(0);
                     room.eliminated_players.push(winner.clone());
                     room.rankings.push((winner.id, 1));
+
                     broadcast_to_player(winner.id, "rank", "1", &connections).await;
+
+                    let player_used_words = room.used_words.remove(&winner.id).unwrap_or_default();
+
+                    if let Err(e) = update_room_player_after_game(
+                        room_id,
+                        winner.id,
+                        1,
+                        player_used_words,
+                        redis.clone(),
+                    )
+                    .await
+                    {
+                        println!("Error updating player in Redis: {}", e);
+                    }
 
                     let game_over = "🏁 Game Over!".to_string();
 
@@ -204,6 +233,7 @@ fn start_turn_timer(
                         rooms.clone(),
                         connections.clone(),
                         words.clone(),
+                        redis.clone(),
                     );
                 } else {
                     println!("No next player found in room {}", room.info.id);
@@ -220,6 +250,7 @@ pub async fn handle_incoming_messages(
     rooms: Rooms,
     connections: &Connections,
     words: Arc<HashSet<String>>,
+    redis: RedisClient,
 ) {
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
@@ -312,6 +343,7 @@ pub async fn handle_incoming_messages(
                     rooms.clone(),
                     connections.clone(),
                     words.clone(),
+                    redis.clone(),
                 );
 
                 advance_turn = true;
