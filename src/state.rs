@@ -13,7 +13,7 @@ pub struct AppState {
     pub redis: RedisClient,
 }
 
-use crate::models::GameRoom;
+use crate::models::game::GameRoom;
 
 pub type Rooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
 

@@ -1,9 +1,8 @@
 use uuid::Uuid;
 
-use crate::models::PlayerState;
 use crate::{
     db::user::get_user_by_id,
-    models::{GameRoomInfo, GameState, Player},
+    models::game::{GameRoomInfo, GameState, Player, PlayerState},
     state::RedisClient,
 };
 

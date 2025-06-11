@@ -12,7 +12,7 @@ use crate::{
             get_next_player_and_wrap,
         },
     },
-    models::{GameData, GameState, Player, Standing},
+    models::game::{GameData, GameState, Player, Standing},
     state::{Connections, RedisClient, Rooms},
 };
 use uuid::Uuid;
@@ -43,7 +43,6 @@ fn start_turn_timer(
                 }
             }
 
-            //println!("{} seconds left for player {}", i, player_id);
             sleep(Duration::from_secs(1)).await;
         }
 

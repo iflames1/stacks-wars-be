@@ -3,13 +3,10 @@ use std::{
     sync::Arc,
 };
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{games::lexi_wars::rules::RuleContext, ws::handlers::load_word_list};
-
-pub static WORD_LIST: Lazy<Arc<HashSet<String>>> = Lazy::new(|| Arc::new(load_word_list()));
 
 #[derive(Debug)]
 pub enum GameData {

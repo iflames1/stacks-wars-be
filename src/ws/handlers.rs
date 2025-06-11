@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{StreamExt, stream::SplitSink};
+use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -13,22 +14,23 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+use crate::games::lexi_wars::engine::handle_incoming_messages;
 use crate::{
     db,
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
-    models::{GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, WORD_LIST},
+    models::game::{GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState},
+    models::word_loader::WORD_LIST,
     state::{AppState, RedisClient},
 };
-use crate::{games::lexi_wars::engine::handle_incoming_messages, models::QueryParams};
 use crate::{
     games::lexi_wars::rules::RuleContext,
     state::{Connections, Rooms},
 };
 use uuid::Uuid;
 
-pub fn load_word_list() -> HashSet<String> {
-    let json = include_str!("../assets/words.json");
-    serde_json::from_str(json).expect("Failed to parse words.json")
+#[derive(Deserialize)]
+pub struct QueryParams {
+    pub player_id: Uuid,
 }
 
 async fn store_connection(
