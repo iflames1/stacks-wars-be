@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::{
     games::lexi_wars::rules::get_rules,
-    models::{GameRoom, RoomPlayer},
+    models::{GameRoom, Player},
     state::Connections,
 };
 use uuid::Uuid;
@@ -80,7 +80,7 @@ pub async fn broadcast_to_room<T: Serialize>(
 }
 
 pub async fn broadcast_to_room_from_player(
-    sender_player: &RoomPlayer,
+    sender_player: &Player,
     msg_type: &str,
     data: &str,
     room: &GameRoom,

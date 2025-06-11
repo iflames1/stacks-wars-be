@@ -12,7 +12,7 @@ use crate::{
             get_next_player_and_wrap,
         },
     },
-    models::{GameState, RoomPlayer, Standing},
+    models::{GameData, GameState, Player, Standing},
     state::{Connections, RedisClient, Rooms},
 };
 use uuid::Uuid;
@@ -166,12 +166,11 @@ fn start_turn_timer(
 }
 
 pub async fn handle_incoming_messages(
-    player: &RoomPlayer,
+    player: &Player,
     room_id: Uuid,
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
     rooms: Rooms,
     connections: &Connections,
-    words: Arc<HashSet<String>>,
     redis: RedisClient,
 ) {
     while let Some(Ok(msg)) = receiver.next().await {
@@ -185,6 +184,9 @@ pub async fn handle_incoming_messages(
             {
                 let mut rooms_guard = rooms.lock().await;
                 let room = rooms_guard.get_mut(&room_id).unwrap();
+                let words = match &room.data {
+                    GameData::LexiWar { word_list } => word_list.clone(),
+                };
 
                 // check turn
                 if player.id != room.current_turn_id {

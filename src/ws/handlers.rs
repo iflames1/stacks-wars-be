@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use crate::{
     db,
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
-    models::{GameRoom, GameRoomInfo, GameState, PlayerState, RoomPlayer},
+    models::{GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, WORD_LIST},
     state::{AppState, RedisClient},
 };
 use crate::{games::lexi_wars::engine::handle_incoming_messages, models::QueryParams};
@@ -26,13 +26,13 @@ use crate::{
 };
 use uuid::Uuid;
 
-fn load_word_list() -> HashSet<String> {
+pub fn load_word_list() -> HashSet<String> {
     let json = include_str!("../assets/words.json");
     serde_json::from_str(json).expect("Failed to parse words.json")
 }
 
 async fn store_connection(
-    player: &RoomPlayer,
+    player: &Player,
     sender: SplitSink<WebSocket, Message>,
     connections: &Connections,
 ) {
@@ -40,16 +40,16 @@ async fn store_connection(
     conns.insert(player.id, Arc::new(Mutex::new(sender)));
 }
 
-async fn remove_connection(player: &RoomPlayer, connections: &Connections) {
+async fn remove_connection(player: &Player, connections: &Connections) {
     let mut conns = connections.lock().await;
     conns.remove(&player.id);
     println!("Player {} disconnected", player.wallet_address);
 }
 
 async fn setup_player_and_room(
-    player: &RoomPlayer,
+    player: &Player,
     room_info: GameRoomInfo,
-    players: Vec<RoomPlayer>,
+    players: Vec<Player>,
     rooms: &Rooms,
     connections: &Connections,
 ) {
@@ -58,9 +58,11 @@ async fn setup_player_and_room(
     // Check if this room is already active in memory
     let room = locked_rooms.entry(room_info.id).or_insert_with(|| {
         println!("Initializing new in-memory GameRoom for {}", room_info.id);
+        let word_list = WORD_LIST.clone();
         GameRoom {
             info: room_info.clone(),
             players: players.clone(),
+            data: GameData::LexiWar { word_list },
             eliminated_players: vec![],
             current_turn_id: room_info.creator_id,
             used_words: HashMap::new(),
@@ -103,11 +105,10 @@ async fn setup_player_and_room(
 async fn handle_socket(
     stream: WebSocket,
     room_id: Uuid,
-    player: RoomPlayer,
-    players: Vec<RoomPlayer>,
+    player: Player,
+    players: Vec<Player>,
     rooms: Rooms,
     connections: Connections,
-    words: Arc<HashSet<String>>,
     room_info: GameRoomInfo,
     redis: RedisClient,
 ) {
@@ -117,16 +118,7 @@ async fn handle_socket(
 
     setup_player_and_room(&player, room_info, players, &rooms, &connections).await;
 
-    handle_incoming_messages(
-        &player,
-        room_id,
-        receiver,
-        rooms,
-        &connections,
-        words,
-        redis,
-    )
-    .await;
+    handle_incoming_messages(&player, room_id, receiver, rooms, &connections, redis).await;
 
     remove_connection(&player, &connections).await;
 }
@@ -143,7 +135,7 @@ pub async fn ws_handler(
 
     let redis = state.redis.clone();
     let connections = state.connections.clone();
-    let words = Arc::new(load_word_list());
+
     // TODO: lets come back to this later
     let rooms = state.rooms.clone();
 
@@ -205,7 +197,6 @@ pub async fn ws_handler(
             players_clone,
             rooms,
             connections,
-            words,
             room_info,
             redis,
         )

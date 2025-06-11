@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::models::PlayerState;
 use crate::{
     db::user::get_user_by_id,
-    models::{GameRoomInfo, GameState, RoomPlayer},
+    models::{GameRoomInfo, GameState, Player},
     state::RedisClient,
 };
 
@@ -32,7 +32,7 @@ pub async fn create_room(
         .await
         .expect("Failed to get creator user");
 
-    let room_player = RoomPlayer {
+    let room_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address,
         display_name: creator_user.display_name,
@@ -95,7 +95,7 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         .await
         .ok_or("User not found")?;
 
-    let room_player = RoomPlayer {
+    let room_player = Player {
         id: user.id,
         wallet_address: user.wallet_address,
         display_name: user.display_name,
@@ -131,7 +131,7 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         .map_err(|_| "Failed to fetch players")?;
 
     let Some(player_to_remove) = players.iter().find(|p| {
-        serde_json::from_str::<RoomPlayer>(p)
+        serde_json::from_str::<Player>(p)
             .map(|rp| rp.id == user_id)
             .unwrap_or(false)
     }) else {
@@ -204,7 +204,7 @@ pub async fn update_player_state(
         .await
         .map_err(|_| "Failed to fetch players")?;
 
-    let mut players: Vec<RoomPlayer> = players_json
+    let mut players: Vec<Player> = players_json
         .into_iter()
         .filter_map(|p| serde_json::from_str(&p).ok())
         .collect();
@@ -248,7 +248,7 @@ pub async fn get_room_info(room_id: Uuid, redis: &RedisClient) -> Option<GameRoo
     serde_json::from_str(&value).ok()
 }
 
-pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<RoomPlayer>> {
+pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<Player>> {
     let key = format!("room:{}:players", room_id);
     let mut conn = redis.get().await.ok()?;
 
@@ -258,7 +258,7 @@ pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<
         .await
         .ok()?;
 
-    let players: Vec<RoomPlayer> = values
+    let players: Vec<Player> = values
         .into_iter()
         .filter_map(|v| serde_json::from_str(&v).ok())
         .collect();
@@ -286,7 +286,7 @@ pub async fn update_room_player_after_game(
         .await
         .map_err(|_| "Failed to fetch players from Redis")?;
 
-    let mut players: Vec<RoomPlayer> = players_json
+    let mut players: Vec<Player> = players_json
         .into_iter()
         .filter_map(|p| serde_json::from_str(&p).ok())
         .collect();

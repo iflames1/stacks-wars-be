@@ -8,6 +8,7 @@ axum = {version = "0.8.4", features = ["ws", "macros"]}
 bb8 = "0.9.0"
 bb8-redis = "0.23.0"
 futures = "0.3.31"
+once_cell = "1.21.3"
 rand = "0.9.1"
 redis = {version = "0.31.0", features = ["tokio-comp", "connection-manager"]}
 serde = {version ="1.0.219", features = ["serde_derive"]}
