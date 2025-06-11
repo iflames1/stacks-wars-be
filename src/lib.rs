@@ -7,7 +7,7 @@ pub mod ws;
 
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
-use state::{AppState, Connections, Rooms};
+use state::{AppState, PlayerConnections, SharedRooms};
 use std::net::SocketAddr;
 
 pub async fn start_server() {
@@ -16,8 +16,8 @@ pub async fn start_server() {
     let manager = RedisConnectionManager::new("redis://127.0.0.1/").unwrap();
     let redis_pool = Pool::builder().build(manager).await.unwrap();
 
-    let rooms: Rooms = Default::default();
-    let connections: Connections = Default::default();
+    let rooms: SharedRooms = Default::default();
+    let connections: PlayerConnections = Default::default();
 
     let state = AppState {
         rooms,
