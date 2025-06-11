@@ -6,7 +6,6 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{StreamExt, stream::SplitSink};
-use rand::{Rng, rng};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -16,25 +15,20 @@ use tokio::sync::Mutex;
 
 use crate::{
     db,
+    games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
     models::{GameRoom, GameRoomInfo, GameState, PlayerState, RoomPlayer},
     state::{AppState, RedisClient},
-    ws::game_loop::broadcast_to_room,
 };
-use crate::{models::QueryParams, ws::game_loop::handle_incoming_messages};
+use crate::{games::lexi_wars::engine::handle_incoming_messages, models::QueryParams};
 use crate::{
+    games::lexi_wars::rules::RuleContext,
     state::{Connections, Rooms},
-    ws::rules::RuleContext,
 };
 use uuid::Uuid;
 
 fn load_word_list() -> HashSet<String> {
     let json = include_str!("../assets/words.json");
     serde_json::from_str(json).expect("Failed to parse words.json")
-}
-
-pub fn generate_random_letter() -> char {
-    let letter = rng().random_range(0..26);
-    (b'a' + letter as u8) as char
 }
 
 async fn store_connection(
@@ -100,7 +94,7 @@ async fn setup_player_and_room(
             "current_turn",
             &current_player.wallet_address,
             &room,
-            connections, // or &connections if needed
+            connections,
         )
         .await;
     }

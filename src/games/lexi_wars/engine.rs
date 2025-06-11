@@ -1,106 +1,21 @@
 use axum::extract::ws::Message;
-use futures::{SinkExt, StreamExt};
-use serde::Serialize;
-use serde_json::json;
+use futures::StreamExt;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
     db::{room::update_room_player_after_game, update_game_state},
-    models::{GameRoom, GameState, RoomPlayer, Standing},
-    state::{Connections, RedisClient, Rooms},
-    ws::{
-        handlers::generate_random_letter,
-        rules::{get_rule_by_index, get_rules},
+    games::lexi_wars::{
+        rules::get_rule_by_index,
+        utils::{
+            broadcast_to_player, broadcast_to_room, broadcast_to_room_from_player,
+            get_next_player_and_wrap,
+        },
     },
+    models::{GameState, RoomPlayer, Standing},
+    state::{Connections, RedisClient, Rooms},
 };
 use uuid::Uuid;
-
-fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uuid> {
-    let players = &room.players;
-
-    players.iter().position(|p| p.id == current_id).map(|i| {
-        let next_index = (i + 1) % players.len();
-        let next_id = players[next_index].id;
-        let wrapped = next_index == 0;
-
-        if wrapped {
-            let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
-
-            // If we wrapped to first rule again, increase difficulty
-            if next_rule_index == 0 {
-                room.rule_context.min_word_length += 2;
-            }
-
-            room.rule_index = next_rule_index;
-            room.rule_context.random_letter = generate_random_letter();
-        }
-
-        next_id
-    })
-}
-
-async fn broadcast_to_player(
-    target_player_id: Uuid,
-    msg_type: &str,
-    data: &str,
-    connections: &Connections,
-) {
-    let connection_guard = connections.lock().await;
-    if let Some(sender_arc) = connection_guard.get(&target_player_id) {
-        let message = json!({
-            "type": msg_type,
-            "data": data,
-        })
-        .to_string();
-        let mut sender = sender_arc.lock().await;
-        let _ = sender.send(Message::Text(message.into())).await;
-    }
-}
-
-pub async fn broadcast_to_room<T: Serialize>(
-    msg_type: &str,
-    data: &T,
-    room: &GameRoom,
-    connections: &Connections,
-) {
-    let connection_guard = connections.lock().await;
-
-    let message = json!({
-        "type": msg_type,
-        "data": data,
-    });
-
-    for player in room.players.iter().chain(room.eliminated_players.iter()) {
-        if let Some(sender_arc) = connection_guard.get(&player.id) {
-            let mut sender = sender_arc.lock().await;
-            let _ = sender.send(Message::Text(message.to_string().into())).await;
-        }
-    }
-}
-
-async fn broadcast_to_room_from_player(
-    sender_player: &RoomPlayer,
-    msg_type: &str,
-    data: &str,
-    room: &GameRoom,
-    connections: &Connections,
-) {
-    let connection_guard = connections.lock().await;
-
-    let message = json!({
-        "type": msg_type,
-        "data": data,
-        "sender": sender_player.wallet_address,
-    });
-
-    for player in &room.players {
-        if let Some(sender_arc) = connection_guard.get(&player.id) {
-            let mut sender = sender_arc.lock().await;
-            let _ = sender.send(Message::Text(message.to_string().into())).await;
-        }
-    }
-}
 
 fn start_turn_timer(
     player_id: Uuid,
@@ -128,7 +43,7 @@ fn start_turn_timer(
                 }
             }
 
-            println!("{} seconds left for player {}", i, player_id);
+            //println!("{} seconds left for player {}", i, player_id);
             sleep(Duration::from_secs(1)).await;
         }
 
