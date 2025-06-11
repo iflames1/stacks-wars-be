@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::{
     games::lexi_wars::rules::get_rules,
     models::game::{GameRoom, Player},
-    state::Connections,
+    state::PlayerConnections,
 };
 use uuid::Uuid;
 
@@ -44,7 +44,7 @@ pub async fn broadcast_to_player(
     target_player_id: Uuid,
     msg_type: &str,
     data: &str,
-    connections: &Connections,
+    connections: &PlayerConnections,
 ) {
     let connection_guard = connections.lock().await;
     if let Some(sender_arc) = connection_guard.get(&target_player_id) {
@@ -62,7 +62,7 @@ pub async fn broadcast_to_room<T: Serialize>(
     msg_type: &str,
     data: &T,
     room: &GameRoom,
-    connections: &Connections,
+    connections: &PlayerConnections,
 ) {
     let connection_guard = connections.lock().await;
 
@@ -84,7 +84,7 @@ pub async fn broadcast_to_room_from_player(
     msg_type: &str,
     data: &str,
     room: &GameRoom,
-    connections: &Connections,
+    connections: &PlayerConnections,
 ) {
     let connection_guard = connections.lock().await;
 

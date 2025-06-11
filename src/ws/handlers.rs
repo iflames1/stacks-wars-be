@@ -24,7 +24,7 @@ use crate::{
 };
 use crate::{
     games::lexi_wars::rules::RuleContext,
-    state::{Connections, Rooms},
+    state::{PlayerConnections, SharedRooms},
 };
 use uuid::Uuid;
 
@@ -36,13 +36,13 @@ pub struct QueryParams {
 async fn store_connection(
     player: &Player,
     sender: SplitSink<WebSocket, Message>,
-    connections: &Connections,
+    connections: &PlayerConnections,
 ) {
     let mut conns = connections.lock().await;
     conns.insert(player.id, Arc::new(Mutex::new(sender)));
 }
 
-async fn remove_connection(player: &Player, connections: &Connections) {
+async fn remove_connection(player: &Player, connections: &PlayerConnections) {
     let mut conns = connections.lock().await;
     conns.remove(&player.id);
     println!("Player {} disconnected", player.wallet_address);
@@ -52,8 +52,8 @@ async fn setup_player_and_room(
     player: &Player,
     room_info: GameRoomInfo,
     players: Vec<Player>,
-    rooms: &Rooms,
-    connections: &Connections,
+    rooms: &SharedRooms,
+    connections: &PlayerConnections,
 ) {
     let mut locked_rooms = rooms.lock().await;
 
@@ -109,8 +109,8 @@ async fn handle_socket(
     room_id: Uuid,
     player: Player,
     players: Vec<Player>,
-    rooms: Rooms,
-    connections: Connections,
+    rooms: SharedRooms,
+    connections: PlayerConnections,
     room_info: GameRoomInfo,
     redis: RedisClient,
 ) {

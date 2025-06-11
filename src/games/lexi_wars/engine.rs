@@ -13,15 +13,15 @@ use crate::{
         },
     },
     models::game::{GameData, GameState, Player, Standing},
-    state::{Connections, RedisClient, Rooms},
+    state::{PlayerConnections, RedisClient, SharedRooms},
 };
 use uuid::Uuid;
 
 fn start_turn_timer(
     player_id: Uuid,
     room_id: Uuid,
-    rooms: Rooms,
-    connections: Connections,
+    rooms: SharedRooms,
+    connections: PlayerConnections,
     words: Arc<HashSet<String>>,
     redis: RedisClient,
 ) {
@@ -168,8 +168,8 @@ pub async fn handle_incoming_messages(
     player: &Player,
     room_id: Uuid,
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
-    rooms: Rooms,
-    connections: &Connections,
+    rooms: SharedRooms,
+    connections: &PlayerConnections,
     redis: RedisClient,
 ) {
     while let Some(Ok(msg)) = receiver.next().await {
