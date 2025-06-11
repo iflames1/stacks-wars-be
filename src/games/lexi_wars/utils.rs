@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::{
     games::lexi_wars::rules::get_rules,
-    models::{GameRoom, Player},
+    models::game::{GameRoom, Player},
     state::Connections,
 };
 use uuid::Uuid;

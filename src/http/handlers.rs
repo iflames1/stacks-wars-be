@@ -11,7 +11,10 @@ use crate::{
         create_room, join_room, leave_room, update_game_state, update_player_state,
         user::create_user,
     },
-    models::{GameState, PlayerState, User},
+    models::{
+        User,
+        game::{GameState, PlayerState},
+    },
     state::AppState,
 };
 
