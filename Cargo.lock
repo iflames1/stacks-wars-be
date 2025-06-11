@@ -1013,6 +1013,7 @@ dependencies = [
  "bb8",
  "bb8-redis",
  "futures",
+ "once_cell",
  "rand",
  "redis",
  "serde",
