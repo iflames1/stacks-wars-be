@@ -1,4 +1,5 @@
 mod db;
+pub mod games;
 mod http;
 mod models;
 mod state;

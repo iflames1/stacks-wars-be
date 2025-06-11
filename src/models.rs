@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::ws::rules::RuleContext;
+use crate::games::rules::RuleContext;
 
 #[derive(Debug)]
 pub struct GameRoom {

@@ -16,14 +16,14 @@ use tokio::sync::Mutex;
 
 use crate::{
     db,
+    games::lexi_wars::broadcast_to_room,
     models::{GameRoom, GameRoomInfo, GameState, PlayerState, RoomPlayer},
     state::{AppState, RedisClient},
-    ws::game_loop::broadcast_to_room,
 };
-use crate::{models::QueryParams, ws::game_loop::handle_incoming_messages};
+use crate::{games::lexi_wars::handle_incoming_messages, models::QueryParams};
 use crate::{
+    games::rules::RuleContext,
     state::{Connections, Rooms},
-    ws::rules::RuleContext,
 };
 use uuid::Uuid;
 
@@ -100,7 +100,7 @@ async fn setup_player_and_room(
             "current_turn",
             &current_player.wallet_address,
             &room,
-            connections, // or &connections if needed
+            connections,
         )
         .await;
     }

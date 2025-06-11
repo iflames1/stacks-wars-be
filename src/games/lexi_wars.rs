@@ -7,12 +7,10 @@ use tokio::time::sleep;
 
 use crate::{
     db::{room::update_room_player_after_game, update_game_state},
+    games::rules::{get_rule_by_index, get_rules},
     models::{GameRoom, GameState, RoomPlayer, Standing},
     state::{Connections, RedisClient, Rooms},
-    ws::{
-        handlers::generate_random_letter,
-        rules::{get_rule_by_index, get_rules},
-    },
+    ws::handlers::generate_random_letter,
 };
 use uuid::Uuid;
 
@@ -128,7 +126,7 @@ fn start_turn_timer(
                 }
             }
 
-            println!("{} seconds left for player {}", i, player_id);
+            //println!("{} seconds left for player {}", i, player_id);
             sleep(Duration::from_secs(1)).await;
         }
 

@@ -1,4 +1,4 @@
-use stacks_wars_be::ws::rules::{RuleContext, find_rule_by_name, get_rules};
+use stacks_wars_be::games::rules::{RuleContext, find_rule_by_name, get_rules};
 
 fn create_test_context() -> RuleContext {
     RuleContext {
@@ -8,9 +8,9 @@ fn create_test_context() -> RuleContext {
 }
 
 fn get_rule_by_name<'a>(
-    rules: &'a [stacks_wars_be::ws::rules::Rule],
+    rules: &'a [stacks_wars_be::games::rules::Rule],
     name: &str,
-) -> &'a stacks_wars_be::ws::rules::Rule {
+) -> &'a stacks_wars_be::games::rules::Rule {
     find_rule_by_name(rules, name).unwrap_or_else(|| panic!("Rule '{}' not found", name))
 }
 
