@@ -60,7 +60,6 @@ fn start_turn_timer(
                     room.eliminated_players.push(player.clone());
 
                     let position = room.players.len() + 1;
-                    room.rankings.push((player.id, position)); // TODO: check usage
 
                     let rank = position.to_string();
                     broadcast_to_player(player_id, "rank", &rank, &connections).await;
@@ -84,7 +83,6 @@ fn start_turn_timer(
                 if room.players.len() == 1 {
                     let winner = room.players.remove(0);
                     room.eliminated_players.push(winner.clone());
-                    room.rankings.push((winner.id, 1));
 
                     broadcast_to_player(winner.id, "rank", "1", &connections).await;
 
