@@ -33,6 +33,7 @@ pub struct QueryParams {
     pub player_id: Uuid,
 }
 
+// TODO: log to centralized logger
 async fn store_connection(
     player: &Player,
     sender: SplitSink<WebSocket, Message>,
@@ -74,7 +75,6 @@ async fn setup_player_and_room(
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
-            rankings: vec![],
         }
     });
 
@@ -138,7 +138,6 @@ pub async fn ws_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
 
-    // TODO: lets come back to this later
     let rooms = state.rooms.clone();
 
     let player_id = params.player_id;
@@ -167,6 +166,7 @@ pub async fn ws_handler(
         }
     };
 
+    // TODO: avoid cloning all players
     let players_clone = players.clone();
     let matched_player = match players
         .into_iter()

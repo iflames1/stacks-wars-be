@@ -21,13 +21,12 @@ pub struct GameRoom {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
     pub data: GameData,
-    pub rankings: Vec<(Uuid, usize)>,
     pub used_words_global: HashSet<String>,
     pub used_words: HashMap<Uuid, Vec<String>>,
-
-    pub current_turn_id: Uuid,
     pub rule_context: RuleContext,
     pub rule_index: usize,
+
+    pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
 }
 
