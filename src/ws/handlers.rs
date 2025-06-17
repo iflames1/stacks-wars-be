@@ -1,12 +1,12 @@
 use axum::{
     extract::{
-        ConnectInfo, Path, Query, State, WebSocketUpgrade,
+        ConnectInfo, Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
+    http::StatusCode,
     response::IntoResponse,
 };
 use futures::{StreamExt, stream::SplitSink};
-use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -14,7 +14,9 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-use crate::games::lexi_wars::engine::handle_incoming_messages;
+use crate::{
+    auth::AuthClaims, errors::AppError, games::lexi_wars::engine::handle_incoming_messages,
+};
 use crate::{
     db,
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
@@ -27,11 +29,6 @@ use crate::{
     state::{PlayerConnections, SharedRooms},
 };
 use uuid::Uuid;
-
-#[derive(Deserialize)]
-pub struct QueryParams {
-    pub player_id: Uuid,
-}
 
 // TODO: log to centralized logger
 async fn store_connection(
@@ -128,62 +125,41 @@ async fn handle_socket(
 #[axum::debug_handler]
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    AuthClaims(claims): AuthClaims,
     Path(room_id): Path<Uuid>,
-    Query(params): Query<QueryParams>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     println!("New WebSocket connection from {}", addr);
+
+    let player_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
 
     let redis = state.redis.clone();
     let connections = state.connections.clone();
-
     let rooms = state.rooms.clone();
 
-    let player_id = params.player_id;
-
-    let room = match db::room::get_room_info(room_id, &redis).await {
-        Some(room) => room,
-        None => {
-            println!("Room {} not found", room_id);
-            return Err((axum::http::StatusCode::FORBIDDEN, "Room not found"));
-        }
-    };
+    let room = db::room::get_room_info(room_id, &redis)
+        .await
+        .ok_or_else(|| AppError::NotFound("Room not found".into()).to_response())?;
 
     if room.state != GameState::InProgress {
-        println!("Game in room {} is not in progress", room_id);
-        return Err((axum::http::StatusCode::FORBIDDEN, "Game not in progress"));
+        return Err(AppError::BadRequest("Game not in progress".into()).to_response());
     }
 
-    let players = match db::room::get_room_players(room_id, &redis).await {
-        Some(players) => players,
-        None => {
-            println!("No players found in room {}", room_id);
-            return Err((
-                axum::http::StatusCode::FORBIDDEN,
-                "No players found in room",
-            ));
-        }
-    };
+    let players = db::room::get_room_players(room_id, &redis)
+        .await
+        .ok_or_else(|| AppError::NotFound("No players found in room".into()).to_response())?;
 
     // TODO: avoid cloning all players
     let players_clone = players.clone();
-    let matched_player = match players
+
+    let matched_player = players
         .into_iter()
         .find(|p| p.id == player_id && p.state == PlayerState::Ready)
-    {
-        Some(player) => player,
-        None => {
-            println!(
-                "Player with ID {} not found or not ready in room {}",
-                player_id, room_id
-            );
-            return Err((
-                axum::http::StatusCode::FORBIDDEN,
-                "Player not found or not ready",
-            ));
-        }
-    };
+        .ok_or_else(|| {
+            AppError::Unauthorized("Player not found or not ready in room".into()).to_response()
+        })?;
 
     println!(
         "Player {} allowed to join room {}",
