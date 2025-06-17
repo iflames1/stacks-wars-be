@@ -7,3 +7,10 @@ pub struct User {
     pub wallet_address: String,
     pub display_name: Option<String>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: String,    // user ID
+    pub wallet: String, // wallet address
+    pub exp: usize,     // expiration time
+}

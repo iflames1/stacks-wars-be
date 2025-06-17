@@ -1,4 +1,6 @@
+pub mod auth;
 mod db;
+pub mod errors;
 pub mod games;
 mod http;
 mod models;

@@ -7,14 +7,13 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
+    auth::AuthClaims,
     db::{
         create_room, join_room, leave_room, update_game_state, update_player_state,
         user::create_user,
     },
-    models::{
-        User,
-        game::{GameState, PlayerState},
-    },
+    errors::AppError,
+    models::game::{GameState, PlayerState},
     state::AppState,
 };
 
@@ -27,7 +26,7 @@ pub struct CreateUserPayload {
 pub async fn create_user_handler(
     State(state): State<AppState>,
     Json(payload): Json<CreateUserPayload>,
-) -> Result<Json<User>, (StatusCode, String)> {
+) -> Result<Json<String>, (StatusCode, String)> {
     match create_user(
         payload.wallet_address,
         payload.display_name,
@@ -35,58 +34,66 @@ pub async fn create_user_handler(
     )
     .await
     {
-        Ok(user) => Ok(Json(user)),
-        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+        Ok(token) => Ok(Json(token)),
+        Err(err) => Err(err.to_response()),
     }
 }
 
 #[derive(Deserialize)]
 pub struct CreateRoomPayload {
     pub name: String,
-    pub creator_id: Uuid,
     pub max_participants: usize,
 }
 
+#[axum::debug_handler]
 pub async fn create_room_handler(
     State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
     Json(payload): Json<CreateRoomPayload>,
-) -> Json<Uuid> {
+) -> Result<Json<Uuid>, (StatusCode, String)> {
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+
     let room_id = create_room(
         payload.name,
-        payload.creator_id,
+        user_id,
         payload.max_participants,
         state.redis.clone(),
     )
-    .await;
+    .await
+    .map_err(|err| err.to_response())?;
 
-    Json(room_id)
-}
-
-#[derive(Deserialize)]
-pub struct RoomActionPayload {
-    pub user_id: Uuid,
+    Ok(Json(room_id))
 }
 
 pub async fn join_room_handler(
     Path(room_id): Path<Uuid>,
+    AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
-    Json(payload): Json<RoomActionPayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
-    match join_room(room_id, payload.user_id, state.redis.clone()).await {
-        Ok(_) => Ok(Json("Joined room")),
-        Err(e) => Err((StatusCode::BAD_REQUEST, e)),
-    }
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+
+    join_room(room_id, user_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json("success"))
 }
 
 pub async fn leave_room_handler(
     Path(room_id): Path<Uuid>,
+    AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
-    Json(payload): Json<RoomActionPayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
-    match leave_room(room_id, payload.user_id, state.redis.clone()).await {
-        Ok(_) => Ok(Json("Left room")),
-        Err(e) => Err((StatusCode::BAD_REQUEST, e)),
-    }
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+
+    leave_room(room_id, user_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json("success"))
 }
 
 #[derive(Deserialize)]
@@ -98,9 +105,12 @@ pub async fn update_game_state_handler(
     Path(room_id): Path<Uuid>,
     State(state): State<AppState>,
     Json(payload): Json<UpdateGameStatePayload>,
-) -> Json<Result<(), String>> {
-    let res = update_game_state(room_id, payload.new_state, state.redis.clone()).await;
-    Json(res)
+) -> Result<Json<&'static str>, (StatusCode, String)> {
+    update_game_state(room_id, payload.new_state, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json("success"))
 }
 
 #[derive(Deserialize)]
@@ -113,13 +123,15 @@ pub async fn update_player_state_handler(
     Path(room_id): Path<Uuid>,
     State(state): State<AppState>,
     Json(payload): Json<UpdatePlayerStatePayload>,
-) -> Json<Result<(), String>> {
-    let res = update_player_state(
+) -> Result<Json<&'static str>, (StatusCode, String)> {
+    update_player_state(
         room_id,
         payload.user_id,
         payload.new_state,
         state.redis.clone(),
     )
-    .await;
-    Json(res)
+    .await
+    .map_err(|e| e.to_response())?;
+
+    Ok(Json("success"))
 }
