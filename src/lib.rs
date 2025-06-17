@@ -13,6 +13,7 @@ use state::{AppState, PlayerConnections, SharedRooms};
 use std::net::SocketAddr;
 
 pub async fn start_server() {
+    dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
 
     let manager = RedisConnectionManager::new("redis://127.0.0.1/").unwrap();
