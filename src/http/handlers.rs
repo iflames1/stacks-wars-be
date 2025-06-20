@@ -169,11 +169,29 @@ pub async fn update_player_state_handler(
     Ok(Json("success"))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AddGamePayload {
+    pub name: String,
+    pub description: String,
+    pub image_url: String,
+    pub tags: Option<Vec<String>>,
+    pub min_players: u8,
+}
 pub async fn add_game_handler(
     State(state): State<AppState>,
-    Json(payload): Json<GameType>,
+    Json(payload): Json<AddGamePayload>,
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
-    let id = add_game(payload, state.redis.clone())
+    let id = Uuid::new_v4();
+    let game = GameType {
+        id,
+        name: payload.name,
+        description: payload.description,
+        image_url: payload.image_url,
+        tags: payload.tags,
+        min_players: payload.min_players,
+    };
+
+    let id = add_game(game, state.redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
