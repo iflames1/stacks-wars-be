@@ -11,11 +11,13 @@ use crate::{
     db::{
         create_room,
         game::{add_game, get_all_games, get_game},
-        join_room, leave_room, update_game_state, update_player_state,
+        join_room, leave_room,
+        room::{get_all_rooms, get_players, get_room},
+        update_game_state, update_player_state,
         user::create_user,
     },
     errors::AppError,
-    models::game::{GameState, GameType, PlayerState},
+    models::game::{GameRoomInfo, GameState, GameType, Player, PlayerState},
     state::AppState,
 };
 
@@ -65,6 +67,38 @@ pub async fn create_room_handler(
     .map_err(|err| err.to_response())?;
 
     Ok(Json(room_id))
+}
+
+pub async fn get_room_handler(
+    Path(room_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<GameRoomInfo>, (StatusCode, String)> {
+    let room_info = get_room(room_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(room_info))
+}
+
+pub async fn get_all_rooms_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
+    let rooms = get_all_rooms(state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(rooms))
+}
+
+pub async fn get_players_handler(
+    Path(room_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Player>>, (StatusCode, String)> {
+    let players = get_players(room_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(players))
 }
 
 pub async fn join_room_handler(
