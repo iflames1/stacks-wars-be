@@ -16,6 +16,16 @@ pub enum GameData {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameType {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub image_url: String,
+    pub tags: Option<Vec<String>>,
+    pub min_players: u8,
+}
+
 #[derive(Debug)]
 pub struct GameRoom {
     pub info: GameRoomInfo,
