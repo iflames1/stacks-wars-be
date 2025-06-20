@@ -1,6 +1,6 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use crate::{
         create_room,
         game::{add_game, get_all_games, get_game},
         join_room, leave_room,
-        room::{get_all_rooms, get_players, get_room},
+        room::{get_all_rooms, get_players, get_room, get_rooms_by_game_id},
         update_game_state, update_player_state,
         user::create_user,
     },
@@ -47,6 +47,7 @@ pub async fn create_user_handler(
 pub struct CreateRoomPayload {
     pub name: String,
     pub max_participants: usize,
+    pub game_id: Uuid,
 }
 
 pub async fn create_room_handler(
@@ -61,12 +62,29 @@ pub async fn create_room_handler(
         payload.name,
         user_id,
         payload.max_participants,
+        payload.game_id,
         state.redis.clone(),
     )
     .await
     .map_err(|err| err.to_response())?;
 
     Ok(Json(room_id))
+}
+
+#[derive(Deserialize)]
+pub struct RoomQuery {
+    state: Option<GameState>,
+}
+pub async fn get_rooms_by_game_id_handler(
+    Path(game_id): Path<Uuid>,
+    Query(query): Query<RoomQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
+    let rooms = get_rooms_by_game_id(game_id, query.state, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(rooms))
 }
 
 pub async fn get_room_handler(

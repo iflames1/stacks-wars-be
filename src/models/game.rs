@@ -78,4 +78,5 @@ pub struct GameRoomInfo {
     pub creator_id: Uuid,
     pub max_participants: usize,
     pub state: GameState,
+    pub game_id: Uuid,
 }
