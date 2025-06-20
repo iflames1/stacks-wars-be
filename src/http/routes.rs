@@ -1,19 +1,22 @@
 use axum::{
     Router,
-    routing::{post, put},
+    routing::{get, post, put},
 };
 
 use crate::{
     http::{
         create_room_handler,
-        handlers::{create_user_handler, update_game_state_handler, update_player_state_handler},
+        handlers::{
+            add_game_handler, create_user_handler, get_all_games_handler, get_game_handler,
+            update_game_state_handler, update_player_state_handler,
+        },
         join_room_handler, leave_room_handler,
     },
     state::AppState,
 };
 
 pub fn create_http_routes(state: AppState) -> Router {
-    println!("Stacks Wars server running at http://127.0.0.1:3001/room");
+    println!("Stacks Wars server running at http://127.0.0.1:3001/");
     Router::new()
         .route("/user", post(create_user_handler))
         .route("/room", post(create_room_handler))
@@ -24,5 +27,8 @@ pub fn create_http_routes(state: AppState) -> Router {
             "/room/{room_id}/player-state",
             put(update_player_state_handler),
         )
+        .route("/game", post(add_game_handler))
+        .route("/game", get(get_all_games_handler))
+        .route("/game/{game_id}", get(get_game_handler))
         .with_state(state)
 }

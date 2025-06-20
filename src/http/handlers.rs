@@ -9,11 +9,13 @@ use uuid::Uuid;
 use crate::{
     auth::AuthClaims,
     db::{
-        create_room, join_room, leave_room, update_game_state, update_player_state,
+        create_room,
+        game::{add_game, get_all_games, get_game},
+        join_room, leave_room, update_game_state, update_player_state,
         user::create_user,
     },
     errors::AppError,
-    models::game::{GameState, PlayerState},
+    models::game::{GameState, GameType, PlayerState},
     state::AppState,
 };
 
@@ -45,7 +47,6 @@ pub struct CreateRoomPayload {
     pub max_participants: usize,
 }
 
-#[axum::debug_handler]
 pub async fn create_room_handler(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
@@ -115,23 +116,53 @@ pub async fn update_game_state_handler(
 
 #[derive(Deserialize)]
 pub struct UpdatePlayerStatePayload {
-    pub user_id: Uuid,
     pub new_state: PlayerState,
 }
 
 pub async fn update_player_state_handler(
     Path(room_id): Path<Uuid>,
+    AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
     Json(payload): Json<UpdatePlayerStatePayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
-    update_player_state(
-        room_id,
-        payload.user_id,
-        payload.new_state,
-        state.redis.clone(),
-    )
-    .await
-    .map_err(|e| e.to_response())?;
+    let user_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+
+    update_player_state(room_id, user_id, payload.new_state, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
 
     Ok(Json("success"))
+}
+
+pub async fn add_game_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<GameType>,
+) -> Result<Json<Uuid>, (StatusCode, String)> {
+    let id = add_game(payload, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(id))
+}
+
+pub async fn get_game_handler(
+    Path(game_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<GameType>, (StatusCode, String)> {
+    let game = get_game(game_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(game))
+}
+
+pub async fn get_all_games_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<GameType>>, (StatusCode, String)> {
+    let games = get_all_games(state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(games))
 }
