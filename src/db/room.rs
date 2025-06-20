@@ -11,6 +11,7 @@ pub async fn create_room(
     name: String,
     creator_id: Uuid,
     max_participants: usize,
+    game_id: Uuid,
     redis: RedisClient,
 ) -> Result<Uuid, AppError> {
     let room_id = Uuid::new_v4();
@@ -24,6 +25,7 @@ pub async fn create_room(
         name,
         creator_id,
         max_participants,
+        game_id,
         state: GameState::Waiting,
     };
 
@@ -55,11 +57,58 @@ pub async fn create_room(
         .cmd("SADD")
         .arg(format!("room:{}:players", room_id))
         .arg(room_player_json)
+        .cmd("SADD")
+        .arg(format!("game:{}:rooms", game_id))
+        .arg(room_id.to_string())
         .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
 
     Ok(room_id)
+}
+
+pub async fn get_rooms_by_game_id(
+    game_id: Uuid,
+    filter_state: Option<GameState>,
+    redis: RedisClient,
+) -> Result<Vec<GameRoomInfo>, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let key = format!("game:{}:rooms", game_id);
+    let room_ids: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+    let mut rooms = Vec::new();
+
+    for id_str in room_ids {
+        if let Ok(uuid) = Uuid::parse_str(&id_str) {
+            let room_key = format!("room:{}:info", uuid);
+            let json: String = redis::cmd("GET")
+                .arg(&room_key)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+            let info: GameRoomInfo = serde_json::from_str(&json)
+                .map_err(|_| AppError::Deserialization("Invalid room info".into()))?;
+
+            if let Some(ref state_filter) = filter_state {
+                if &info.state != state_filter {
+                    continue;
+                }
+            }
+
+            rooms.push(info);
+        }
+    }
+
+    Ok(rooms)
 }
 
 pub async fn get_room(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo, AppError> {
