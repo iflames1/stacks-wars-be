@@ -46,8 +46,10 @@ pub async fn create_user_handler(
 #[derive(Deserialize)]
 pub struct CreateRoomPayload {
     pub name: String,
+    pub description: Option<String>,
     pub max_participants: usize,
     pub game_id: Uuid,
+    pub game_name: String,
 }
 
 pub async fn create_room_handler(
@@ -60,9 +62,11 @@ pub async fn create_room_handler(
 
     let room_id = create_room(
         payload.name,
+        payload.description,
         user_id,
         payload.max_participants,
         payload.game_id,
+        payload.game_name,
         state.redis.clone(),
     )
     .await

@@ -75,8 +75,10 @@ pub enum GameState {
 pub struct GameRoomInfo {
     pub id: Uuid,
     pub name: String,
+    pub description: Option<String>,
     pub creator_id: Uuid,
     pub max_participants: usize,
     pub state: GameState,
     pub game_id: Uuid,
+    pub game_name: String,
 }

@@ -9,9 +9,11 @@ use crate::{
 
 pub async fn create_room(
     name: String,
+    description: Option<String>,
     creator_id: Uuid,
     max_participants: usize,
     game_id: Uuid,
+    game_name: String,
     redis: RedisClient,
 ) -> Result<Uuid, AppError> {
     let room_id = Uuid::new_v4();
@@ -23,10 +25,12 @@ pub async fn create_room(
     let room_info = GameRoomInfo {
         id: room_id,
         name,
+        description,
         creator_id,
         max_participants,
-        game_id,
         state: GameState::Waiting,
+        game_id,
+        game_name,
     };
 
     // Serialize room info
