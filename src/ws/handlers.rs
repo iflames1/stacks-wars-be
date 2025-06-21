@@ -139,17 +139,17 @@ pub async fn ws_handler(
     let connections = state.connections.clone();
     let rooms = state.rooms.clone();
 
-    let room = db::room::get_room_info(room_id, &redis)
+    let room = db::room::get_room_info(room_id, redis.clone())
         .await
-        .ok_or_else(|| AppError::NotFound("Room not found".into()).to_response())?;
+        .map_err(|e| e.to_response())?;
 
     if room.state != GameState::InProgress {
         return Err(AppError::BadRequest("Game not in progress".into()).to_response());
     }
 
-    let players = db::room::get_room_players(room_id, &redis)
+    let players = db::room::get_room_players(room_id, redis.clone())
         .await
-        .ok_or_else(|| AppError::NotFound("No players found in room".into()).to_response())?;
+        .map_err(|e| e.to_response())?;
 
     // TODO: avoid cloning all players
     let players_clone = players.clone();

@@ -12,14 +12,16 @@ use crate::{
         create_room,
         game::{add_game, get_all_games, get_game},
         join_room, leave_room,
-        room::{get_all_rooms, get_players, get_room, get_rooms_by_game_id},
+        room::{
+            get_all_rooms, get_room, get_room_extended, get_room_players, get_rooms_by_game_id,
+        },
         update_game_state, update_player_state,
         user::{create_user, get_user_by_id},
     },
     errors::AppError,
     models::{
         User,
-        game::{GameRoomInfo, GameState, GameType, Player, PlayerState},
+        game::{GameRoomInfo, GameState, GameType, Player, PlayerState, RoomExtended},
     },
     state::AppState,
 };
@@ -89,6 +91,17 @@ pub async fn create_room_handler(
     Ok(Json(room_id))
 }
 
+pub async fn get_room_extended_handler(
+    Path(room_id): Path<Uuid>,
+    State(state): State<AppState>,
+) -> Result<Json<RoomExtended>, (StatusCode, String)> {
+    let extended = get_room_extended(room_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(extended))
+}
+
 #[derive(Deserialize)]
 pub struct RoomQuery {
     state: Option<GameState>,
@@ -130,7 +143,7 @@ pub async fn get_players_handler(
     Path(room_id): Path<Uuid>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Player>>, (StatusCode, String)> {
-    let players = get_players(room_id, state.redis.clone())
+    let players = get_room_players(room_id, state.redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
