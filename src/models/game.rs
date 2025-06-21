@@ -83,3 +83,9 @@ pub struct GameRoomInfo {
     pub game_name: String,
     pub participants: usize,
 }
+
+#[derive(Serialize)]
+pub struct RoomExtended {
+    pub info: GameRoomInfo,
+    pub players: Vec<Player>,
+}

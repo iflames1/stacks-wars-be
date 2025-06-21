@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::{
     db::user::get_user_by_id,
     errors::AppError,
-    models::game::{GameRoomInfo, GameState, Player, PlayerState},
+    models::game::{GameRoomInfo, GameState, Player, PlayerState, RoomExtended},
     state::RedisClient,
 };
 
@@ -161,7 +161,7 @@ pub async fn get_all_rooms(redis: RedisClient) -> Result<Vec<GameRoomInfo>, AppE
     Ok(rooms)
 }
 
-pub async fn get_players(room_id: Uuid, redis: RedisClient) -> Result<Vec<Player>, AppError> {
+pub async fn get_room_players(room_id: Uuid, redis: RedisClient) -> Result<Vec<Player>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -403,33 +403,30 @@ pub async fn update_player_state(
     Ok(())
 }
 
-pub async fn get_room_info(room_id: Uuid, redis: &RedisClient) -> Option<GameRoomInfo> {
+pub async fn get_room_info(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo, AppError> {
     let key = format!("room:{}:info", room_id);
-    let mut conn = redis.get().await.ok()?;
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
     let value: String = redis::cmd("GET")
         .arg(&key)
         .query_async(&mut *conn)
         .await
-        .ok()?;
-    serde_json::from_str(&value).ok()
+        .map_err(|_| AppError::NotFound("Room not found".into()))?;
+
+    serde_json::from_str(&value)
+        .map_err(|_| AppError::Deserialization("Invalid room info JSON".into()))
 }
 
-pub async fn get_room_players(room_id: Uuid, redis: &RedisClient) -> Option<Vec<Player>> {
-    let key = format!("room:{}:players", room_id);
-    let mut conn = redis.get().await.ok()?;
+pub async fn get_room_extended(
+    room_id: Uuid,
+    redis: RedisClient,
+) -> Result<RoomExtended, AppError> {
+    let info = get_room_info(room_id, redis.clone()).await?;
+    let players = get_room_players(room_id, redis).await?;
 
-    let values: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(&key)
-        .query_async(&mut *conn)
-        .await
-        .ok()?;
-
-    let players: Vec<Player> = values
-        .into_iter()
-        .filter_map(|v| serde_json::from_str(&v).ok())
-        .collect();
-
-    Some(players)
+    Ok(RoomExtended { info, players })
 }
 
 pub async fn update_room_player_after_game(
