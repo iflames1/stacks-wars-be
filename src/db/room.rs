@@ -31,6 +31,7 @@ pub async fn create_room(
         state: GameState::Waiting,
         game_id,
         game_name,
+        participants: 1,
     };
 
     // Serialize room info
@@ -238,6 +239,19 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         .await
         .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
+    let mut updated_room = room.clone();
+    updated_room.participants += 1;
+
+    let updated_json =
+        serde_json::to_string(&updated_room).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let _: () = redis::cmd("SET")
+        .arg(room_key)
+        .arg(updated_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
     Ok(())
 }
 
@@ -270,6 +284,30 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         .query_async(&mut *conn)
         .await
         .map_err(|error| AppError::RedisCommandError(error.into()))?;
+
+    let room_key = format!("room:{}:info", room_id);
+    let room_json: String = redis::cmd("GET")
+        .arg(&room_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| AppError::NotFound("Room not found".into()))?;
+
+    let mut room: GameRoomInfo =
+        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    if room.participants > 0 {
+        room.participants -= 1;
+    }
+
+    let updated_json =
+        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let _: () = redis::cmd("SET")
+        .arg(room_key)
+        .arg(updated_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
     Ok(())
 }
