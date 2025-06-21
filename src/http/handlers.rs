@@ -14,10 +14,13 @@ use crate::{
         join_room, leave_room,
         room::{get_all_rooms, get_players, get_room, get_rooms_by_game_id},
         update_game_state, update_player_state,
-        user::create_user,
+        user::{create_user, get_user_by_id},
     },
     errors::AppError,
-    models::game::{GameRoomInfo, GameState, GameType, Player, PlayerState},
+    models::{
+        User,
+        game::{GameRoomInfo, GameState, GameType, Player, PlayerState},
+    },
     state::AppState,
 };
 
@@ -41,6 +44,17 @@ pub async fn create_user_handler(
         Ok(token) => Ok(Json(token)),
         Err(err) => Err(err.to_response()),
     }
+}
+
+pub async fn get_user_handler(
+    State(state): State<AppState>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<User>, (StatusCode, String)> {
+    let user = get_user_by_id(user_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json(user))
 }
 
 #[derive(Deserialize)]
