@@ -81,4 +81,5 @@ pub struct GameRoomInfo {
     pub state: GameState,
     pub game_id: Uuid,
     pub game_name: String,
+    pub participants: usize,
 }
