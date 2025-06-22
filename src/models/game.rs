@@ -89,3 +89,24 @@ pub struct RoomExtended {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum LobbyClientMessage {
+    UpdatePlayerState { new_state: PlayerState },
+    UpdateGameState { new_state: GameState },
+    LeaveRoom,
+    KickPlayer { player_id: Uuid },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum LobbyServerMessage {
+    PlayerJoined { players: Vec<Player> },
+    PlayerLeft { players: Vec<Player> },
+    PlayerUpdated { players: Vec<Player> },
+    PlayerKicked { player_id: Uuid, reason: String },
+    NotifyKicked { reason: String },
+    Countdown { seconds: u64 },
+    GameStarting,
+}
