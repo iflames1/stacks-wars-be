@@ -224,7 +224,7 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         id: user.id,
         wallet_address: user.wallet_address,
         display_name: user.display_name,
-        state: PlayerState::NotReady,
+        state: PlayerState::Ready,
         used_words: Vec::new(),
         rank: None,
     };

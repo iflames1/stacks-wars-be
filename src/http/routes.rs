@@ -9,8 +9,8 @@ use crate::{
         handlers::{
             add_game_handler, create_user_handler, get_all_games_handler, get_all_rooms_handler,
             get_game_handler, get_players_handler, get_room_extended_handler, get_room_handler,
-            get_rooms_by_game_id_handler, get_user_handler, update_game_state_handler,
-            update_player_state_handler,
+            get_rooms_by_game_id_handler, get_user_handler, kick_player_handler,
+            update_game_state_handler, update_player_state_handler,
         },
         join_room_handler, leave_room_handler,
     },
@@ -27,6 +27,7 @@ pub fn create_http_routes(state: AppState) -> Router {
         .route("/rooms/{game_id}", get(get_rooms_by_game_id_handler))
         .route("/room/{room_id}/join", put(join_room_handler))
         .route("/room/{room_id}/leave", put(leave_room_handler))
+        .route("/room/{room_id}/kick", put(kick_player_handler))
         .route("/room/{room_id}/state", put(update_game_state_handler))
         .route(
             "/room/{room_id}/player-state",

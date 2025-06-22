@@ -13,7 +13,8 @@ use crate::{
         game::{add_game, get_all_games, get_game},
         join_room, leave_room,
         room::{
-            get_all_rooms, get_room, get_room_extended, get_room_players, get_rooms_by_game_id,
+            get_all_rooms, get_room, get_room_extended, get_room_info, get_room_players,
+            get_rooms_by_game_id,
         },
         update_game_state, update_player_state,
         user::{create_user, get_user_by_id},
@@ -178,6 +179,44 @@ pub async fn leave_room_handler(
         .map_err(|e| e.to_response())?;
 
     Ok(Json("success"))
+}
+
+#[derive(Deserialize)]
+pub struct KickPlayerPayload {
+    pub player_id: Uuid,
+}
+
+pub async fn kick_player_handler(
+    State(state): State<AppState>,
+    AuthClaims(claims): AuthClaims,
+    Path(room_id): Path<Uuid>,
+    Json(payload): Json<KickPlayerPayload>,
+) -> Result<Json<String>, (StatusCode, String)> {
+    let caller_id = Uuid::parse_str(&claims.sub)
+        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+
+    let room_info = get_room_info(room_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    if room_info.creator_id != caller_id {
+        return Err(
+            AppError::Unauthorized("Only the creator can kick players".into()).to_response(),
+        );
+    }
+
+    if room_info.state != GameState::Waiting {
+        return Err(AppError::BadRequest(
+            "Cannot kick players when game is in progress or has ended".into(),
+        )
+        .to_response());
+    }
+
+    leave_room(room_id, payload.player_id, state.redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    Ok(Json("Player kicked successfully".to_string()))
 }
 
 #[derive(Deserialize)]
