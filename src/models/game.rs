@@ -128,7 +128,7 @@ pub enum LobbyServerMessage {
     Countdown {
         time: u64,
     },
-    Gamestate {
+    GameState {
         state: GameState,
     },
 }

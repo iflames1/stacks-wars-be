@@ -352,6 +352,7 @@ pub async fn handle_lobby_socket(
                             }
                         }
                         LobbyClientMessage::UpdateGameState { new_state } => {
+                            println!("called with {new_state:?}");
                             let room_info =
                                 match db::room::get_room_info(room_id, redis.clone()).await {
                                     Ok(info) => info,
@@ -379,35 +380,31 @@ pub async fn handle_lobby_socket(
                                 eprintln!("Failed to update game state: {}", e);
                             } else {
                                 if new_state == GameState::InProgress {
-                                    for i in (1..=30).rev() {
-                                        let countdown_msg =
-                                            LobbyServerMessage::Countdown { time: i };
-                                        broadcast_to_lobby(
-                                            room_id,
-                                            &countdown_msg,
-                                            &connections,
-                                            redis.clone(),
-                                        )
-                                        .await;
-                                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    let redis_clone = redis.clone();
+                                    let conns_clone = connections.clone();
+                                    tokio::spawn(async move {
+                                        start_countdown(room_id, redis_clone, conns_clone).await;
+                                    });
 
-                                        if let Ok(room_info) =
-                                            db::room::get_room_info(room_id, redis.clone()).await
-                                        {
-                                            if room_info.state != GameState::InProgress {
-                                                break;
-                                            }
+                                    if let Ok(info) =
+                                        db::room::get_room_info(room_id, redis.clone()).await
+                                    {
+                                        if info.state == GameState::InProgress {
+                                            let game_starting =
+                                                LobbyServerMessage::GameState { state: new_state };
+                                            broadcast_to_lobby(
+                                                room_id,
+                                                &game_starting,
+                                                &connections,
+                                                redis.clone(),
+                                            )
+                                            .await;
+                                        } else {
+                                            tracing::info!(
+                                                "Game state was reverted before start, skipping GameState message"
+                                            );
                                         }
                                     }
-                                    let game_starting =
-                                        LobbyServerMessage::Gamestate { state: new_state };
-                                    broadcast_to_lobby(
-                                        room_id,
-                                        &game_starting,
-                                        &connections,
-                                        redis.clone(),
-                                    )
-                                    .await;
                                 }
                             }
                         }
@@ -449,6 +446,41 @@ pub async fn broadcast_to_lobby(
                 let mut sender = sender_arc.lock().await;
                 let _ = sender.send(Message::Text(serialized.clone().into())).await;
             }
+        }
+    }
+}
+
+async fn start_countdown(room_id: Uuid, redis: RedisClient, connections: PlayerConnections) {
+    for i in (0..=30).rev() {
+        match db::room::get_room_info(room_id, redis.clone()).await {
+            Ok(info) => {
+                if info.state != GameState::InProgress {
+                    tracing::info!("Countdown interrupted by state change");
+
+                    let msg = LobbyServerMessage::GameState { state: info.state };
+                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+
+                    break;
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to check state: {}", e);
+                break;
+            }
+        }
+
+        let countdown_msg = LobbyServerMessage::Countdown { time: i };
+        broadcast_to_lobby(room_id, &countdown_msg, &connections, redis.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    // Final state confirmation
+    if let Ok(info) = db::room::get_room_info(room_id, redis.clone()).await {
+        if info.state == GameState::InProgress {
+            let msg = LobbyServerMessage::GameState {
+                state: GameState::InProgress,
+            };
+            broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
         }
     }
 }
