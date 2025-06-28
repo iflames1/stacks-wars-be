@@ -1,6 +1,6 @@
 use axum::{
     extract::{
-        ConnectInfo, Path, State, WebSocketUpgrade,
+        ConnectInfo, Path, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::StatusCode,
@@ -8,6 +8,7 @@ use axum::{
 };
 use futures::SinkExt;
 use futures::{StreamExt, stream::SplitSink};
+use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -16,17 +17,16 @@ use std::{
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::AuthClaims,
-    errors::AppError,
-    games::lexi_wars::engine::handle_incoming_messages,
-    models::game::{LobbyClientMessage, LobbyServerMessage},
-};
-use crate::{
     db,
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
     models::game::{GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState},
     models::word_loader::WORD_LIST,
     state::{AppState, RedisClient},
+};
+use crate::{
+    errors::AppError,
+    games::lexi_wars::engine::handle_incoming_messages,
+    models::game::{LobbyClientMessage, LobbyServerMessage},
 };
 use crate::{
     games::lexi_wars::rules::RuleContext,
@@ -126,18 +126,21 @@ async fn handle_socket(
     remove_connection(&player, &connections).await;
 }
 
-#[axum::debug_handler]
+#[derive(Deserialize)]
+pub struct WsQueryParams {
+    user_id: Uuid,
+}
+
 pub async fn lexi_wars_handler(
     ws: WebSocketUpgrade,
-    AuthClaims(claims): AuthClaims,
+    Query(query): Query<WsQueryParams>,
     Path(room_id): Path<Uuid>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     println!("New WebSocket connection from {}", addr);
 
-    let player_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+    let player_id = query.user_id;
 
     let redis = state.redis.clone();
     let connections = state.connections.clone();
@@ -187,15 +190,14 @@ pub async fn lexi_wars_handler(
 
 pub async fn lobby_ws_handler(
     ws: WebSocketUpgrade,
-    AuthClaims(claims): AuthClaims,
+    Query(query): Query<WsQueryParams>,
     Path(room_id): Path<Uuid>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (axum::http::StatusCode, String)> {
     tracing::info!("New lobby WS connection from {}", addr);
 
-    let player_id = Uuid::parse_str(&claims.sub)
-        .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
+    let player_id = query.user_id;
 
     let redis = state.redis.clone();
     let connections = state.connections.clone();
@@ -375,7 +377,7 @@ pub async fn handle_lobby_socket(
                                 if new_state == GameState::InProgress {
                                     for i in (1..=30).rev() {
                                         let countdown_msg =
-                                            LobbyServerMessage::Countdown { seconds: i };
+                                            LobbyServerMessage::Countdown { time: i };
                                         broadcast_to_lobby(
                                             room_id,
                                             &countdown_msg,
