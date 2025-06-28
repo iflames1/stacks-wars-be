@@ -277,7 +277,11 @@ pub async fn handle_lobby_socket(
                             remove_connection(&player, &connections).await;
                             break;
                         }
-                        LobbyClientMessage::KickPlayer { player_id } => {
+                        LobbyClientMessage::KickPlayer {
+                            player_id,
+                            wallet_address,
+                            display_name,
+                        } => {
                             let room_info =
                                 match db::room::get_room_info(room_id, redis.clone()).await {
                                     Ok(info) => info,
@@ -300,6 +304,7 @@ pub async fn handle_lobby_socket(
                                 continue;
                             }
 
+                            // Remove player
                             if let Err(e) =
                                 db::room::leave_room(room_id, player_id, redis.clone()).await
                             {
@@ -313,7 +318,8 @@ pub async fn handle_lobby_socket(
 
                                 let kicked_msg = LobbyServerMessage::PlayerKicked {
                                     player_id,
-                                    reason: "was kicked from the lobby".to_string(),
+                                    wallet_address,
+                                    display_name,
                                 };
                                 broadcast_to_lobby(
                                     room_id,
@@ -324,9 +330,7 @@ pub async fn handle_lobby_socket(
                                 .await;
 
                                 let notify_msg: LobbyServerMessage =
-                                    LobbyServerMessage::NotifyKicked {
-                                        reason: "You were kicked from the lobby".to_string(),
-                                    };
+                                    LobbyServerMessage::NotifyKicked;
 
                                 let conns = connections.lock().await;
                                 if let Some(sender) = conns.get(&player_id) {
@@ -395,7 +399,8 @@ pub async fn handle_lobby_socket(
                                             }
                                         }
                                     }
-                                    let game_starting = LobbyServerMessage::GameStarting;
+                                    let game_starting =
+                                        LobbyServerMessage::Gamestate { state: new_state };
                                     broadcast_to_lobby(
                                         room_id,
                                         &game_starting,
