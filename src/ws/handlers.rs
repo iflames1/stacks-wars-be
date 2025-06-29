@@ -19,7 +19,9 @@ use crate::{
     db,
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
     models::{
-        game::{GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState},
+        game::{
+            GameData, GameRoom, GameRoomInfo, GameState, LexiWarsServerMessage, Player, PlayerState,
+        },
         word_loader::WORD_LIST,
     },
     state::{AppState, RedisClient},
@@ -93,13 +95,10 @@ async fn setup_player_and_room(
     }
 
     if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id) {
-        broadcast_to_room(
-            "current_turn",
-            &current_player.wallet_address,
-            &room,
-            connections,
-        )
-        .await;
+        let next_turn_msg = LexiWarsServerMessage::Turn {
+            current_turn: current_player.clone(),
+        };
+        broadcast_to_room(&next_turn_msg, &room, &connections).await;
     }
 }
 

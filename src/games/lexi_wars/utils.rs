@@ -1,12 +1,10 @@
 use axum::extract::ws::Message;
 use futures::SinkExt;
 use rand::{Rng, rng};
-use serde::Serialize;
-use serde_json::json;
 
 use crate::{
     games::lexi_wars::rules::get_rules,
-    models::game::{GameRoom, Player},
+    models::game::{GameRoom, LexiWarsServerMessage, Player},
     state::PlayerConnections,
 };
 use uuid::Uuid;
@@ -42,62 +40,49 @@ pub fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option
 
 pub async fn broadcast_to_player(
     target_player_id: Uuid,
-    msg_type: &str,
-    data: &str,
+    message: &LexiWarsServerMessage,
     connections: &PlayerConnections,
 ) {
     let connection_guard = connections.lock().await;
     if let Some(sender_arc) = connection_guard.get(&target_player_id) {
-        let message = json!({
-            "type": msg_type,
-            "data": data,
-        })
-        .to_string();
-        let mut sender = sender_arc.lock().await;
-        let _ = sender.send(Message::Text(message.into())).await;
+        if let Ok(serialized) = serde_json::to_string(message) {
+            let mut sender = sender_arc.lock().await;
+            let _ = sender.send(Message::Text(serialized.into())).await;
+        } else {
+            tracing::error!("Failed to serialize LexiWarsServerMessage");
+        }
     }
 }
 
-pub async fn broadcast_to_room<T: Serialize>(
-    msg_type: &str,
-    data: &T,
+pub async fn broadcast_to_room(
+    message: &LexiWarsServerMessage,
     room: &GameRoom,
     connections: &PlayerConnections,
 ) {
     let connection_guard = connections.lock().await;
 
-    let message = json!({
-        "type": msg_type,
-        "data": data,
-    });
-
-    for player in room.players.iter().chain(room.eliminated_players.iter()) {
-        if let Some(sender_arc) = connection_guard.get(&player.id) {
-            let mut sender = sender_arc.lock().await;
-            let _ = sender.send(Message::Text(message.to_string().into())).await;
+    if let Ok(serialized) = serde_json::to_string(message) {
+        for player in room.players.iter().chain(room.eliminated_players.iter()) {
+            if let Some(sender_arc) = connection_guard.get(&player.id) {
+                let mut sender = sender_arc.lock().await;
+                let _ = sender.send(Message::Text(serialized.clone().into())).await;
+            }
         }
+    } else {
+        tracing::error!("Failed to serialize LexiWarsServerMessage");
     }
 }
 
-pub async fn broadcast_to_room_from_player(
+pub async fn broadcast_word_entry_from_player(
     sender_player: &Player,
-    msg_type: &str,
-    data: &str,
+    word: &str,
     room: &GameRoom,
     connections: &PlayerConnections,
 ) {
-    let connection_guard = connections.lock().await;
+    let message = LexiWarsServerMessage::WordEntry {
+        word: word.to_string(),
+        sender: sender_player.clone(),
+    };
 
-    let message = json!({
-        "type": msg_type,
-        "data": data,
-        "sender": sender_player.wallet_address,
-    });
-
-    for player in &room.players {
-        if let Some(sender_arc) = connection_guard.get(&player.id) {
-            let mut sender = sender_arc.lock().await;
-            let _ = sender.send(Message::Text(message.to_string().into())).await;
-        }
-    }
+    broadcast_to_room(&message, room, connections).await;
 }
