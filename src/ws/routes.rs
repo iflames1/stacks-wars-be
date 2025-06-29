@@ -8,7 +8,7 @@ use crate::{
 pub fn create_ws_routes(state: AppState) -> Router {
     println!("Stacks Wars websocket running at ws://127.0.0.1:3001/ws/room_id");
     Router::new()
-        .route("/lexi-wars/{room_id}", get(lexi_wars_handler))
+        .route("/ws/lexiwars/{room_id}", get(lexi_wars_handler))
         .route("/ws/room/{room_id}", get(lobby_ws_handler))
         .with_state(state)
 }
