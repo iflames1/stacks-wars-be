@@ -89,3 +89,47 @@ pub struct RoomExtended {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LobbyClientMessage {
+    UpdatePlayerState {
+        new_state: PlayerState,
+    },
+    UpdateGameState {
+        new_state: GameState,
+    },
+    LeaveRoom,
+    KickPlayer {
+        player_id: Uuid,
+        wallet_address: String,
+        display_name: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LobbyServerMessage {
+    PlayerJoined {
+        players: Vec<Player>,
+    },
+    PlayerLeft {
+        players: Vec<Player>,
+    },
+    PlayerUpdated {
+        players: Vec<Player>,
+    },
+    PlayerKicked {
+        player_id: Uuid,
+        wallet_address: String,
+        display_name: Option<String>,
+    },
+    NotifyKicked,
+    Countdown {
+        time: u64,
+    },
+    GameState {
+        state: GameState,
+        ready_players: Option<Vec<Uuid>>,
+    },
+}
