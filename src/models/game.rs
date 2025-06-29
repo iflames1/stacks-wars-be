@@ -133,3 +133,29 @@ pub enum LobbyServerMessage {
         ready_players: Option<Vec<Uuid>>,
     },
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LexiWarsClientMessage {
+    WordEntry { word: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlayerStanding {
+    pub player: Player,
+    pub rank: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LexiWarsServerMessage {
+    Turn { current_turn: Player },
+    Rule { rule: String },
+    Countdown { time: u64 },
+    Rank { rank: String },
+    Validate { msg: String },
+    WordEntry { word: String, sender: Player },
+    UsedWord { word: String },
+    GameOver,
+    FinalStanding { standing: Vec<PlayerStanding> },
+}
