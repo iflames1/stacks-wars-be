@@ -130,5 +130,6 @@ pub enum LobbyServerMessage {
     },
     GameState {
         state: GameState,
+        ready_players: Option<Vec<Uuid>>,
     },
 }

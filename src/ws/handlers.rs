@@ -390,8 +390,10 @@ pub async fn handle_lobby_socket(
                                         db::room::get_room_info(room_id, redis.clone()).await
                                     {
                                         if info.state == GameState::InProgress {
-                                            let game_starting =
-                                                LobbyServerMessage::GameState { state: new_state };
+                                            let game_starting = LobbyServerMessage::GameState {
+                                                state: new_state,
+                                                ready_players: None,
+                                            };
                                             broadcast_to_lobby(
                                                 room_id,
                                                 &game_starting,
@@ -457,7 +459,10 @@ async fn start_countdown(room_id: Uuid, redis: RedisClient, connections: PlayerC
                 if info.state != GameState::InProgress {
                     tracing::info!("Countdown interrupted by state change");
 
-                    let msg = LobbyServerMessage::GameState { state: info.state };
+                    let msg = LobbyServerMessage::GameState {
+                        state: info.state,
+                        ready_players: None,
+                    };
                     broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
 
                     break;
@@ -477,10 +482,36 @@ async fn start_countdown(room_id: Uuid, redis: RedisClient, connections: PlayerC
     // Final state confirmation
     if let Ok(info) = db::room::get_room_info(room_id, redis.clone()).await {
         if info.state == GameState::InProgress {
+            let ready_players = match db::room::get_ready_room_players(room_id, redis.clone()).await
+            {
+                Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
+                Err(e) => {
+                    tracing::error!("❌ Failed to get ready players: {}", e);
+                    vec![]
+                }
+            };
+
+            let players = match db::room::get_room_players(room_id, redis.clone()).await {
+                Ok(players) => players,
+                Err(e) => {
+                    tracing::error!("❌ Failed to get room players: {}", e);
+                    vec![]
+                }
+            };
+
+            tracing::info!("Game started with {} ready players", ready_players.len());
+
             let msg = LobbyServerMessage::GameState {
                 state: GameState::InProgress,
+                ready_players: Some(ready_players.clone()),
             };
             broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+
+            if ready_players.len() > 1 {
+                for player in players {
+                    remove_connection(&player, &connections).await;
+                }
+            }
         }
     }
 }

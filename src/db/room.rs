@@ -184,6 +184,35 @@ pub async fn get_room_players(room_id: Uuid, redis: RedisClient) -> Result<Vec<P
     Ok(players)
 }
 
+pub async fn get_ready_room_players(
+    room_id: Uuid,
+    redis: RedisClient,
+) -> Result<Vec<Player>, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let key = format!("room:{}:players", room_id);
+    let raw_players: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+    let mut players = Vec::new();
+    for p in raw_players {
+        let player: Player = serde_json::from_str(&p)
+            .map_err(|_| AppError::Deserialization("Invalid player JSON".into()))?;
+
+        if player.state == PlayerState::Ready {
+            players.push(player);
+        }
+    }
+
+    Ok(players)
+}
+
 pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
