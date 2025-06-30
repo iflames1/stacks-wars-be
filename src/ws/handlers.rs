@@ -25,7 +25,7 @@ use crate::{
         lobby::{JoinRequest, JoinState},
         word_loader::WORD_LIST,
     },
-    state::{AppState, RedisClient},
+    state::{AppState, LobbyJoinRequests, RedisClient},
     ws::lobby,
 };
 use crate::{errors::AppError, games::lexi_wars, models::game::LobbyServerMessage};
@@ -221,7 +221,14 @@ pub async fn lobby_ws_handler(
         );
 
         return Ok(ws.on_upgrade(move |socket| {
-            handle_lobby_socket(socket, room_id, matched_player.into(), connections, redis)
+            handle_lobby_socket(
+                socket,
+                room_id,
+                matched_player.into(),
+                connections,
+                redis,
+                join_requests,
+            )
         }));
     }
 
@@ -258,7 +265,14 @@ pub async fn lobby_ws_handler(
     };
 
     Ok(ws.on_upgrade(move |socket| {
-        handle_lobby_socket(socket, room_id, idle_player, connections, redis)
+        handle_lobby_socket(
+            socket,
+            room_id,
+            idle_player,
+            connections,
+            redis,
+            join_requests,
+        )
     }))
 }
 
@@ -268,6 +282,7 @@ async fn handle_lobby_socket(
     player: Player,
     connections: PlayerConnections,
     redis: RedisClient,
+    join_requests: LobbyJoinRequests,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -278,7 +293,15 @@ async fn handle_lobby_socket(
         lobby::broadcast_to_lobby(room_id, &join_msg, &connections, redis.clone()).await;
     }
 
-    lobby::handle_incoming_messages(receiver, room_id, &player, &connections, redis.clone()).await;
+    lobby::handle_incoming_messages(
+        receiver,
+        room_id,
+        &player,
+        &connections,
+        redis.clone(),
+        join_requests,
+    )
+    .await;
 
     remove_connection(player.id, &connections).await;
 
