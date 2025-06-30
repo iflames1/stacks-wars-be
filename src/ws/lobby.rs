@@ -77,7 +77,7 @@ pub async fn handle_incoming_messages(
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
                             }
-                            remove_connection(&player, &connections).await;
+                            remove_connection(player.id, &connections).await;
                             break;
                         }
                         LobbyClientMessage::KickPlayer {
@@ -279,7 +279,7 @@ async fn start_countdown(room_id: Uuid, redis: RedisClient, connections: PlayerC
 
             if ready_players.len() > 1 {
                 for player in players {
-                    remove_connection(&player, &connections).await;
+                    remove_connection(player.id, &connections).await;
                 }
             }
         }
