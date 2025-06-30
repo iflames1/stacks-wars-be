@@ -11,9 +11,10 @@ pub struct AppState {
     pub rooms: SharedRooms,
     pub connections: PlayerConnections,
     pub redis: RedisClient,
+    pub lobby_join_requests: LobbyJoinRequests,
 }
 
-use crate::models::game::GameRoom;
+use crate::models::{game::GameRoom, lobby::JoinRequest};
 
 pub type SharedRooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
 
@@ -22,3 +23,5 @@ pub type Sender = Arc<Mutex<SplitSink<WebSocket, Message>>>;
 pub type PlayerConnections = Arc<Mutex<HashMap<Uuid, Sender>>>;
 
 pub type RedisClient = Pool<RedisConnectionManager>;
+
+pub type LobbyJoinRequests = Arc<Mutex<HashMap<Uuid, Vec<JoinRequest>>>>;
