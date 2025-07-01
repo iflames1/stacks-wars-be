@@ -7,7 +7,7 @@ use crate::{
     errors::AppError,
     models::{
         User,
-        game::{GameState, LobbyClientMessage, LobbyServerMessage, Player},
+        game::{GameState, LobbyClientMessage, LobbyServerMessage, PendingJoin, Player},
         lobby::{JoinRequest, JoinState},
     },
     state::{LobbyJoinRequests, PlayerConnections, RedisClient},
@@ -115,20 +115,21 @@ async fn reject_join_request(
     Err(AppError::NotFound("Room not found".into()))
 }
 
-async fn get_pending_users(
+async fn get_pending_players(
     room_id: Uuid,
     join_requests: &LobbyJoinRequests,
-) -> Result<Vec<User>, AppError> {
-    let map = join_requests.lock().await;
-    let pending = map
-        .get(&room_id)
-        .unwrap_or(&vec![])
-        .iter()
-        .filter(|r| r.state == JoinState::Pending)
-        .map(|r| r.user.clone())
+) -> Result<Vec<PendingJoin>, AppError> {
+    let map = get_join_requests(room_id, join_requests).await;
+    let pending_players = map
+        .into_iter()
+        .filter(|req| req.state == JoinState::Pending)
+        .map(|req| PendingJoin {
+            user: req.user,
+            state: req.state,
+        })
         .collect();
 
-    Ok(pending)
+    Ok(pending_players)
 }
 
 pub async fn handle_incoming_messages(
@@ -198,8 +199,10 @@ pub async fn handle_incoming_messages(
                                 .await;
                             }
 
-                            if let Ok(users) = get_pending_users(room_id, &join_requests).await {
-                                let msg = LobbyServerMessage::PendingPlayers { users };
+                            if let Ok(pending_players) =
+                                get_pending_players(room_id, &join_requests).await
+                            {
+                                let msg = LobbyServerMessage::PendingPlayers { pending_players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
                             }
@@ -242,8 +245,10 @@ pub async fn handle_incoming_messages(
                                 send_error_to_player(player.id, e.to_string(), &connections).await;
                             }
 
-                            if let Ok(users) = get_pending_users(room_id, &join_requests).await {
-                                let msg = LobbyServerMessage::PendingPlayers { users };
+                            if let Ok(pending_players) =
+                                get_pending_players(room_id, &join_requests).await
+                            {
+                                let msg = LobbyServerMessage::PendingPlayers { pending_players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
                             }
