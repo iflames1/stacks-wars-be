@@ -145,12 +145,17 @@ pub async fn handle_incoming_messages(
             Message::Text(text) => {
                 if let Ok(parsed) = serde_json::from_str::<LobbyClientMessage>(&text) {
                     match parsed {
-                        LobbyClientMessage::JoinLobby => {
+                        LobbyClientMessage::JoinLobby { tx_id } => {
                             let join_map = get_join_requests(room_id, &join_requests).await;
                             if let Some(req) = join_map.iter().find(|r| r.user.id == player.id) {
                                 if req.state == JoinState::Allowed {
-                                    if let Err(e) =
-                                        db::room::join_room(room_id, player.id, redis.clone()).await
+                                    if let Err(e) = db::room::join_room(
+                                        room_id,
+                                        player.id,
+                                        tx_id,
+                                        redis.clone(),
+                                    )
+                                    .await
                                     {
                                         tracing::error!("Failed to join room: {}", e);
                                         send_error_to_player(

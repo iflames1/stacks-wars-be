@@ -127,7 +127,9 @@ pub enum LobbyClientMessage {
         user_id: Uuid,
         allow: bool,
     },
-    JoinLobby,
+    JoinLobby {
+        tx_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

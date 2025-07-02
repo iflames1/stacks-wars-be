@@ -262,6 +262,7 @@ pub async fn lobby_ws_handler(
         state: PlayerState::NotReady,
         rank: None,
         used_words: vec![],
+        tx_id: None,
     };
 
     Ok(ws.on_upgrade(move |socket| {
