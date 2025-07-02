@@ -242,7 +242,12 @@ pub async fn get_ready_room_players(
     Ok(players)
 }
 
-pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Result<(), AppError> {
+pub async fn join_room(
+    room_id: Uuid,
+    user_id: Uuid,
+    tx_id: Option<String>,
+    redis: RedisClient,
+) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -255,7 +260,7 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         .await
         .map_err(|_| AppError::NotFound("Room not found".into()))?;
 
-    let room: GameRoomInfo =
+    let mut room: GameRoomInfo =
         serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
 
     let players_key = format!("room:{}:players", room_id);
@@ -274,6 +279,48 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
 
     let user = get_user_by_id(user_id, redis.clone()).await?;
 
+    // If the room has a pool, validate the payment
+    if let Some(contract_address) = &room.contract_address {
+        let tx_id = tx_id.clone().ok_or_else(|| {
+            AppError::BadRequest("Missing transaction ID for pool-based room".into())
+        })?;
+
+        // Fetch the pool info
+        let pool_key = format!("room:{}:pool", room_id);
+        let pool_json: String = redis::cmd("GET")
+            .arg(&pool_key)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|_| AppError::NotFound("Room pool not found".into()))?;
+
+        let pool: RoomPool =
+            serde_json::from_str(&pool_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+        validate_payment_tx(
+            &tx_id,
+            &user.wallet_address,
+            contract_address,
+            pool.entry_fee,
+        )
+        .await?;
+
+        let updated_pool = RoomPool {
+            entry_fee: pool.entry_fee,
+            contract_address: contract_address.clone(),
+            total_amount: pool.total_amount + pool.entry_fee,
+        };
+
+        let new_pool_json = serde_json::to_string(&updated_pool)
+            .map_err(|e| AppError::Serialization(e.to_string()))?;
+
+        let _: () = redis::cmd("SET")
+            .arg(&pool_key)
+            .arg(new_pool_json)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
+
     let room_player = Player {
         id: user.id,
         wallet_address: user.wallet_address,
@@ -281,6 +328,7 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         state: PlayerState::Ready,
         used_words: Vec::new(),
         rank: None,
+        tx_id,
     };
 
     let player_json = serde_json::to_string(&room_player)
@@ -293,11 +341,10 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         .await
         .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
-    let mut updated_room = room.clone();
-    updated_room.participants += 1;
+    room.participants += 1;
 
     let updated_json =
-        serde_json::to_string(&updated_room).map_err(|e| AppError::Serialization(e.to_string()))?;
+        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
 
     let _: () = redis::cmd("SET")
         .arg(room_key)
