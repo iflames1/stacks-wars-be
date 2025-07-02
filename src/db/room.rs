@@ -34,6 +34,7 @@ pub async fn create_room(
         game_id,
         game_name,
         participants: 1,
+        with_pool: pool.is_some(),
     };
 
     let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
