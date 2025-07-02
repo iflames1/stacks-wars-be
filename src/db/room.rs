@@ -370,18 +370,19 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         .await
         .map_err(|error| AppError::RedisCommandError(error.into()))?;
 
-    let Some(player_to_remove) = players.iter().find_map(|p| {
+    let (player_to_remove_json, player_obj): (String, Player) = match players.iter().find_map(|p| {
         serde_json::from_str::<Player>(p)
             .ok()
             .filter(|rp| rp.id == user_id)
-            .map(|_| p) // we return the original JSON string
-    }) else {
-        return Err(AppError::BadRequest("User not in room".into()));
+            .map(|player| (p.clone(), player))
+    }) {
+        Some(data) => data,
+        None => return Err(AppError::BadRequest("User not in room".into())),
     };
 
     let _: () = redis::cmd("SREM")
         .arg(&players_key)
-        .arg(player_to_remove)
+        .arg(&player_to_remove_json)
         .query_async(&mut *conn)
         .await
         .map_err(|error| AppError::RedisCommandError(error.into()))?;
@@ -398,6 +399,34 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
 
     if room.participants > 0 {
         room.participants -= 1;
+    }
+
+    if let Some(contract_address) = &room.contract_address {
+        tracing::info!("Deducting entry fee {}", contract_address);
+        let pool_key = format!("room:{}:pool", room_id);
+        let pool_json: String = redis::cmd("GET")
+            .arg(&pool_key)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|_| AppError::NotFound("Room pool not found".into()))?;
+
+        let mut pool: RoomPool =
+            serde_json::from_str(&pool_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+        // Only deduct if tx_id exists (player actually paid)
+        if player_obj.tx_id.is_some() {
+            pool.total_amount = pool.total_amount.saturating_sub(pool.entry_fee); // avoid underflow
+        }
+
+        let updated_pool_json =
+            serde_json::to_string(&pool).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+        let _: () = redis::cmd("SET")
+            .arg(&pool_key)
+            .arg(updated_pool_json)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|e| AppError::RedisCommandError(e.into()))?;
     }
 
     let updated_json =
