@@ -68,14 +68,14 @@ pub struct Player {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomPool {
-    pub entry_fee: u64,
+    pub entry_amount: u64,
     pub contract_address: String,
     pub total_amount: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomPoolInput {
-    pub entry_fee: u64,
+    pub entry_amount: u64,
     pub contract_address: String,
     pub tx_id: String,
 }

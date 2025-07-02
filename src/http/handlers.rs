@@ -66,7 +66,7 @@ pub async fn get_user_handler(
 pub struct CreateRoomPayload {
     pub name: String,
     pub description: Option<String>,
-    pub entry_fee: Option<u64>,
+    pub entry_amount: Option<u64>,
     pub contract_address: Option<String>,
     pub tx_id: Option<String>,
     pub game_id: Uuid,
@@ -82,12 +82,12 @@ pub async fn create_room_handler(
         .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
 
     let pool = match (
-        payload.entry_fee,
+        payload.entry_amount,
         payload.contract_address.clone(),
         payload.tx_id.clone(),
     ) {
-        (Some(entry_fee), Some(contract_address), Some(tx_id)) => Some(RoomPoolInput {
-            entry_fee,
+        (Some(entry_amount), Some(contract_address), Some(tx_id)) => Some(RoomPoolInput {
+            entry_amount,
             contract_address,
             tx_id,
         }),

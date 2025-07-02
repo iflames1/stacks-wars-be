@@ -44,14 +44,14 @@ pub async fn create_room(
             &pool_input.tx_id,
             &creator_user.wallet_address,
             &pool_input.contract_address,
-            pool_input.entry_fee,
+            pool_input.entry_amount,
         )
         .await?;
 
         let pool_struct = RoomPool {
-            entry_fee: pool_input.entry_fee,
+            entry_amount: pool_input.entry_amount,
             contract_address: pool_input.contract_address.clone(),
-            total_amount: pool_input.entry_fee,
+            total_amount: pool_input.entry_amount,
         };
 
         let pool_key = format!("room:{}:pool", room_id);
@@ -300,14 +300,14 @@ pub async fn join_room(
             &tx_id,
             &user.wallet_address,
             contract_address,
-            pool.entry_fee,
+            pool.entry_amount,
         )
         .await?;
 
         let updated_pool = RoomPool {
-            entry_fee: pool.entry_fee,
+            entry_amount: pool.entry_amount,
             contract_address: contract_address.clone(),
-            total_amount: pool.total_amount + pool.entry_fee,
+            total_amount: pool.total_amount + pool.entry_amount,
         };
 
         let new_pool_json = serde_json::to_string(&updated_pool)
@@ -415,7 +415,7 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
 
         // Only deduct if tx_id exists (player actually paid)
         if player_obj.tx_id.is_some() {
-            pool.total_amount = pool.total_amount.saturating_sub(pool.entry_fee); // avoid underflow
+            pool.total_amount = pool.total_amount.saturating_sub(pool.entry_amount); // avoid underflow
         }
 
         let updated_pool_json =
