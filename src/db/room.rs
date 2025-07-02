@@ -34,7 +34,7 @@ pub async fn create_room(
         game_id,
         game_name,
         participants: 1,
-        with_pool: pool.is_some(),
+        contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
     };
 
     let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
@@ -264,10 +264,6 @@ pub async fn join_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Resu
         .query_async(&mut *conn)
         .await
         .map_err(|e| AppError::RedisCommandError(e.into()))?;
-
-    if current_players.len() >= room.max_participants {
-        return Err(AppError::BadRequest("Room is full".into()));
-    }
 
     if current_players
         .iter()

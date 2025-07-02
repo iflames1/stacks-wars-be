@@ -98,7 +98,7 @@ pub struct GameRoomInfo {
     pub game_id: Uuid,
     pub game_name: String,
     pub participants: usize,
-    pub with_pool: bool,
+    pub contract_address: Option<String>,
 }
 
 #[derive(Serialize)]
