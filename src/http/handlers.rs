@@ -22,7 +22,9 @@ use crate::{
     errors::AppError,
     models::{
         User,
-        game::{GameRoomInfo, GameState, GameType, Player, PlayerState, RoomExtended},
+        game::{
+            GameRoomInfo, GameState, GameType, Player, PlayerState, RoomExtended, RoomPoolInput,
+        },
     },
     state::AppState,
 };
@@ -64,7 +66,9 @@ pub async fn get_user_handler(
 pub struct CreateRoomPayload {
     pub name: String,
     pub description: Option<String>,
-    pub max_participants: usize,
+    pub entry_fee: Option<u64>,
+    pub contract_address: Option<String>,
+    pub tx_id: Option<String>,
     pub game_id: Uuid,
     pub game_name: String,
 }
@@ -77,13 +81,26 @@ pub async fn create_room_handler(
     let user_id = Uuid::parse_str(&claims.sub)
         .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
 
+    let pool = match (
+        payload.entry_fee,
+        payload.contract_address.clone(),
+        payload.tx_id.clone(),
+    ) {
+        (Some(entry_fee), Some(contract_address), Some(tx_id)) => Some(RoomPoolInput {
+            entry_fee,
+            contract_address,
+            tx_id,
+        }),
+        _ => None,
+    };
+
     let room_id = create_room(
         payload.name,
         payload.description,
         user_id,
-        payload.max_participants,
         payload.game_id,
         payload.game_name,
+        pool,
         state.redis.clone(),
     )
     .await
@@ -151,15 +168,21 @@ pub async fn get_players_handler(
     Ok(Json(players))
 }
 
+#[derive(Deserialize)]
+pub struct JoinRoomPayload {
+    pub tx_id: Option<String>,
+}
+
 pub async fn join_room_handler(
     Path(room_id): Path<Uuid>,
     AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
+    Json(payload): Json<JoinRoomPayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
     let user_id = Uuid::parse_str(&claims.sub)
         .map_err(|_| AppError::Unauthorized("Invalid user ID in token".into()).to_response())?;
 
-    join_room(room_id, user_id, state.redis.clone())
+    join_room(room_id, user_id, payload.tx_id, state.redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
