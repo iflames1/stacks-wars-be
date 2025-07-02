@@ -38,7 +38,6 @@ pub struct GameRoom {
     pub used_words: HashMap<Uuid, Vec<String>>,
     pub rule_context: RuleContext,
     pub rule_index: usize,
-
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
 }
@@ -64,6 +63,21 @@ pub struct Player {
     pub state: PlayerState,
     pub rank: Option<usize>,
     pub used_words: Vec<String>,
+    pub tx_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomPool {
+    pub entry_fee: u64,
+    pub contract_address: String,
+    pub total_amount: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomPoolInput {
+    pub entry_fee: u64,
+    pub contract_address: String,
+    pub tx_id: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -80,7 +94,6 @@ pub struct GameRoomInfo {
     pub name: String,
     pub description: Option<String>,
     pub creator_id: Uuid,
-    pub max_participants: usize,
     pub state: GameState,
     pub game_id: Uuid,
     pub game_name: String,

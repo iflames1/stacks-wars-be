@@ -1,9 +1,12 @@
+use redis::AsyncCommands;
 use uuid::Uuid;
 
 use crate::{
-    db::user::get_user_by_id,
+    db::{tx::validate_payment_tx, user::get_user_by_id},
     errors::AppError,
-    models::game::{GameRoomInfo, GameState, Player, PlayerState, RoomExtended},
+    models::game::{
+        GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool, RoomPoolInput,
+    },
     state::RedisClient,
 };
 
@@ -11,9 +14,9 @@ pub async fn create_room(
     name: String,
     description: Option<String>,
     creator_id: Uuid,
-    max_participants: usize,
     game_id: Uuid,
     game_name: String,
+    pool: Option<RoomPoolInput>,
     redis: RedisClient,
 ) -> Result<Uuid, AppError> {
     let room_id = Uuid::new_v4();
@@ -27,18 +30,42 @@ pub async fn create_room(
         name,
         description,
         creator_id,
-        max_participants,
         state: GameState::Waiting,
         game_id,
         game_name,
         participants: 1,
     };
 
+    let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
+
+    if let Some(pool_input) = &pool {
+        validate_payment_tx(
+            &pool_input.tx_id,
+            &creator_user.wallet_address,
+            &pool_input.contract_address,
+            pool_input.entry_fee,
+        )
+        .await?;
+
+        let pool_struct = RoomPool {
+            entry_fee: pool_input.entry_fee,
+            contract_address: pool_input.contract_address.clone(),
+            total_amount: pool_input.entry_fee,
+        };
+
+        let pool_key = format!("room:{}:pool", room_id);
+        let pool_json = serde_json::to_string(&pool_struct)
+            .map_err(|e| AppError::Serialization(e.to_string()))?;
+
+        let _: () = conn
+            .set(pool_key, pool_json)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
+
     // Serialize room info
     let room_info_json =
         serde_json::to_string(&room_info).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
 
     let room_player = Player {
         id: creator_user.id,
@@ -47,6 +74,7 @@ pub async fn create_room(
         state: PlayerState::Ready,
         used_words: Vec::new(),
         rank: None,
+        tx_id: pool.as_ref().map(|p| p.tx_id.to_owned()),
     };
 
     let room_info_key = format!("room:{}:info", room_id);
