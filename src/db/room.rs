@@ -549,14 +549,45 @@ pub async fn get_room_info(room_id: Uuid, redis: RedisClient) -> Result<GameRoom
         .map_err(|_| AppError::Deserialization("Invalid room info JSON".into()))
 }
 
+pub async fn get_room_pool(room_id: Uuid, redis: RedisClient) -> Result<RoomPool, AppError> {
+    let key = format!("room:{}:pool", room_id);
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let value: String = redis::cmd("GET")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| AppError::NotFound("Room pool not found".into()))?;
+
+    serde_json::from_str(&value)
+        .map_err(|_| AppError::Deserialization("Invalid room pool JSON".into()))
+}
+
 pub async fn get_room_extended(
     room_id: Uuid,
     redis: RedisClient,
 ) -> Result<RoomExtended, AppError> {
     let info = get_room_info(room_id, redis.clone()).await?;
-    let players = get_room_players(room_id, redis).await?;
+    let players = get_room_players(room_id, redis.clone()).await?;
 
-    Ok(RoomExtended { info, players })
+    let pool = if let Some(addr) = &info.contract_address {
+        if !addr.is_empty() {
+            Some(get_room_pool(room_id, redis).await?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(RoomExtended {
+        info,
+        players,
+        pool,
+    })
 }
 
 pub async fn update_room_player_after_game(

@@ -105,6 +105,7 @@ pub struct GameRoomInfo {
 pub struct RoomExtended {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
+    pub pool: Option<RoomPool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
