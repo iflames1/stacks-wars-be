@@ -57,6 +57,21 @@ async fn send_error_to_player(
     }
 }
 
+async fn send_to_player(
+    player_id: Uuid,
+    connections: &PlayerConnections,
+    msg: &LobbyServerMessage,
+) {
+    let conns = connections.lock().await;
+    if let Some(sender) = conns.get(&player_id) {
+        let mut sender = sender.lock().await;
+        let _ = sender
+            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .await;
+        let _ = sender.send(Message::Close(None)).await;
+    }
+}
+
 async fn get_join_requests(room_id: Uuid, join_requests: &LobbyJoinRequests) -> Vec<JoinRequest> {
     let map = join_requests.lock().await;
     map.get(&room_id).cloned().unwrap_or_default()
@@ -259,6 +274,14 @@ pub async fn handle_incoming_messages(
                                 send_error_to_player(player.id, e.to_string(), &connections).await;
                             }
 
+                            if allow {
+                                let msg = LobbyServerMessage::Allowed;
+                                send_to_player(user_id, &connections, &msg).await;
+                            } else {
+                                let msg = LobbyServerMessage::Rejected;
+                                send_to_player(user_id, &connections, &msg).await;
+                            }
+
                             if let Ok(pending_players) =
                                 get_pending_players(room_id, &join_requests).await
                             {
@@ -391,19 +414,9 @@ pub async fn handle_incoming_messages(
                                 )
                                 .await;
 
-                                let notify_msg: LobbyServerMessage =
-                                    LobbyServerMessage::NotifyKicked;
+                                let msg: LobbyServerMessage = LobbyServerMessage::NotifyKicked;
 
-                                let conns = connections.lock().await;
-                                if let Some(sender) = conns.get(&player_id) {
-                                    let mut sender = sender.lock().await;
-                                    let _ = sender
-                                        .send(Message::Text(
-                                            serde_json::to_string(&notify_msg).unwrap().into(),
-                                        ))
-                                        .await;
-                                    let _ = sender.send(Message::Close(None)).await;
-                                }
+                                send_to_player(player_id, &connections, &msg).await;
                             }
 
                             // Optionally: disconnect the kicked player
