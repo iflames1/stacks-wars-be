@@ -169,6 +169,7 @@ pub enum LobbyServerMessage {
     },
     Allowed,
     Rejected,
+    Pending,
     Error {
         message: String,
     },

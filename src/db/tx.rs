@@ -53,23 +53,65 @@ pub async fn validate_payment_tx(
         .get("events")
         .and_then(|v| v.as_array())
         .unwrap_or(&empty_vec);
-    let transfer = events.iter().find(|e| {
-        e.get("event_type").and_then(|et| et.as_str()) == Some("stx_asset")
-            && e.get("asset").and_then(|asset| {
-                let recipient =
-                    asset.get("recipient").and_then(|r| r.as_str()) == Some(expected_contract);
-                let amount = asset
-                    .get("amount")
-                    .and_then(|a| a.as_str())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    == Some(expected_amount);
-                Some(recipient && amount)
-            }) == Some(true)
-    });
+    println!("{:#?}", events);
+    let mut matched = None;
 
-    if transfer.is_none() {
+    for event in events {
+        let Some(event_type) = event.get("event_type").and_then(|et| et.as_str()) else {
+            tracing::warn!("Skipping event: missing event_type");
+            continue;
+        };
+
+        if event_type != "stx_asset" {
+            tracing::debug!("Skipping event: not stx_asset, got {event_type}");
+            continue;
+        }
+
+        let Some(asset) = event.get("asset") else {
+            tracing::warn!("stx_asset event missing 'asset' field");
+            continue;
+        };
+
+        let recipient_matches = asset
+            .get("recipient")
+            .and_then(|r| r.as_str())
+            .map(|r| {
+                let m = r == expected_contract;
+                if !m {
+                    tracing::debug!("Recipient mismatch: expected {expected_contract}, got {r}");
+                }
+                m
+            })
+            .unwrap_or_else(|| {
+                tracing::warn!("Missing recipient in asset event");
+                false
+            });
+
+        let amount_matches = asset
+            .get("amount")
+            .and_then(|a| a.as_str())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|a| {
+                let m = a == expected_amount * 1000000;
+                if !m {
+                    tracing::debug!("Amount mismatch: expected {expected_amount}, got {a}");
+                }
+                m
+            })
+            .unwrap_or_else(|| {
+                tracing::warn!("Missing or invalid amount in asset event");
+                false
+            });
+
+        if recipient_matches && amount_matches {
+            matched = Some(event);
+            break;
+        }
+    }
+
+    if matched.is_none() {
         return Err(AppError::BadRequest(
-            "Payment transfer event not found or doesn't match".into(),
+            "No matching STX asset transfer event found".into(),
         ));
     }
 

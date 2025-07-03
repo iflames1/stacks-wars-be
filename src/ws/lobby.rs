@@ -231,6 +231,8 @@ pub async fn handle_incoming_messages(
                                     "Success Adding {} to pending players",
                                     player.wallet_address
                                 );
+                                let msg = LobbyServerMessage::Pending;
+                                send_to_player(player.id, &connections, &msg).await;
                                 let msg = LobbyServerMessage::PendingPlayers { pending_players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
