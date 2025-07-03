@@ -34,7 +34,7 @@ pub fn create_http_routes(state: AppState) -> Router {
             put(update_player_state_handler),
         )
         .route("/game", post(add_game_handler))
-        .route("/game", get(get_all_games_handler))
+        .route("/games", get(get_all_games_handler))
         .route("/game/{game_id}", get(get_game_handler))
         .route("/room/{room_id}", get(get_room_handler))
         .route("/rooms", get(get_all_rooms_handler))

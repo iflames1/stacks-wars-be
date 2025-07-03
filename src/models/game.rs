@@ -70,7 +70,7 @@ pub struct Player {
 pub struct RoomPool {
     pub entry_amount: u64,
     pub contract_address: String,
-    pub total_amount: u64,
+    pub current_amount: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

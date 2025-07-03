@@ -214,12 +214,6 @@ pub async fn lobby_ws_handler(
         .map_err(|e| e.to_response())?;
 
     if let Some(matched_player) = players.iter().find(|p| p.id == player_id).cloned() {
-        tracing::info!(
-            "Player {} joined lobby WS {}",
-            matched_player.wallet_address,
-            room_id
-        );
-
         return Ok(ws.on_upgrade(move |socket| {
             handle_lobby_socket(
                 socket,
@@ -235,12 +229,6 @@ pub async fn lobby_ws_handler(
     let user = db::user::get_user_by_id(player_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
-
-    tracing::info!(
-        "User {} is requesting to join lobby {}",
-        user.wallet_address,
-        room_id
-    );
 
     {
         let mut guard = join_requests.lock().await;
