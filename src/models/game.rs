@@ -56,6 +56,13 @@ pub enum PlayerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", content = "data")]
+pub enum ClaimState {
+    Claimed { tx_id: String },
+    NotClaimed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
     pub id: Uuid,
     pub wallet_address: String,
@@ -64,6 +71,8 @@ pub struct Player {
     pub rank: Option<usize>,
     pub used_words: Vec<String>,
     pub tx_id: Option<String>,
+    pub claim: Option<ClaimState>,
+    pub prize: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

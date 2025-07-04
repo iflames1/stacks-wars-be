@@ -251,6 +251,8 @@ pub async fn lobby_ws_handler(
         rank: None,
         used_words: vec![],
         tx_id: None,
+        claim: None,
+        prize: None,
     };
 
     Ok(ws.on_upgrade(move |socket| {

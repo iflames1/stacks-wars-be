@@ -5,7 +5,8 @@ use crate::{
     db::{tx::validate_payment_tx, user::get_user_by_id},
     errors::AppError,
     models::game::{
-        GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool, RoomPoolInput,
+        ClaimState, GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool,
+        RoomPoolInput,
     },
     state::RedisClient,
 };
@@ -76,6 +77,8 @@ pub async fn create_room(
         used_words: Vec::new(),
         rank: None,
         tx_id: pool.as_ref().map(|p| p.tx_id.to_owned()),
+        claim: None,
+        prize: None,
     };
 
     let room_info_key = format!("room:{}:info", room_id);
@@ -329,6 +332,8 @@ pub async fn join_room(
         used_words: Vec::new(),
         rank: None,
         tx_id,
+        claim: None,
+        prize: None,
     };
 
     let player_json = serde_json::to_string(&room_player)
@@ -528,6 +533,112 @@ pub async fn update_player_state(
             .query_async(&mut *conn)
             .await
             .map_err(|error| AppError::RedisCommandError(error.into()))?;
+    }
+
+    Ok(())
+}
+
+pub async fn update_claim_state(
+    room_id: Uuid,
+    player_id: Uuid,
+    claim_state: ClaimState,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let key = format!("room:{}:players", room_id);
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let players_json: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|error| AppError::RedisCommandError(error.into()))?;
+
+    let mut players: Vec<Player> = players_json
+        .into_iter()
+        .filter_map(|p| serde_json::from_str(&p).ok())
+        .collect();
+
+    let Some(player) = players.iter_mut().find(|p| p.id == player_id) else {
+        return Err(AppError::BadRequest("Player not found".into()));
+    };
+
+    player.claim = Some(claim_state);
+
+    // Clear the existing set
+    let _: () = redis::cmd("DEL")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+    // Add all players back
+    for p in players {
+        let player_json = serde_json::to_string(&p)
+            .map_err(|_| AppError::Serialization("Failed to serialize player".into()))?;
+
+        let _: () = redis::cmd("SADD")
+            .arg(&key)
+            .arg(player_json)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|e| AppError::RedisCommandError(e.into()))?;
+    }
+
+    Ok(())
+}
+
+pub async fn update_prize(
+    room_id: Uuid,
+    player_id: Uuid,
+    prize: u64,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let key = format!("room:{}:players", room_id);
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    // Get all players
+    let players_json: Vec<String> = redis::cmd("SMEMBERS")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+    let mut players: Vec<Player> = players_json
+        .into_iter()
+        .filter_map(|p| serde_json::from_str(&p).ok())
+        .collect();
+
+    // Find and update the target player
+    let Some(player) = players.iter_mut().find(|p| p.id == player_id) else {
+        return Err(AppError::BadRequest("Player not found".into()));
+    };
+
+    player.prize = Some(prize);
+    player.claim = Some(ClaimState::NotClaimed);
+
+    // Delete existing set and re-insert all players
+    let _: () = redis::cmd("DEL")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+    for p in players {
+        let player_json = serde_json::to_string(&p)
+            .map_err(|_| AppError::Serialization("Failed to serialize player".into()))?;
+
+        let _: () = redis::cmd("SADD")
+            .arg(&key)
+            .arg(player_json)
+            .query_async(&mut *conn)
+            .await
+            .map_err(|e| AppError::RedisCommandError(e.into()))?;
     }
 
     Ok(())
