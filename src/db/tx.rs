@@ -4,7 +4,7 @@ pub async fn validate_payment_tx(
     tx_id: &str,
     expected_sender: &str,
     expected_contract: &str,
-    expected_amount: u64,
+    expected_amount: f64,
 ) -> Result<(), AppError> {
     let url = format!("https://api.testnet.hiro.so/extended/v1/tx/{}", tx_id);
 
@@ -90,9 +90,9 @@ pub async fn validate_payment_tx(
         let amount_matches = asset
             .get("amount")
             .and_then(|a| a.as_str())
-            .and_then(|s| s.parse::<u64>().ok())
+            .and_then(|s| s.parse::<f64>().ok())
             .map(|a| {
-                let m = a == expected_amount * 1000000;
+                let m = a == expected_amount * 1_000_000.0;
                 if !m {
                     tracing::debug!("Amount mismatch: expected {expected_amount}, got {a}");
                 }

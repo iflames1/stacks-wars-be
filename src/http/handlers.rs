@@ -81,7 +81,7 @@ pub async fn get_user_handler(
 pub struct CreateRoomPayload {
     pub name: String,
     pub description: Option<String>,
-    pub entry_amount: Option<u64>,
+    pub entry_amount: Option<f64>,
     pub contract_address: Option<String>,
     pub tx_id: Option<String>,
     pub game_id: Uuid,

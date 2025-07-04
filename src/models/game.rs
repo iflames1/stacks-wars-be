@@ -73,19 +73,19 @@ pub struct Player {
     pub used_words: Vec<String>,
     pub tx_id: Option<String>,
     pub claim: Option<ClaimState>,
-    pub prize: Option<u64>,
+    pub prize: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomPool {
-    pub entry_amount: u64,
+    pub entry_amount: f64,
     pub contract_address: String,
-    pub current_amount: u64,
+    pub current_amount: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomPoolInput {
-    pub entry_amount: u64,
+    pub entry_amount: f64,
     pub contract_address: String,
     pub tx_id: String,
 }
@@ -209,4 +209,5 @@ pub enum LexiWarsServerMessage {
     UsedWord { word: String },
     GameOver,
     FinalStanding { standing: Vec<PlayerStanding> },
+    Prize { amount: f64 },
 }
