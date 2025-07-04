@@ -20,7 +20,8 @@ use crate::{
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
     models::{
         game::{
-            GameData, GameRoom, GameRoomInfo, GameState, LexiWarsServerMessage, Player, PlayerState,
+            GameData, GameRoom, GameRoomInfo, GameState, LexiWarsServerMessage, Player,
+            PlayerState, RoomPool,
         },
         lobby::{JoinRequest, JoinState},
         word_loader::WORD_LIST,
@@ -48,13 +49,14 @@ async fn store_connection(
 pub async fn remove_connection(id: Uuid, connections: &PlayerConnections) {
     let mut conns = connections.lock().await;
     conns.remove(&id);
-    //println!("Player {} disconnected", player.wallet_address);
+    //tracing::info!("Player {} disconnected", player.wallet_address);
 }
 
 async fn setup_player_and_room(
     player: &Player,
     room_info: GameRoomInfo,
     players: Vec<Player>,
+    pool: Option<RoomPool>,
     rooms: &SharedRooms,
     connections: &PlayerConnections,
 ) {
@@ -62,8 +64,9 @@ async fn setup_player_and_room(
 
     // Check if this room is already active in memory
     let room = locked_rooms.entry(room_info.id).or_insert_with(|| {
-        println!("Initializing new in-memory GameRoom for {}", room_info.id);
+        tracing::info!("Initializing new in-memory GameRoom for {}", room_info.id);
         let word_list = WORD_LIST.clone();
+
         GameRoom {
             info: room_info.clone(),
             players: players.clone(),
@@ -77,21 +80,25 @@ async fn setup_player_and_room(
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
+            pool,
         }
     });
 
     let already_exists = room.players.iter().any(|p| p.id == player.id);
 
     if !already_exists {
-        println!(
+        tracing::info!(
             "Adding player {} ({}) to room {}",
-            player.wallet_address, player.id, room.info.id
+            player.wallet_address,
+            player.id,
+            room.info.id
         );
         room.players.push(player.clone());
     } else {
-        println!(
+        tracing::info!(
             "Player {} already exists in room {}, skipping re-add",
-            player.wallet_address, room.info.id
+            player.wallet_address,
+            room.info.id
         );
     }
 
@@ -131,6 +138,20 @@ pub async fn lexi_wars_handler(
         return Err(AppError::BadRequest("Game not in progress".into()).to_response());
     }
 
+    let pool = if let Some(ref addr) = room.contract_address {
+        if !addr.is_empty() {
+            Some(
+                db::room::get_room_pool(room_id, redis.clone())
+                    .await
+                    .map_err(|e| e.to_response())?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let players = db::room::get_room_players(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
@@ -158,6 +179,7 @@ pub async fn lexi_wars_handler(
             room_id,
             matched_player,
             players_clone,
+            pool,
             rooms,
             connections,
             room_info,
@@ -171,6 +193,7 @@ async fn handle_lexi_wars_socket(
     room_id: Uuid,
     player: Player,
     players: Vec<Player>,
+    pool: Option<RoomPool>,
     rooms: SharedRooms,
     connections: PlayerConnections,
     room_info: GameRoomInfo,
@@ -180,7 +203,7 @@ async fn handle_lexi_wars_socket(
 
     store_connection(player.id, sender, &connections).await;
 
-    setup_player_and_room(&player, room_info, players, &rooms, &connections).await;
+    setup_player_and_room(&player, room_info, players, pool, &rooms, &connections).await;
 
     lexi_wars::engine::handle_incoming_messages(
         &player,

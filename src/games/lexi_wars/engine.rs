@@ -251,6 +251,10 @@ pub async fn handle_incoming_messages(
 
                         // check if word is valid
                         if !words.contains(&cleaned_word) {
+                            let validation_msg = LexiWarsServerMessage::Validate {
+                                msg: "Invalid word".to_string(),
+                            };
+                            broadcast_to_player(player.id, &validation_msg, connections).await;
                             tracing::info!(
                                 "invalid word from {}: {}",
                                 player.wallet_address,

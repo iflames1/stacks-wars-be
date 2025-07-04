@@ -40,6 +40,7 @@ pub struct GameRoom {
     pub rule_index: usize,
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
+    pub pool: Option<RoomPool>,
 }
 
 #[derive(Serialize)]

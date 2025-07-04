@@ -704,8 +704,8 @@ pub async fn get_room_extended(
 pub async fn update_room_player_after_game(
     room_id: Uuid,
     player_id: Uuid,
-    new_rank: usize,
-    new_used_words: Vec<String>,
+    rank: usize,
+    used_words: Vec<String>,
     redis: RedisClient,
 ) -> Result<(), String> {
     let players_key = format!("room:{}:players", room_id);
@@ -730,8 +730,8 @@ pub async fn update_room_player_after_game(
         return Err("Player not found in room".into());
     };
 
-    player.rank = Some(new_rank);
-    player.used_words = new_used_words;
+    player.rank = Some(rank);
+    player.used_words = used_words;
 
     // Replace entire player set
     let _: () = redis::cmd("DEL")
