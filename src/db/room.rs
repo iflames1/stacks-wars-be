@@ -545,6 +545,8 @@ pub async fn update_claim_state(
     redis: RedisClient,
 ) -> Result<(), AppError> {
     let key = format!("room:{}:players", room_id);
+    let pool_key = format!("room:{}:pool", room_id);
+
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -565,16 +567,53 @@ pub async fn update_claim_state(
         return Err(AppError::BadRequest("Player not found".into()));
     };
 
+    if let ClaimState::Claimed { .. } = &claim_state {
+        if let Some(ClaimState::Claimed { .. }) = &player.claim {
+            return Err(AppError::BadRequest("Reward already claimed".into()));
+        }
+
+        if let Some(prize) = player.prize {
+            // Fetch pool
+            let pool_json: String = redis::cmd("GET")
+                .arg(&pool_key)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| AppError::RedisCommandError(e.into()))?;
+
+            let mut pool: RoomPool = serde_json::from_str(&pool_json)
+                .map_err(|_| AppError::Deserialization("Failed to parse RoomPool".into()))?;
+
+            if pool.current_amount < prize {
+                return Err(AppError::BadRequest("Not enough funds in pool".into()));
+            }
+
+            // Deduct prize
+            pool.current_amount -= prize;
+
+            // Save updated pool
+            let updated_pool = serde_json::to_string(&pool)
+                .map_err(|_| AppError::Serialization("Failed to serialize RoomPool".into()))?;
+
+            let _: () = redis::cmd("SET")
+                .arg(&pool_key)
+                .arg(updated_pool)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|e| AppError::RedisCommandError(e.into()))?;
+        } else {
+            return Err(AppError::BadRequest("No prize to claim".into()));
+        }
+    }
+
     player.claim = Some(claim_state);
 
-    // Clear the existing set
+    // Replace player set
     let _: () = redis::cmd("DEL")
         .arg(&key)
         .query_async(&mut *conn)
         .await
         .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
-    // Add all players back
     for p in players {
         let player_json = serde_json::to_string(&p)
             .map_err(|_| AppError::Serialization("Failed to serialize player".into()))?;
