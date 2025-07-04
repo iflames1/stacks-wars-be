@@ -18,7 +18,6 @@ use crate::{
 };
 
 pub fn create_http_routes(state: AppState) -> Router {
-    println!("Stacks Wars server running at http://127.0.0.1:3001/");
     Router::new()
         .route("/user", post(create_user_handler))
         .route("/user/{user_id}", get(get_user_handler))
