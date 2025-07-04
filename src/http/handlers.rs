@@ -14,7 +14,7 @@ use crate::{
         join_room, leave_room,
         room::{
             get_all_rooms, get_room, get_room_extended, get_room_info, get_room_players,
-            get_rooms_by_game_id,
+            get_rooms_by_game_id, update_claim_state,
         },
         update_game_state, update_player_state,
         user::{create_user, get_user_by_id},
@@ -23,7 +23,8 @@ use crate::{
     models::{
         User,
         game::{
-            GameRoomInfo, GameState, GameType, Player, PlayerState, RoomExtended, RoomPoolInput,
+            ClaimState, GameRoomInfo, GameState, GameType, Player, PlayerState, RoomExtended,
+            RoomPoolInput,
         },
     },
     state::AppState,
@@ -351,6 +352,32 @@ pub async fn update_player_state_handler(
     })?;
 
     tracing::info!("Player state updated to {:?}", payload.new_state);
+    Ok(Json("success"))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateClaimStatePayload {
+    pub claim: ClaimState,
+}
+pub async fn update_claim_state_handler(
+    Path(room_id): Path<Uuid>,
+    AuthClaims(claims): AuthClaims,
+    State(state): State<AppState>,
+    Json(payload): Json<UpdateClaimStatePayload>,
+) -> Result<Json<&'static str>, (StatusCode, String)> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
+        tracing::error!("Unauthorized access attempt");
+        AppError::Unauthorized("Invalid user ID in token".into()).to_response()
+    })?;
+
+    update_claim_state(room_id, user_id, payload.claim, state.redis.clone())
+        .await
+        .map_err(|e| {
+            tracing::error!("Error updating game state: {}", e);
+            e.to_response()
+        })?;
+
+    tracing::info!("Claim state updated for room {room_id}");
     Ok(Json("success"))
 }
 
