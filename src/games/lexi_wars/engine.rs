@@ -13,11 +13,29 @@ use crate::{
         },
     },
     models::game::{
-        GameData, GameState, LexiWarsClientMessage, LexiWarsServerMessage, Player, PlayerStanding,
+        GameData, GameRoom, GameState, LexiWarsClientMessage, LexiWarsServerMessage, Player,
+        PlayerStanding,
     },
     state::{PlayerConnections, RedisClient, SharedRooms},
 };
 use uuid::Uuid;
+
+fn get_prize(room: &mut GameRoom, position: usize) -> Option<f64> {
+    let prize = room.pool.as_ref().map(|pool| match position {
+        1 => {
+            if room.eliminated_players.len() == 2 {
+                (pool.current_amount * 70.0) / 100.0
+            } else {
+                (pool.current_amount * 50.0) / 100.0
+            }
+        }
+        2 => (pool.current_amount * 30.0) / 100.0,
+        3 => (pool.current_amount * 20.0) / 100.0,
+        _ => 0.0,
+    });
+
+    prize
+}
 
 fn start_turn_timer(
     player_id: Uuid,
@@ -72,16 +90,26 @@ fn start_turn_timer(
 
                     let player_used_words = room.used_words.remove(&player.id).unwrap_or_default();
 
+                    let prize = get_prize(room, position);
+
                     if let Err(e) = update_room_player_after_game(
                         room_id,
                         player_id,
                         position,
+                        prize,
                         player_used_words,
                         redis.clone(),
                     )
                     .await
                     {
                         tracing::error!("Error updating player in Redis: {}", e);
+                    }
+
+                    if let Some(amount) = prize {
+                        if amount > 0.0 {
+                            let prize_msg = LexiWarsServerMessage::Prize { amount };
+                            broadcast_to_player(player_id, &prize_msg, &connections).await;
+                        }
                     }
                 }
 
@@ -90,23 +118,35 @@ fn start_turn_timer(
                     let winner = room.players.remove(0);
                     room.eliminated_players.push(winner.clone());
 
+                    let position = room.players.len() + 1;
+
                     let rank_msg = LexiWarsServerMessage::Rank {
-                        rank: "1".to_string(),
+                        rank: position.to_string(),
                     };
                     broadcast_to_player(player_id, &rank_msg, &connections).await;
 
                     let player_used_words = room.used_words.remove(&winner.id).unwrap_or_default();
 
+                    let prize = get_prize(room, position);
+
                     if let Err(e) = update_room_player_after_game(
                         room_id,
                         winner.id,
                         1,
+                        prize,
                         player_used_words,
                         redis.clone(),
                     )
                     .await
                     {
                         tracing::error!("Error updating player in Redis: {}", e);
+                    }
+
+                    if let Some(amount) = prize {
+                        if amount > 0.0 {
+                            let prize_msg = LexiWarsServerMessage::Prize { amount };
+                            broadcast_to_player(player_id, &prize_msg, &connections).await;
+                        }
                     }
 
                     let gameover_msg = LexiWarsServerMessage::GameOver;
@@ -251,6 +291,10 @@ pub async fn handle_incoming_messages(
 
                         // check if word is valid
                         if !words.contains(&cleaned_word) {
+                            let validation_msg = LexiWarsServerMessage::Validate {
+                                msg: "Invalid word".to_string(),
+                            };
+                            broadcast_to_player(player.id, &validation_msg, connections).await;
                             tracing::info!(
                                 "invalid word from {}: {}",
                                 player.wallet_address,

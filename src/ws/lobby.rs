@@ -57,6 +57,21 @@ async fn send_error_to_player(
     }
 }
 
+async fn send_to_player(
+    player_id: Uuid,
+    connections: &PlayerConnections,
+    msg: &LobbyServerMessage,
+) {
+    let conns = connections.lock().await;
+    if let Some(sender) = conns.get(&player_id) {
+        let mut sender = sender.lock().await;
+        let _ = sender
+            .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
+            .await;
+        let _ = sender.send(Message::Close(None)).await;
+    }
+}
+
 async fn get_join_requests(room_id: Uuid, join_requests: &LobbyJoinRequests) -> Vec<JoinRequest> {
     let map = join_requests.lock().await;
     map.get(&room_id).cloned().unwrap_or_default()
@@ -145,12 +160,17 @@ pub async fn handle_incoming_messages(
             Message::Text(text) => {
                 if let Ok(parsed) = serde_json::from_str::<LobbyClientMessage>(&text) {
                     match parsed {
-                        LobbyClientMessage::JoinLobby => {
+                        LobbyClientMessage::JoinLobby { tx_id } => {
                             let join_map = get_join_requests(room_id, &join_requests).await;
                             if let Some(req) = join_map.iter().find(|r| r.user.id == player.id) {
                                 if req.state == JoinState::Allowed {
-                                    if let Err(e) =
-                                        db::room::join_room(room_id, player.id, redis.clone()).await
+                                    if let Err(e) = db::room::join_room(
+                                        room_id,
+                                        player.id,
+                                        tx_id,
+                                        redis.clone(),
+                                    )
+                                    .await
                                     {
                                         tracing::error!("Failed to join room: {}", e);
                                         send_error_to_player(
@@ -162,6 +182,11 @@ pub async fn handle_incoming_messages(
                                     } else if let Ok(players) =
                                         db::room::get_room_players(room_id, redis.clone()).await
                                     {
+                                        tracing::info!(
+                                            "{} joined room {} successfully",
+                                            player.wallet_address,
+                                            room_id
+                                        );
                                         let msg = LobbyServerMessage::PlayerJoined { players };
                                         broadcast_to_lobby(
                                             room_id,
@@ -202,6 +227,12 @@ pub async fn handle_incoming_messages(
                             if let Ok(pending_players) =
                                 get_pending_players(room_id, &join_requests).await
                             {
+                                tracing::info!(
+                                    "Success Adding {} to pending players",
+                                    player.wallet_address
+                                );
+                                let msg = LobbyServerMessage::Pending;
+                                send_to_player(player.id, &connections, &msg).await;
                                 let msg = LobbyServerMessage::PendingPlayers { pending_players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
@@ -245,9 +276,22 @@ pub async fn handle_incoming_messages(
                                 send_error_to_player(player.id, e.to_string(), &connections).await;
                             }
 
+                            if allow {
+                                let msg = LobbyServerMessage::Allowed;
+                                send_to_player(user_id, &connections, &msg).await;
+                            } else {
+                                let msg = LobbyServerMessage::Rejected;
+                                send_to_player(user_id, &connections, &msg).await;
+                            }
+
                             if let Ok(pending_players) =
                                 get_pending_players(room_id, &join_requests).await
                             {
+                                tracing::info!(
+                                    "Updated pending players for room {}: {}",
+                                    room_id,
+                                    pending_players.len()
+                                );
                                 let msg = LobbyServerMessage::PendingPlayers { pending_players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
@@ -257,7 +301,7 @@ pub async fn handle_incoming_messages(
                             if let Err(e) = db::room::update_player_state(
                                 room_id,
                                 player.id,
-                                new_state,
+                                new_state.clone(),
                                 redis.clone(),
                             )
                             .await
@@ -267,6 +311,12 @@ pub async fn handle_incoming_messages(
                             } else if let Ok(players) =
                                 db::room::get_room_players(room_id, redis.clone()).await
                             {
+                                tracing::info!(
+                                    "Player {} updated state to {:?} in room {}",
+                                    player.wallet_address,
+                                    new_state,
+                                    room_id
+                                );
                                 let msg = LobbyServerMessage::PlayerUpdated { players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
@@ -281,6 +331,11 @@ pub async fn handle_incoming_messages(
                             } else if let Ok(players) =
                                 db::room::get_room_players(room_id, redis.clone()).await
                             {
+                                tracing::info!(
+                                    "Player {} left room {}",
+                                    player.wallet_address,
+                                    room_id
+                                );
                                 let msg = LobbyServerMessage::PlayerLeft { players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
@@ -343,6 +398,11 @@ pub async fn handle_incoming_messages(
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
 
+                                tracing::info!(
+                                    "Success kicking {} from {}",
+                                    player.wallet_address,
+                                    room_id
+                                );
                                 let kicked_msg = LobbyServerMessage::PlayerKicked {
                                     player_id,
                                     wallet_address,
@@ -356,19 +416,9 @@ pub async fn handle_incoming_messages(
                                 )
                                 .await;
 
-                                let notify_msg: LobbyServerMessage =
-                                    LobbyServerMessage::NotifyKicked;
+                                let msg: LobbyServerMessage = LobbyServerMessage::NotifyKicked;
 
-                                let conns = connections.lock().await;
-                                if let Some(sender) = conns.get(&player_id) {
-                                    let mut sender = sender.lock().await;
-                                    let _ = sender
-                                        .send(Message::Text(
-                                            serde_json::to_string(&notify_msg).unwrap().into(),
-                                        ))
-                                        .await;
-                                    let _ = sender.send(Message::Close(None)).await;
-                                }
+                                send_to_player(player_id, &connections, &msg).await;
                             }
 
                             // Optionally: disconnect the kicked player

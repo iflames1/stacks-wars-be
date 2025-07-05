@@ -38,9 +38,9 @@ pub struct GameRoom {
     pub used_words: HashMap<Uuid, Vec<String>>,
     pub rule_context: RuleContext,
     pub rule_index: usize,
-
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
+    pub pool: Option<RoomPool>,
 }
 
 #[derive(Serialize)]
@@ -57,6 +57,13 @@ pub enum PlayerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", content = "data")]
+pub enum ClaimState {
+    Claimed { tx_id: String },
+    NotClaimed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
     pub id: Uuid,
     pub wallet_address: String,
@@ -64,6 +71,23 @@ pub struct Player {
     pub state: PlayerState,
     pub rank: Option<usize>,
     pub used_words: Vec<String>,
+    pub tx_id: Option<String>,
+    pub claim: Option<ClaimState>,
+    pub prize: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomPool {
+    pub entry_amount: f64,
+    pub contract_address: String,
+    pub current_amount: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomPoolInput {
+    pub entry_amount: f64,
+    pub contract_address: String,
+    pub tx_id: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -80,17 +104,18 @@ pub struct GameRoomInfo {
     pub name: String,
     pub description: Option<String>,
     pub creator_id: Uuid,
-    pub max_participants: usize,
     pub state: GameState,
     pub game_id: Uuid,
     pub game_name: String,
     pub participants: usize,
+    pub contract_address: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct RoomExtended {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
+    pub pool: Option<RoomPool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,7 +138,9 @@ pub enum LobbyClientMessage {
         user_id: Uuid,
         allow: bool,
     },
-    JoinLobby,
+    JoinLobby {
+        tx_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,6 +177,9 @@ pub enum LobbyServerMessage {
     PendingPlayers {
         pending_players: Vec<PendingJoin>,
     },
+    Allowed,
+    Rejected,
+    Pending,
     Error {
         message: String,
     },
@@ -179,4 +209,5 @@ pub enum LexiWarsServerMessage {
     UsedWord { word: String },
     GameOver,
     FinalStanding { standing: Vec<PlayerStanding> },
+    Prize { amount: f64 },
 }
