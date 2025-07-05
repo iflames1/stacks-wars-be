@@ -22,9 +22,10 @@ use crate::{
         game::{
             GameData, GameRoom, GameRoomInfo, GameState, LexiWarsServerMessage, Player, PlayerState,
         },
+        lobby::{JoinRequest, JoinState},
         word_loader::WORD_LIST,
     },
-    state::{AppState, RedisClient},
+    state::{AppState, LobbyJoinRequests, RedisClient},
     ws::lobby,
 };
 use crate::{errors::AppError, games::lexi_wars, models::game::LobbyServerMessage};
@@ -36,18 +37,18 @@ use uuid::Uuid;
 
 // TODO: log to centralized logger
 async fn store_connection(
-    player: &Player,
+    id: Uuid,
     sender: SplitSink<WebSocket, Message>,
     connections: &PlayerConnections,
 ) {
     let mut conns = connections.lock().await;
-    conns.insert(player.id, Arc::new(Mutex::new(sender)));
+    conns.insert(id, Arc::new(Mutex::new(sender)));
 }
 
-pub async fn remove_connection(player: &Player, connections: &PlayerConnections) {
+pub async fn remove_connection(id: Uuid, connections: &PlayerConnections) {
     let mut conns = connections.lock().await;
-    conns.remove(&player.id);
-    println!("Player {} disconnected", player.wallet_address);
+    conns.remove(&id);
+    //println!("Player {} disconnected", player.wallet_address);
 }
 
 async fn setup_player_and_room(
@@ -177,7 +178,7 @@ async fn handle_lexi_wars_socket(
 ) {
     let (sender, receiver) = socket.split();
 
-    store_connection(&player, sender, &connections).await;
+    store_connection(player.id, sender, &connections).await;
 
     setup_player_and_room(&player, room_info, players, &rooms, &connections).await;
 
@@ -191,7 +192,7 @@ async fn handle_lexi_wars_socket(
     )
     .await;
 
-    remove_connection(&player, &connections).await;
+    remove_connection(player.id, &connections).await;
 }
 
 pub async fn lobby_ws_handler(
@@ -204,28 +205,74 @@ pub async fn lobby_ws_handler(
     tracing::info!("New lobby WS connection from {}", addr);
 
     let player_id = query.user_id;
-
     let redis = state.redis.clone();
     let connections = state.connections.clone();
+    let join_requests = state.lobby_join_requests.clone();
 
     let players = db::room::get_room_players(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
-    let matched_player = players
-        .iter()
-        .find(|p| p.id == player_id)
-        .cloned()
-        .ok_or_else(|| AppError::Unauthorized("Player not in room".into()).to_response())?;
+    if let Some(matched_player) = players.iter().find(|p| p.id == player_id).cloned() {
+        tracing::info!(
+            "Player {} joined lobby WS {}",
+            matched_player.wallet_address,
+            room_id
+        );
+
+        return Ok(ws.on_upgrade(move |socket| {
+            handle_lobby_socket(
+                socket,
+                room_id,
+                matched_player.into(),
+                connections,
+                redis,
+                join_requests,
+            )
+        }));
+    }
+
+    let user = db::user::get_user_by_id(player_id, redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
 
     tracing::info!(
-        "Player {} joined lobby WS {}",
-        matched_player.wallet_address,
+        "User {} is requesting to join lobby {}",
+        user.wallet_address,
         room_id
     );
 
+    {
+        let mut guard = join_requests.lock().await;
+        let room_requests = guard.entry(room_id).or_default();
+
+        let already_requested = room_requests.iter().any(|req| req.user.id == user.id);
+        if !already_requested {
+            room_requests.push(JoinRequest {
+                user: user.clone(),
+                state: JoinState::Idle,
+            });
+        }
+    }
+
+    let idle_player = Player {
+        id: user.id,
+        wallet_address: user.wallet_address.clone(),
+        display_name: user.display_name.clone(),
+        state: PlayerState::NotReady,
+        rank: None,
+        used_words: vec![],
+    };
+
     Ok(ws.on_upgrade(move |socket| {
-        handle_lobby_socket(socket, room_id, matched_player, connections, redis)
+        handle_lobby_socket(
+            socket,
+            room_id,
+            idle_player,
+            connections,
+            redis,
+            join_requests,
+        )
     }))
 }
 
@@ -235,19 +282,28 @@ async fn handle_lobby_socket(
     player: Player,
     connections: PlayerConnections,
     redis: RedisClient,
+    join_requests: LobbyJoinRequests,
 ) {
     let (sender, receiver) = socket.split();
 
-    store_connection(&player, sender, &connections).await;
+    store_connection(player.id, sender, &connections).await;
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerJoined { players };
         lobby::broadcast_to_lobby(room_id, &join_msg, &connections, redis.clone()).await;
     }
 
-    lobby::handle_incoming_messages(receiver, room_id, &player, &connections, redis.clone()).await;
+    lobby::handle_incoming_messages(
+        receiver,
+        room_id,
+        &player,
+        &connections,
+        redis.clone(),
+        join_requests,
+    )
+    .await;
 
-    remove_connection(&player, &connections).await;
+    remove_connection(player.id, &connections).await;
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerLeft { players };

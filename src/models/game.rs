@@ -6,7 +6,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::games::lexi_wars::rules::RuleContext;
+use crate::{
+    games::lexi_wars::rules::RuleContext,
+    models::{User, lobby::JoinState},
+};
 
 #[derive(Debug)]
 pub enum GameData {
@@ -105,6 +108,18 @@ pub enum LobbyClientMessage {
         wallet_address: String,
         display_name: Option<String>,
     },
+    RequestJoin,
+    PermitJoin {
+        user_id: Uuid,
+        allow: bool,
+    },
+    JoinLobby,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PendingJoin {
+    pub user: User,
+    pub state: JoinState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -131,6 +146,12 @@ pub enum LobbyServerMessage {
     GameState {
         state: GameState,
         ready_players: Option<Vec<Uuid>>,
+    },
+    PendingPlayers {
+        pending_players: Vec<PendingJoin>,
+    },
+    Error {
+        message: String,
     },
 }
 
