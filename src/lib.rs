@@ -7,10 +7,11 @@ mod models;
 mod state;
 pub mod ws;
 
+use axum::Router;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use state::{AppState, PlayerConnections, SharedRooms};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::state::LobbyJoinRequests;
@@ -35,10 +36,10 @@ pub async fn start_server() {
         lobby_join_requests,
     };
 
-    let ws_app = ws::create_ws_routes(state.clone());
-    let http_app = http::create_http_routes(state);
-
-    let app = ws_app.merge(http_app);
+    let app = Router::new()
+        .merge(http::create_http_routes(state.clone()))
+        .merge(ws::create_ws_routes(state))
+        .fallback(|| async { "404 Not Found" });
 
     let port = std::env::var("PORT")
         .ok()
@@ -49,5 +50,10 @@ pub async fn start_server() {
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
