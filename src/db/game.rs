@@ -9,7 +9,7 @@ pub async fn add_game(game: GameType, redis: RedisClient) -> Result<Uuid, AppErr
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("game:{}", game.id);
+    let key = format!("game:{}:data", game.id);
     let value = serde_json::to_string(&game)
         .map_err(|_| AppError::Serialization("Failed to serialize game".to_string()))?;
 
@@ -27,7 +27,7 @@ pub async fn get_game(game_id: Uuid, redis: RedisClient) -> Result<GameType, App
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("game:{}", game_id);
+    let key = format!("game:{}:data", game_id);
     let value: Option<String> = conn
         .get(key)
         .await
@@ -50,7 +50,7 @@ pub async fn get_all_games(redis: RedisClient) -> Result<Vec<GameType>, AppError
     })?;
 
     let keys: Vec<String> = conn
-        .keys("game:*")
+        .keys("game:*:data")
         .await
         .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
