@@ -119,6 +119,7 @@ pub async fn create_room_handler(
         payload.game_name,
         pool,
         state.redis.clone(),
+        state.bot.clone(),
     )
     .await
     .map_err(|err| {

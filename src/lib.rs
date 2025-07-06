@@ -12,6 +12,7 @@ use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use state::{AppState, PlayerConnections, SharedRooms};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use teloxide::Bot;
 use tokio::sync::Mutex;
 
 use crate::state::LobbyJoinRequests;
@@ -23,8 +24,10 @@ pub async fn start_server() {
     let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
     let manager = RedisConnectionManager::new(redis_url).unwrap();
 
-    let redis_pool = Pool::builder().build(manager).await.unwrap();
+    let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN must be set");
+    let bot = Bot::new(bot_token);
 
+    let redis_pool = Pool::builder().build(manager).await.unwrap();
     let rooms: SharedRooms = Default::default();
     let connections: PlayerConnections = Default::default();
     let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
@@ -34,6 +37,7 @@ pub async fn start_server() {
         connections,
         redis: redis_pool,
         lobby_join_requests,
+        bot,
     };
 
     let app = Router::new()

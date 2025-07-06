@@ -1,11 +1,13 @@
 use redis::AsyncCommands;
+use teloxide::Bot;
 use uuid::Uuid;
 
 use crate::{
     db::{tx::validate_payment_tx, user::get_user_by_id},
     errors::AppError,
+    http::bot::{self, BotNewLobbyPayload},
     models::game::{
-        ClaimState, GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool,
+        ClaimState, GameRoomInfo, GameState, GameType, Player, PlayerState, RoomExtended, RoomPool,
         RoomPoolInput,
     },
     state::RedisClient,
@@ -19,6 +21,7 @@ pub async fn create_room(
     game_name: String,
     pool: Option<RoomPoolInput>,
     redis: RedisClient,
+    bot: Bot,
 ) -> Result<Uuid, AppError> {
     let room_id = Uuid::new_v4();
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -71,8 +74,8 @@ pub async fn create_room(
 
     let room_player = Player {
         id: creator_user.id,
-        wallet_address: creator_user.wallet_address,
-        display_name: creator_user.display_name,
+        wallet_address: creator_user.wallet_address.clone(),
+        display_name: creator_user.display_name.clone(),
         state: PlayerState::Ready,
         used_words: Vec::new(),
         rank: None,
@@ -100,6 +103,50 @@ pub async fn create_room(
         .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
+
+    let redis_clone = redis.clone();
+    tokio::spawn(async move {
+        let game_key = format!("game:{}:data", game_id);
+        let game_data_json: Option<String> = match redis_clone.get().await {
+            Ok(mut conn) => match conn.get(game_key).await {
+                Ok(json) => Some(json),
+                Err(e) => {
+                    tracing::warn!("Could not fetch game data for Telegram bot: {}", e);
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Could not connect to Redis: {}", e);
+                None
+            }
+        };
+
+        let game_image = game_data_json
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<GameType>(json).ok())
+            .map(|g| g.image_url)
+            .unwrap_or_default();
+
+        let payload = BotNewLobbyPayload {
+            room_id,
+            room_name: room_info.name.clone(),
+            description: room_info.description.clone(),
+            game_name: room_info.game_name.clone(),
+            game_image,
+            contract_address: room_info.contract_address.clone(),
+            creator_display_name: creator_user.display_name,
+            wallet_address: creator_user.wallet_address,
+        };
+
+        let chat_id = std::env::var("TELEGRAM_CHAT_ID")
+            .expect("TELEGRAM_CHAT_ID must be set")
+            .parse::<i64>()
+            .unwrap();
+
+        if let Err(e) = bot::broadcast_lobby_created(&bot, chat_id, payload).await {
+            tracing::error!("Failed to broadcast lobby creation: {}", e);
+        }
+    });
 
     Ok(room_id)
 }
