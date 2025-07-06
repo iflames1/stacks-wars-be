@@ -3,6 +3,7 @@ use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use futures::stream::SplitSink;
 use std::{collections::HashMap, sync::Arc};
+use teloxide::Bot;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -12,6 +13,7 @@ pub struct AppState {
     pub connections: PlayerConnections,
     pub redis: RedisClient,
     pub lobby_join_requests: LobbyJoinRequests,
+    pub bot: Bot,
 }
 
 use crate::models::{game::GameRoom, lobby::JoinRequest};
