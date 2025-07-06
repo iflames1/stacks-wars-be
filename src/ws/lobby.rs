@@ -108,12 +108,21 @@ async fn accept_join_request(
     join_requests: &LobbyJoinRequests,
 ) -> Result<(), AppError> {
     let mut map = join_requests.lock().await;
+
     if let Some(requests) = map.get_mut(&room_id) {
+        tracing::info!("Join requests for room {}: {:?}", room_id, requests);
+
         if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
+            tracing::info!("Found join request for user {}", user_id);
             req.state = JoinState::Allowed;
             return Ok(());
+        } else {
+            tracing::warn!("User {} not found in join requests", user_id);
         }
+    } else {
+        tracing::warn!("No join requests found for room {}", room_id);
     }
+
     Err(AppError::NotFound("User not found in join requests".into()))
 }
 
@@ -211,31 +220,40 @@ pub async fn handle_incoming_messages(
                             }
                         }
                         LobbyClientMessage::RequestJoin => {
-                            if let Err(e) =
-                                request_to_join(room_id, player.clone().into(), &join_requests)
-                                    .await
+                            match request_to_join(room_id, player.clone().into(), &join_requests)
+                                .await
                             {
-                                tracing::error!("Failed to mark user as pending: {}", e);
-                                send_error_to_player(
-                                    player.id,
-                                    "Failed to send join request",
-                                    &connections,
-                                )
-                                .await;
-                            }
+                                Ok(_) => {
+                                    if let Ok(pending_players) =
+                                        get_pending_players(room_id, &join_requests).await
+                                    {
+                                        tracing::info!(
+                                            "Success Adding {} to pending players",
+                                            player.wallet_address
+                                        );
+                                        let msg = LobbyServerMessage::Pending;
+                                        send_to_player(player.id, &connections, &msg).await;
 
-                            if let Ok(pending_players) =
-                                get_pending_players(room_id, &join_requests).await
-                            {
-                                tracing::info!(
-                                    "Success Adding {} to pending players",
-                                    player.wallet_address
-                                );
-                                let msg = LobbyServerMessage::Pending;
-                                send_to_player(player.id, &connections, &msg).await;
-                                let msg = LobbyServerMessage::PendingPlayers { pending_players };
-                                broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
+                                        let msg =
+                                            LobbyServerMessage::PendingPlayers { pending_players };
+                                        broadcast_to_lobby(
+                                            room_id,
+                                            &msg,
+                                            &connections,
+                                            redis.clone(),
+                                        )
+                                        .await;
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to mark user as pending: {}", e);
+                                    send_error_to_player(
+                                        player.id,
+                                        "Failed to send join request",
+                                        &connections,
+                                    )
                                     .await;
+                                }
                             }
                         }
                         LobbyClientMessage::PermitJoin { user_id, allow } => {
@@ -271,17 +289,20 @@ pub async fn handle_incoming_messages(
                                 reject_join_request(room_id, user_id, &join_requests).await
                             };
 
-                            if let Err(e) = result {
-                                tracing::error!("Failed to update join state: {}", e);
-                                send_error_to_player(player.id, e.to_string(), &connections).await;
-                            }
-
-                            if allow {
-                                let msg = LobbyServerMessage::Allowed;
-                                send_to_player(user_id, &connections, &msg).await;
-                            } else {
-                                let msg = LobbyServerMessage::Rejected;
-                                send_to_player(user_id, &connections, &msg).await;
+                            match result {
+                                Ok(_) => {
+                                    let msg = if allow {
+                                        LobbyServerMessage::Allowed
+                                    } else {
+                                        LobbyServerMessage::Rejected
+                                    };
+                                    send_to_player(user_id, &connections, &msg).await;
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to update join state: {}", e);
+                                    send_error_to_player(user_id, e.to_string(), &connections)
+                                        .await;
+                                }
                             }
 
                             if let Ok(pending_players) =
