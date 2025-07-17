@@ -29,7 +29,7 @@ pub async fn broadcast_lobby_created(
         .as_ref()
         .map(|addr| {
             format!(
-                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}\n\n)",
+                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}\n)",
                 addr
             )
         })
@@ -38,7 +38,7 @@ pub async fn broadcast_lobby_created(
     let description = payload
         .description
         .as_ref()
-        .map(|desc| format!("📝 *Description:* {}", desc))
+        .map(|desc| format!("📝 *Description:* {}\n", desc))
         .unwrap_or_default();
 
     let caption = format!(
