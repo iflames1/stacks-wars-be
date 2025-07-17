@@ -46,7 +46,7 @@ fn start_turn_timer(
     redis: RedisClient,
 ) {
     tokio::spawn(async move {
-        for i in (0..=10).rev() {
+        for i in (0..=30).rev() {
             {
                 let rooms_guard = rooms.lock().await;
                 if let Some(room) = rooms_guard.get(&room_id) {
