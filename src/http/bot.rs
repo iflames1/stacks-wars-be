@@ -29,7 +29,7 @@ pub async fn broadcast_lobby_created(
         .as_ref()
         .map(|addr| {
             format!(
-                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}\n)",
+                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}?chain=testnet\n)",
                 addr
             )
         })
