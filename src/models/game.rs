@@ -177,6 +177,9 @@ pub enum LobbyServerMessage {
     PendingPlayers {
         pending_players: Vec<PendingJoin>,
     },
+    PlayersNotReady {
+        players: Vec<Player>,
+    },
     Allowed,
     Rejected,
     Pending,

@@ -7,7 +7,9 @@ use crate::{
     errors::AppError,
     models::{
         User,
-        game::{GameState, LobbyClientMessage, LobbyServerMessage, PendingJoin, Player},
+        game::{
+            GameState, LobbyClientMessage, LobbyServerMessage, PendingJoin, Player, PlayerState,
+        },
         lobby::{JoinRequest, JoinState},
     },
     state::{LobbyJoinRequests, PlayerConnections, RedisClient},
@@ -132,11 +134,22 @@ async fn reject_join_request(
     join_requests: &LobbyJoinRequests,
 ) -> Result<(), AppError> {
     let mut map = join_requests.lock().await;
+
     if let Some(requests) = map.get_mut(&room_id) {
-        requests.retain(|r| r.user.id != user_id);
-        return Ok(());
+        tracing::info!("Join requests for room {}: {:?}", room_id, requests);
+
+        if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
+            tracing::info!("Found join request for user {}", user_id);
+            req.state = JoinState::Rejected;
+            return Ok(());
+        } else {
+            tracing::warn!("User {} not found in join requests", user_id);
+        }
+    } else {
+        tracing::warn!("No join requests found for room {}", room_id);
     }
-    Err(AppError::NotFound("Room not found".into()))
+
+    Err(AppError::NotFound("User not found in join requests".into()))
 }
 
 async fn get_pending_players(
@@ -341,6 +354,33 @@ pub async fn handle_incoming_messages(
                                 let msg = LobbyServerMessage::PlayerUpdated { players };
                                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                     .await;
+
+                                if new_state == PlayerState::NotReady {
+                                    if let Ok(room_info) =
+                                        db::room::get_room_info(room_id, redis.clone()).await
+                                    {
+                                        if room_info.state == GameState::InProgress {
+                                            // revert game state to Waiting
+                                            let _ = db::room::update_game_state(
+                                                room_id,
+                                                GameState::Waiting,
+                                                redis.clone(),
+                                            )
+                                            .await;
+                                            let msg = LobbyServerMessage::GameState {
+                                                state: GameState::Waiting,
+                                                ready_players: None,
+                                            };
+                                            broadcast_to_lobby(
+                                                room_id,
+                                                &msg,
+                                                &connections,
+                                                redis.clone(),
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
                             }
                         }
                         LobbyClientMessage::LeaveRoom => {
@@ -487,6 +527,35 @@ pub async fn handle_incoming_messages(
                                 send_error_to_player(player.id, e.to_string(), &connections).await;
                             } else {
                                 if new_state == GameState::InProgress {
+                                    let players =
+                                        db::room::get_room_players(room_id, redis.clone())
+                                            .await
+                                            .unwrap_or_default();
+                                    let not_ready: Vec<_> = players
+                                        .into_iter()
+                                        .filter(|p| p.state != PlayerState::Ready)
+                                        .collect();
+
+                                    if !not_ready.is_empty() {
+                                        let msg = LobbyServerMessage::PlayersNotReady {
+                                            players: not_ready,
+                                        };
+                                        send_to_player(player.id, &connections, &msg).await;
+
+                                        let game_starting = LobbyServerMessage::GameState {
+                                            state: new_state,
+                                            ready_players: None,
+                                        };
+                                        broadcast_to_lobby(
+                                            room_id,
+                                            &game_starting,
+                                            &connections,
+                                            redis.clone(),
+                                        )
+                                        .await;
+                                        return; // don't start the game
+                                    }
+
                                     let redis_clone = redis.clone();
                                     let conns_clone = connections.clone();
                                     let player_clone = player.clone();
@@ -539,7 +608,7 @@ async fn start_countdown(
     redis: RedisClient,
     connections: PlayerConnections,
 ) {
-    for i in (0..=30).rev() {
+    for i in (0..=15).rev() {
         match db::room::get_room_info(room_id, redis.clone()).await {
             Ok(info) => {
                 if info.state != GameState::InProgress {
