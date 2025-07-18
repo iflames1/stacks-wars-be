@@ -132,11 +132,22 @@ async fn reject_join_request(
     join_requests: &LobbyJoinRequests,
 ) -> Result<(), AppError> {
     let mut map = join_requests.lock().await;
+
     if let Some(requests) = map.get_mut(&room_id) {
-        requests.retain(|r| r.user.id != user_id);
-        return Ok(());
+        tracing::info!("Join requests for room {}: {:?}", room_id, requests);
+
+        if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
+            tracing::info!("Found join request for user {}", user_id);
+            req.state = JoinState::Rejected;
+            return Ok(());
+        } else {
+            tracing::warn!("User {} not found in join requests", user_id);
+        }
+    } else {
+        tracing::warn!("No join requests found for room {}", room_id);
     }
-    Err(AppError::NotFound("Room not found".into()))
+
+    Err(AppError::NotFound("User not found in join requests".into()))
 }
 
 async fn get_pending_players(
