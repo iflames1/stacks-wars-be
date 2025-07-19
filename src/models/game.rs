@@ -199,6 +199,7 @@ pub enum LobbyServerMessage {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LexiWarsClientMessage {
     WordEntry { word: String },
+    Ping { ts: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,4 +221,5 @@ pub enum LexiWarsServerMessage {
     GameOver,
     FinalStanding { standing: Vec<PlayerStanding> },
     Prize { amount: f64 },
+    Pong { ts: u64, pong: u64 },
 }
