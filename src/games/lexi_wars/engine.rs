@@ -53,13 +53,13 @@ fn start_turn_timer(
                 if let Some(room) = rooms_guard.get(&room_id) {
                     if room.current_turn_id != player_id {
                         let countdown_msg = LexiWarsServerMessage::Countdown { time: 10 };
-                        broadcast_to_player(player_id, &countdown_msg, &connections).await;
+                        broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
 
                         tracing::info!("turn changed, stopping timer");
                         return;
                     }
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
-                    broadcast_to_player(player_id, &countdown_msg, &connections).await;
+                    broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
                 } else {
                     tracing::error!("room not found, stopping timer");
                     return;
@@ -87,7 +87,7 @@ fn start_turn_timer(
                     let rank_msg = LexiWarsServerMessage::Rank {
                         rank: position.to_string(),
                     };
-                    broadcast_to_player(player_id, &rank_msg, &connections).await;
+                    broadcast_to_player(player_id, &rank_msg, &connections, &redis).await;
 
                     let player_used_words = room.used_words.remove(&player.id).unwrap_or_default();
 
@@ -109,7 +109,7 @@ fn start_turn_timer(
                     if let Some(amount) = prize {
                         if amount > 0.0 {
                             let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(player_id, &prize_msg, &connections).await;
+                            broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
                         }
                     }
                 }
@@ -124,7 +124,7 @@ fn start_turn_timer(
                     let rank_msg = LexiWarsServerMessage::Rank {
                         rank: position.to_string(),
                     };
-                    broadcast_to_player(player_id, &rank_msg, &connections).await;
+                    broadcast_to_player(player_id, &rank_msg, &connections, &redis).await;
 
                     let player_used_words = room.used_words.remove(&winner.id).unwrap_or_default();
 
@@ -146,12 +146,12 @@ fn start_turn_timer(
                     if let Some(amount) = prize {
                         if amount > 0.0 {
                             let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(player_id, &prize_msg, &connections).await;
+                            broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
                         }
                     }
 
                     let gameover_msg = LexiWarsServerMessage::GameOver;
-                    broadcast_to_room(&gameover_msg, &room, &connections).await;
+                    broadcast_to_room(&gameover_msg, &room, &connections, &redis).await;
 
                     let standing: Vec<PlayerStanding> = room
                         .eliminated_players
@@ -165,7 +165,7 @@ fn start_turn_timer(
                         .collect();
 
                     let final_standing_msg = LexiWarsServerMessage::FinalStanding { standing };
-                    broadcast_to_room(&final_standing_msg, &room, &connections).await;
+                    broadcast_to_room(&final_standing_msg, &room, &connections, &redis).await;
 
                     if let Err(e) =
                         update_game_state(room_id, GameState::Finished, redis.clone()).await
@@ -189,7 +189,7 @@ fn start_turn_timer(
                         let next_turn_msg = LexiWarsServerMessage::Turn {
                             current_turn: current_player.clone(),
                         };
-                        broadcast_to_room(&next_turn_msg, &room, &connections).await;
+                        broadcast_to_room(&next_turn_msg, &room, &connections, &redis).await;
                     }
 
                     start_turn_timer(
@@ -234,7 +234,7 @@ pub async fn handle_incoming_messages(
                             let pong = now.saturating_sub(ts);
 
                             let msg = LexiWarsServerMessage::Pong { ts, pong };
-                            broadcast_to_player(player.id, &msg, connections).await
+                            broadcast_to_player(player.id, &msg, connections, &redis).await
                         }
                         LexiWarsClientMessage::WordEntry { word } => {
                             let cleaned_word = word.trim().to_lowercase();
@@ -259,8 +259,13 @@ pub async fn handle_incoming_messages(
                                     let used_word_msg = LexiWarsServerMessage::UsedWord {
                                         word: cleaned_word.clone(),
                                     };
-                                    broadcast_to_player(player.id, &used_word_msg, connections)
-                                        .await;
+                                    broadcast_to_player(
+                                        player.id,
+                                        &used_word_msg,
+                                        connections,
+                                        &redis,
+                                    )
+                                    .await;
                                     continue;
                                 }
 
@@ -282,6 +287,7 @@ pub async fn handle_incoming_messages(
                                                 player.id,
                                                 &validation_msg,
                                                 connections,
+                                                &redis,
                                             )
                                             .await;
                                             continue;
@@ -290,7 +296,7 @@ pub async fn handle_incoming_messages(
                                     let rule_msg = LexiWarsServerMessage::Rule {
                                         rule: rule.description,
                                     };
-                                    broadcast_to_room(&rule_msg, &room, &connections).await;
+                                    broadcast_to_room(&rule_msg, &room, &connections, &redis).await;
                                     if let Err(reason) =
                                         (rule.validate)(&cleaned_word, &room.rule_context)
                                     {
@@ -301,6 +307,7 @@ pub async fn handle_incoming_messages(
                                             player.id,
                                             &validation_msg,
                                             connections,
+                                            &redis,
                                         )
                                         .await;
                                         continue;
@@ -314,8 +321,13 @@ pub async fn handle_incoming_messages(
                                     let validation_msg = LexiWarsServerMessage::Validate {
                                         msg: "Invalid word".to_string(),
                                     };
-                                    broadcast_to_player(player.id, &validation_msg, connections)
-                                        .await;
+                                    broadcast_to_player(
+                                        player.id,
+                                        &validation_msg,
+                                        connections,
+                                        &redis,
+                                    )
+                                    .await;
                                     tracing::info!(
                                         "invalid word from {}: {}",
                                         player.wallet_address,
@@ -341,8 +353,13 @@ pub async fn handle_incoming_messages(
                                         let next_turn_msg = LexiWarsServerMessage::Turn {
                                             current_turn: current_player.clone(),
                                         };
-                                        broadcast_to_room(&next_turn_msg, &room, &connections)
-                                            .await;
+                                        broadcast_to_room(
+                                            &next_turn_msg,
+                                            &room,
+                                            &connections,
+                                            &redis,
+                                        )
+                                        .await;
                                     }
                                 } else {
                                     tracing::error!("couldn't find next player");
@@ -368,6 +385,7 @@ pub async fn handle_incoming_messages(
                                     &cleaned_word,
                                     &room,
                                     &connections,
+                                    &redis,
                                 )
                                 .await;
                             }
@@ -393,12 +411,12 @@ pub async fn handle_incoming_messages(
                             ts: client_ts,
                             pong: pong_time,
                         };
-                        broadcast_to_player(player.id, &pong_msg, &connections).await;
+                        broadcast_to_player(player.id, &pong_msg, &connections, &redis).await;
                     } else {
                         // For standard WebSocket pings without timestamp, use current time
                         let now = Utc::now().timestamp_millis() as u64;
                         let pong_msg = LexiWarsServerMessage::Pong { ts: now, pong: 0 };
-                        broadcast_to_player(player.id, &pong_msg, &connections).await;
+                        broadcast_to_player(player.id, &pong_msg, &connections, &redis).await;
                     }
                 }
                 Message::Pong(_) => {
