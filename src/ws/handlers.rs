@@ -6,10 +6,10 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use futures::{StreamExt, stream::SplitSink};
+use futures::{SinkExt, StreamExt, stream::SplitSink};
 use serde::Deserialize;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::Arc,
 };
@@ -36,27 +36,131 @@ use crate::{
 };
 use uuid::Uuid;
 
+// Redis message queue functions
+pub async fn queue_message_for_player(
+    player_id: Uuid,
+    message: String,
+    redis: &RedisClient,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut conn = redis.get().await?;
+    let key = format!("player_queue:{}", player_id);
+
+    // Use Redis list to store messages with 5-minute TTL
+    let _: () = redis::cmd("LPUSH")
+        .arg(&key)
+        .arg(&message)
+        .query_async(&mut *conn)
+        .await?;
+
+    // Set TTL to 5 minutes (300 seconds)
+    let _: () = redis::cmd("EXPIRE")
+        .arg(&key)
+        .arg(3000)
+        .query_async(&mut *conn)
+        .await?;
+
+    tracing::debug!("Queued message for player {} in Redis", player_id);
+    Ok(())
+}
+
+pub async fn get_queued_messages_for_player(
+    player_id: Uuid,
+    redis: &RedisClient,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut conn = redis.get().await?;
+    let key = format!("player_queue:{}", player_id);
+
+    // Get all messages and delete the key atomically
+    let messages: Vec<String> = redis::cmd("LRANGE")
+        .arg(&key)
+        .arg(0)
+        .arg(-1)
+        .query_async(&mut *conn)
+        .await?;
+
+    if !messages.is_empty() {
+        // Delete the key after retrieving messages
+        let _: () = redis::cmd("DEL").arg(&key).query_async(&mut *conn).await?;
+
+        tracing::info!(
+            "Retrieved {} queued messages for player {}",
+            messages.len(),
+            player_id
+        );
+    }
+
+    // Reverse the messages since LPUSH adds to the front but we want chronological order
+    Ok(messages.into_iter().rev().collect())
+}
+
 async fn store_connection(
     player_id: Uuid,
     sender: SplitSink<WebSocket, Message>,
-    connections: &ConnectionInfoMap,
+    connection_info: &ConnectionInfoMap,
 ) {
-    let mut conns = connections.lock().await;
-
-    // Check if player had existing queued messages
-    let existing_queue = if let Some(old_conn) = conns.get(&player_id) {
-        old_conn.message_queue.clone()
-    } else {
-        Arc::new(Mutex::new(VecDeque::new()))
-    };
-
+    let mut conns = connection_info.lock().await;
     let conn_info = ConnectionInfo {
         sender: Arc::new(Mutex::new(sender)),
-        message_queue: existing_queue,
     };
-
     conns.insert(player_id, Arc::new(conn_info));
     tracing::debug!("Stored connection for player {}", player_id);
+}
+
+async fn store_connection_and_send_queued_messages(
+    player_id: Uuid,
+    sender: SplitSink<WebSocket, Message>,
+    connection_info: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    // Store the connection first
+    store_connection(player_id, sender, connection_info).await;
+
+    // Check for queued messages and send them
+    match get_queued_messages_for_player(player_id, redis).await {
+        Ok(messages) => {
+            if !messages.is_empty() {
+                tracing::info!(
+                    "Sending {} queued messages to player {}",
+                    messages.len(),
+                    player_id
+                );
+
+                let conns = connection_info.lock().await;
+                if let Some(conn_info) = conns.get(&player_id) {
+                    let mut sender_guard = conn_info.sender.lock().await;
+
+                    let mut sent_count = 0;
+                    for message in messages {
+                        if let Err(e) = sender_guard.send(Message::Text(message.into())).await {
+                            tracing::error!(
+                                "Failed to send queued message to player {}: {}",
+                                player_id,
+                                e
+                            );
+                            break;
+                        }
+                        sent_count += 1;
+
+                        // Small delay to avoid overwhelming the client
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    }
+
+                    tracing::info!(
+                        "Successfully sent {} queued messages to player {}",
+                        sent_count,
+                        player_id
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to retrieve queued messages for player {}: {}",
+                player_id,
+                e
+            );
+        }
+    }
 }
 
 pub async fn remove_connection(player_id: Uuid, connections: &ConnectionInfoMap) {
@@ -73,6 +177,7 @@ async fn setup_player_and_room(
     pool: Option<RoomPool>,
     rooms: &SharedRooms,
     connections: &ConnectionInfoMap,
+    redis: &RedisClient,
 ) {
     let mut locked_rooms = rooms.lock().await;
 
@@ -120,7 +225,7 @@ async fn setup_player_and_room(
         let next_turn_msg = LexiWarsServerMessage::Turn {
             current_turn: current_player.clone(),
         };
-        broadcast_to_room(&next_turn_msg, &room, &connections).await;
+        broadcast_to_room(&next_turn_msg, &room, &connections, redis).await;
     }
 }
 
@@ -216,9 +321,18 @@ async fn handle_lexi_wars_socket(
 ) {
     let (sender, receiver) = socket.split();
 
-    store_connection(player.id, sender, &connections).await;
+    store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
-    setup_player_and_room(&player, room_info, players, pool, &rooms, &connections).await;
+    setup_player_and_room(
+        &player,
+        room_info,
+        players,
+        pool,
+        &rooms,
+        &connections,
+        &redis,
+    )
+    .await;
 
     lexi_wars::engine::handle_incoming_messages(
         &player,

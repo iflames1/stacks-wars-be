@@ -5,7 +5,8 @@ use rand::{Rng, rng};
 use crate::{
     games::lexi_wars::rules::get_rules,
     models::game::{GameRoom, LexiWarsServerMessage, Player},
-    state::ConnectionInfoMap,
+    state::{ConnectionInfoMap, RedisClient},
+    ws::handlers::queue_message_for_player,
 };
 use uuid::Uuid;
 
@@ -42,14 +43,48 @@ pub async fn broadcast_to_player(
     target_player_id: Uuid,
     message: &LexiWarsServerMessage,
     connections: &ConnectionInfoMap,
+    redis: &RedisClient,
 ) {
+    let serialized = match serde_json::to_string(message) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!("Failed to serialize LexiWarsServerMessage: {}", e);
+            return;
+        }
+    };
+
     let connection_guard = connections.lock().await;
-    if let Some(connection_info) = connection_guard.get(&target_player_id) {
-        if let Ok(serialized) = serde_json::to_string(message) {
-            let mut sender = connection_info.sender.lock().await;
-            let _ = sender.send(Message::Text(serialized.into())).await;
-        } else {
-            tracing::error!("Failed to serialize LexiWarsServerMessage");
+    if let Some(conn_info) = connection_guard.get(&target_player_id) {
+        let mut sender = conn_info.sender.lock().await;
+        if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
+            tracing::warn!(
+                "Failed to send message to player {}: {}",
+                target_player_id,
+                e
+            );
+
+            // Queue the message when send fails
+            drop(sender);
+            drop(connection_guard);
+
+            if let Err(queue_err) =
+                queue_message_for_player(target_player_id, serialized, redis).await
+            {
+                tracing::error!(
+                    "Failed to queue message for player {}: {}",
+                    target_player_id,
+                    queue_err
+                );
+            }
+        }
+    } else {
+        // Player not connected, queue the message
+        if let Err(e) = queue_message_for_player(target_player_id, serialized, redis).await {
+            tracing::error!(
+                "Failed to queue message for offline player {}: {}",
+                target_player_id,
+                e
+            );
         }
     }
 }
@@ -58,18 +93,47 @@ pub async fn broadcast_to_room(
     message: &LexiWarsServerMessage,
     room: &GameRoom,
     connections: &ConnectionInfoMap,
+    redis: &RedisClient,
 ) {
+    let serialized = match serde_json::to_string(message) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!("Failed to serialize LexiWarsServerMessage: {}", e);
+            return;
+        }
+    };
+
     let connection_guard = connections.lock().await;
 
-    if let Ok(serialized) = serde_json::to_string(message) {
-        for player in room.players.iter().chain(room.eliminated_players.iter()) {
-            if let Some(connection_info) = connection_guard.get(&player.id) {
-                let mut sender = connection_info.sender.lock().await;
-                let _ = sender.send(Message::Text(serialized.clone().into())).await;
+    for player in room.players.iter().chain(room.eliminated_players.iter()) {
+        if let Some(conn_info) = connection_guard.get(&player.id) {
+            let mut sender = conn_info.sender.lock().await;
+            if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
+                tracing::warn!("Failed to send message to player {}: {}", player.id, e);
+
+                // Queue the message when send fails
+                drop(sender);
+
+                if let Err(queue_err) =
+                    queue_message_for_player(player.id, serialized.clone(), redis).await
+                {
+                    tracing::error!(
+                        "Failed to queue message for player {}: {}",
+                        player.id,
+                        queue_err
+                    );
+                }
+            }
+        } else {
+            // Player not connected, queue the message
+            if let Err(e) = queue_message_for_player(player.id, serialized.clone(), redis).await {
+                tracing::error!(
+                    "Failed to queue message for offline player {}: {}",
+                    player.id,
+                    e
+                );
             }
         }
-    } else {
-        tracing::error!("Failed to serialize LexiWarsServerMessage");
     }
 }
 
@@ -78,11 +142,12 @@ pub async fn broadcast_word_entry_from_player(
     word: &str,
     room: &GameRoom,
     connections: &ConnectionInfoMap,
+    redis: &RedisClient,
 ) {
     let message = LexiWarsServerMessage::WordEntry {
         word: word.to_string(),
         sender: sender_player.clone(),
     };
 
-    broadcast_to_room(&message, room, connections).await;
+    broadcast_to_room(&message, room, connections, redis).await;
 }
