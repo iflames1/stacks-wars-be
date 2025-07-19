@@ -33,12 +33,22 @@ pub async fn broadcast_to_lobby(
 
     if let Ok(players) = db::room::get_room_players(room_id, redis).await {
         let connection_guard = connections.lock().await;
+        let mut unhealthy_connections = Vec::new();
 
-        for player in players {
+        for player in &players {
             if let Some(sender_arc) = connection_guard.get(&player.id) {
                 let mut sender = sender_arc.lock().await;
-                let _ = sender.send(Message::Text(serialized.clone().into())).await;
+                if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
+                    tracing::warn!("Failed to send message to player {}: {}", player.id, e);
+                    unhealthy_connections.push(player.id);
+                }
             }
+        }
+
+        // Clean up failed connections
+        drop(connection_guard);
+        for player_id in unhealthy_connections {
+            remove_connection(player_id, connections).await;
         }
     }
 }
@@ -68,10 +78,12 @@ async fn send_to_player(
     let conns = connections.lock().await;
     if let Some(sender) = conns.get(&player_id) {
         let mut sender = sender.lock().await;
-        let _ = sender
+        if let Err(e) = sender
             .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
-            .await;
-        let _ = sender.send(Message::Close(None)).await;
+            .await
+        {
+            tracing::error!("Failed to send message to player {}: {}", player_id, e);
+        }
     }
 }
 
@@ -178,206 +190,91 @@ pub async fn handle_incoming_messages(
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
 ) {
-    while let Some(Ok(msg)) = receiver.next().await {
-        match msg {
-            Message::Text(text) => {
-                if let Ok(parsed) = serde_json::from_str::<LobbyClientMessage>(&text) {
-                    match parsed {
-                        LobbyClientMessage::Ping { ts } => {
-                            let now = Utc::now().timestamp_millis() as u64;
-                            let pong = now.saturating_sub(ts);
+    while let Some(msg_result) = receiver.next().await {
+        match msg_result {
+            Ok(msg) => match msg {
+                Message::Text(text) => {
+                    if let Ok(parsed) = serde_json::from_str::<LobbyClientMessage>(&text) {
+                        match parsed {
+                            LobbyClientMessage::Ping { ts } => {
+                                let now = Utc::now().timestamp_millis() as u64;
+                                let pong = now.saturating_sub(ts);
 
-                            let msg = LobbyServerMessage::Pong { ts, pong };
-                            send_to_player(player.id, &connections, &msg).await
-                        }
-                        LobbyClientMessage::JoinLobby { tx_id } => {
-                            let join_map = get_join_requests(room_id, &join_requests).await;
-                            if let Some(req) = join_map.iter().find(|r| r.user.id == player.id) {
-                                if req.state == JoinState::Allowed {
-                                    if let Err(e) = db::room::join_room(
-                                        room_id,
-                                        player.id,
-                                        tx_id,
-                                        redis.clone(),
-                                    )
-                                    .await
-                                    {
-                                        tracing::error!("Failed to join room: {}", e);
-                                        send_error_to_player(
+                                let msg = LobbyServerMessage::Pong { ts, pong };
+                                send_to_player(player.id, &connections, &msg).await
+                            }
+                            LobbyClientMessage::JoinLobby { tx_id } => {
+                                let join_map = get_join_requests(room_id, &join_requests).await;
+                                if let Some(req) = join_map.iter().find(|r| r.user.id == player.id)
+                                {
+                                    if req.state == JoinState::Allowed {
+                                        if let Err(e) = db::room::join_room(
+                                            room_id,
                                             player.id,
-                                            e.to_string(),
-                                            &connections,
-                                        )
-                                        .await;
-                                    } else if let Ok(players) =
-                                        db::room::get_room_players(room_id, redis.clone()).await
-                                    {
-                                        tracing::info!(
-                                            "{} joined room {} successfully",
-                                            player.wallet_address,
-                                            room_id
-                                        );
-                                        let msg = LobbyServerMessage::PlayerJoined { players };
-                                        broadcast_to_lobby(
-                                            room_id,
-                                            &msg,
-                                            &connections,
+                                            tx_id,
                                             redis.clone(),
                                         )
-                                        .await;
-                                    }
-                                } else {
-                                    tracing::warn!(
-                                        "User {} attempted to join without being allowed",
-                                        player.wallet_address
-                                    );
-                                    send_error_to_player(
-                                        player.id,
-                                        "Join request has to be accpeted to join lobby",
-                                        &connections,
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
-                        LobbyClientMessage::RequestJoin => {
-                            match request_to_join(room_id, player.clone().into(), &join_requests)
-                                .await
-                            {
-                                Ok(_) => {
-                                    if let Ok(pending_players) =
-                                        get_pending_players(room_id, &join_requests).await
-                                    {
-                                        tracing::info!(
-                                            "Success Adding {} to pending players",
-                                            player.wallet_address
-                                        );
-                                        let msg = LobbyServerMessage::Pending;
-                                        send_to_player(player.id, &connections, &msg).await;
-
-                                        let msg =
-                                            LobbyServerMessage::PendingPlayers { pending_players };
-                                        broadcast_to_lobby(
-                                            room_id,
-                                            &msg,
-                                            &connections,
-                                            redis.clone(),
-                                        )
-                                        .await;
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to mark user as pending: {}", e);
-                                    send_error_to_player(
-                                        player.id,
-                                        "Failed to send join request",
-                                        &connections,
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
-                        LobbyClientMessage::PermitJoin { user_id, allow } => {
-                            let room_info = match db::room::get_room_info(room_id, redis.clone())
-                                .await
-                            {
-                                Ok(info) => info,
-                                Err(e) => {
-                                    tracing::error!("Failed to fetch room info: {}", e);
-                                    send_error_to_player(player.id, e.to_string(), &connections)
-                                        .await;
-                                    continue;
-                                }
-                            };
-
-                            if room_info.creator_id != player.id {
-                                tracing::warn!(
-                                    "Unauthorized PermitJoin attempt by {}",
-                                    player.wallet_address
-                                );
-                                send_error_to_player(
-                                    player.id,
-                                    "Only creator can accept request",
-                                    &connections,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            let result = if allow {
-                                accept_join_request(room_id, user_id, &join_requests).await
-                            } else {
-                                reject_join_request(room_id, user_id, &join_requests).await
-                            };
-
-                            match result {
-                                Ok(_) => {
-                                    let msg = if allow {
-                                        LobbyServerMessage::Allowed
-                                    } else {
-                                        LobbyServerMessage::Rejected
-                                    };
-                                    send_to_player(user_id, &connections, &msg).await;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to update join state: {}", e);
-                                    send_error_to_player(user_id, e.to_string(), &connections)
-                                        .await;
-                                }
-                            }
-
-                            if let Ok(pending_players) =
-                                get_pending_players(room_id, &join_requests).await
-                            {
-                                tracing::info!(
-                                    "Updated pending players for room {}: {}",
-                                    room_id,
-                                    pending_players.len()
-                                );
-                                let msg = LobbyServerMessage::PendingPlayers { pending_players };
-                                broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
-                                    .await;
-                            }
-                        }
-                        LobbyClientMessage::UpdatePlayerState { new_state } => {
-                            if let Err(e) = db::room::update_player_state(
-                                room_id,
-                                player.id,
-                                new_state.clone(),
-                                redis.clone(),
-                            )
-                            .await
-                            {
-                                tracing::error!("Failed to update state: {}", e);
-                                send_error_to_player(player.id, e.to_string(), &connections).await;
-                            } else if let Ok(players) =
-                                db::room::get_room_players(room_id, redis.clone()).await
-                            {
-                                tracing::info!(
-                                    "Player {} updated state to {:?} in room {}",
-                                    player.wallet_address,
-                                    new_state,
-                                    room_id
-                                );
-                                let msg = LobbyServerMessage::PlayerUpdated { players };
-                                broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
-                                    .await;
-
-                                if new_state == PlayerState::NotReady {
-                                    if let Ok(room_info) =
-                                        db::room::get_room_info(room_id, redis.clone()).await
-                                    {
-                                        if room_info.state == GameState::InProgress {
-                                            // revert game state to Waiting
-                                            let _ = db::room::update_game_state(
+                                        .await
+                                        {
+                                            tracing::error!("Failed to join room: {}", e);
+                                            send_error_to_player(
+                                                player.id,
+                                                e.to_string(),
+                                                &connections,
+                                            )
+                                            .await;
+                                        } else if let Ok(players) =
+                                            db::room::get_room_players(room_id, redis.clone()).await
+                                        {
+                                            tracing::info!(
+                                                "{} joined room {} successfully",
+                                                player.wallet_address,
+                                                room_id
+                                            );
+                                            let msg = LobbyServerMessage::PlayerJoined { players };
+                                            broadcast_to_lobby(
                                                 room_id,
-                                                GameState::Waiting,
+                                                &msg,
+                                                &connections,
                                                 redis.clone(),
                                             )
                                             .await;
-                                            let msg = LobbyServerMessage::GameState {
-                                                state: GameState::Waiting,
-                                                ready_players: None,
+                                        }
+                                    } else {
+                                        tracing::warn!(
+                                            "User {} attempted to join without being allowed",
+                                            player.wallet_address
+                                        );
+                                        send_error_to_player(
+                                            player.id,
+                                            "Join request has to be accpeted to join lobby",
+                                            &connections,
+                                        )
+                                        .await;
+                                    }
+                                }
+                            }
+                            LobbyClientMessage::RequestJoin => {
+                                match request_to_join(
+                                    room_id,
+                                    player.clone().into(),
+                                    &join_requests,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        if let Ok(pending_players) =
+                                            get_pending_players(room_id, &join_requests).await
+                                        {
+                                            tracing::info!(
+                                                "Success Adding {} to pending players",
+                                                player.wallet_address
+                                            );
+                                            let msg = LobbyServerMessage::Pending;
+                                            send_to_player(player.id, &connections, &msg).await;
+
+                                            let msg = LobbyServerMessage::PendingPlayers {
+                                                pending_players,
                                             };
                                             broadcast_to_lobby(
                                                 room_id,
@@ -388,199 +285,299 @@ pub async fn handle_incoming_messages(
                                             .await;
                                         }
                                     }
+                                    Err(e) => {
+                                        tracing::error!("Failed to mark user as pending: {}", e);
+                                        send_error_to_player(
+                                            player.id,
+                                            "Failed to send join request",
+                                            &connections,
+                                        )
+                                        .await;
+                                    }
                                 }
                             }
-                        }
-                        LobbyClientMessage::LeaveRoom => {
-                            if let Err(e) =
-                                db::room::leave_room(room_id, player.id, redis.clone()).await
-                            {
-                                tracing::error!("Failed to leave room: {}", e);
-                                send_error_to_player(player.id, e.to_string(), &connections).await;
-                            } else if let Ok(players) =
-                                db::room::get_room_players(room_id, redis.clone()).await
-                            {
-                                tracing::info!(
-                                    "Player {} left room {}",
-                                    player.wallet_address,
-                                    room_id
-                                );
-                                let msg = LobbyServerMessage::PlayerLeft { players };
-                                broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
+                            LobbyClientMessage::PermitJoin { user_id, allow } => {
+                                let room_info =
+                                    match db::room::get_room_info(room_id, redis.clone()).await {
+                                        Ok(info) => info,
+                                        Err(e) => {
+                                            tracing::error!("Failed to fetch room info: {}", e);
+                                            send_error_to_player(
+                                                player.id,
+                                                e.to_string(),
+                                                &connections,
+                                            )
+                                            .await;
+                                            continue;
+                                        }
+                                    };
+
+                                if room_info.creator_id != player.id {
+                                    tracing::warn!(
+                                        "Unauthorized PermitJoin attempt by {}",
+                                        player.wallet_address
+                                    );
+                                    send_error_to_player(
+                                        player.id,
+                                        "Only creator can accept request",
+                                        &connections,
+                                    )
                                     .await;
-                            }
-                            remove_connection(player.id, &connections).await;
-                            break;
-                        }
-                        LobbyClientMessage::KickPlayer {
-                            player_id,
-                            wallet_address,
-                            display_name,
-                        } => {
-                            let room_info = match db::room::get_room_info(room_id, redis.clone())
-                                .await
-                            {
-                                Ok(info) => info,
-                                Err(e) => {
-                                    tracing::error!("Failed to fetch room info: {}", e);
-                                    send_error_to_player(player.id, e.to_string(), &connections)
-                                        .await;
                                     continue;
                                 }
-                            };
 
-                            if room_info.creator_id != player.id {
-                                tracing::error!(
-                                    "Unauthorized kick attempt by {}",
-                                    player.wallet_address
-                                );
-                                send_error_to_player(
-                                    player.id,
-                                    "Only creator can kick players",
-                                    &connections,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            if room_info.state != GameState::Waiting {
-                                tracing::error!("Cannot kick players when game is not waiting");
-                                send_error_to_player(
-                                    player.id,
-                                    "Cannot kick player when game is in progress",
-                                    &connections,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            // Remove player
-                            if let Err(e) =
-                                db::room::leave_room(room_id, player_id, redis.clone()).await
-                            {
-                                tracing::error!("Failed to kick player: {}", e);
-                                send_error_to_player(player.id, e.to_string(), &connections).await;
-                            } else if let Ok(players) =
-                                db::room::get_room_players(room_id, redis.clone()).await
-                            {
-                                let msg = LobbyServerMessage::PlayerLeft { players };
-                                broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
-                                    .await;
-
-                                tracing::info!(
-                                    "Success kicking {} from {}",
-                                    player.wallet_address,
-                                    room_id
-                                );
-                                let kicked_msg = LobbyServerMessage::PlayerKicked {
-                                    player_id,
-                                    wallet_address,
-                                    display_name,
+                                let result = if allow {
+                                    accept_join_request(room_id, user_id, &join_requests).await
+                                } else {
+                                    reject_join_request(room_id, user_id, &join_requests).await
                                 };
-                                broadcast_to_lobby(
+
+                                match result {
+                                    Ok(_) => {
+                                        let msg = if allow {
+                                            LobbyServerMessage::Allowed
+                                        } else {
+                                            LobbyServerMessage::Rejected
+                                        };
+                                        send_to_player(user_id, &connections, &msg).await;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to update join state: {}", e);
+                                        send_error_to_player(user_id, e.to_string(), &connections)
+                                            .await;
+                                    }
+                                }
+
+                                if let Ok(pending_players) =
+                                    get_pending_players(room_id, &join_requests).await
+                                {
+                                    tracing::info!(
+                                        "Updated pending players for room {}: {}",
+                                        room_id,
+                                        pending_players.len()
+                                    );
+                                    let msg =
+                                        LobbyServerMessage::PendingPlayers { pending_players };
+                                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
+                                        .await;
+                                }
+                            }
+                            LobbyClientMessage::UpdatePlayerState { new_state } => {
+                                if let Err(e) = db::room::update_player_state(
                                     room_id,
-                                    &kicked_msg,
-                                    &connections,
+                                    player.id,
+                                    new_state.clone(),
                                     redis.clone(),
                                 )
-                                .await;
-
-                                let msg: LobbyServerMessage = LobbyServerMessage::NotifyKicked;
-
-                                send_to_player(player_id, &connections, &msg).await;
-                            }
-
-                            // Optionally: disconnect the kicked player
-                            let conns = connections.lock().await;
-                            if let Some(sender) = conns.get(&player_id) {
-                                let mut sender = sender.lock().await;
-                                let _ = sender.send(Message::Close(None)).await;
-                            }
-                        }
-                        LobbyClientMessage::UpdateGameState { new_state } => {
-                            let room_info = match db::room::get_room_info(room_id, redis.clone())
                                 .await
-                            {
-                                Ok(info) => info,
-                                Err(e) => {
-                                    tracing::error!("Failed to fetch room info: {}", e);
+                                {
+                                    tracing::error!("Failed to update state: {}", e);
                                     send_error_to_player(player.id, e.to_string(), &connections)
                                         .await;
+                                } else if let Ok(players) =
+                                    db::room::get_room_players(room_id, redis.clone()).await
+                                {
+                                    tracing::info!(
+                                        "Player {} updated state to {:?} in room {}",
+                                        player.wallet_address,
+                                        new_state,
+                                        room_id
+                                    );
+                                    let msg = LobbyServerMessage::PlayerUpdated { players };
+                                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
+                                        .await;
+
+                                    if new_state == PlayerState::NotReady {
+                                        if let Ok(room_info) =
+                                            db::room::get_room_info(room_id, redis.clone()).await
+                                        {
+                                            if room_info.state == GameState::InProgress {
+                                                // revert game state to Waiting
+                                                let _ = db::room::update_game_state(
+                                                    room_id,
+                                                    GameState::Waiting,
+                                                    redis.clone(),
+                                                )
+                                                .await;
+                                                let msg = LobbyServerMessage::GameState {
+                                                    state: GameState::Waiting,
+                                                    ready_players: None,
+                                                };
+                                                broadcast_to_lobby(
+                                                    room_id,
+                                                    &msg,
+                                                    &connections,
+                                                    redis.clone(),
+                                                )
+                                                .await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            LobbyClientMessage::LeaveRoom => {
+                                if let Err(e) =
+                                    db::room::leave_room(room_id, player.id, redis.clone()).await
+                                {
+                                    tracing::error!("Failed to leave room: {}", e);
+                                    send_error_to_player(player.id, e.to_string(), &connections)
+                                        .await;
+                                } else if let Ok(players) =
+                                    db::room::get_room_players(room_id, redis.clone()).await
+                                {
+                                    tracing::info!(
+                                        "Player {} left room {}",
+                                        player.wallet_address,
+                                        room_id
+                                    );
+                                    let msg = LobbyServerMessage::PlayerLeft { players };
+                                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
+                                        .await;
+                                }
+                                remove_connection(player.id, &connections).await;
+                                break;
+                            }
+                            LobbyClientMessage::KickPlayer {
+                                player_id,
+                                wallet_address,
+                                display_name,
+                            } => {
+                                let room_info =
+                                    match db::room::get_room_info(room_id, redis.clone()).await {
+                                        Ok(info) => info,
+                                        Err(e) => {
+                                            tracing::error!("Failed to fetch room info: {}", e);
+                                            send_error_to_player(
+                                                player.id,
+                                                e.to_string(),
+                                                &connections,
+                                            )
+                                            .await;
+                                            continue;
+                                        }
+                                    };
+
+                                if room_info.creator_id != player.id {
+                                    tracing::error!(
+                                        "Unauthorized kick attempt by {}",
+                                        player.wallet_address
+                                    );
+                                    send_error_to_player(
+                                        player.id,
+                                        "Only creator can kick players",
+                                        &connections,
+                                    )
+                                    .await;
                                     continue;
                                 }
-                            };
 
-                            if room_info.creator_id != player.id {
-                                tracing::warn!(
-                                    "Unauthorized game state update attempt by {}",
-                                    player.wallet_address
-                                );
-                                send_error_to_player(
-                                    player.id,
-                                    "Only creator can update game state",
-                                    &connections,
-                                )
-                                .await;
-                                continue;
+                                if room_info.state != GameState::Waiting {
+                                    tracing::error!("Cannot kick players when game is not waiting");
+                                    send_error_to_player(
+                                        player.id,
+                                        "Cannot kick player when game is in progress",
+                                        &connections,
+                                    )
+                                    .await;
+                                    continue;
+                                }
+
+                                // Remove player
+                                if let Err(e) =
+                                    db::room::leave_room(room_id, player_id, redis.clone()).await
+                                {
+                                    tracing::error!("Failed to kick player: {}", e);
+                                    send_error_to_player(player.id, e.to_string(), &connections)
+                                        .await;
+                                } else if let Ok(players) =
+                                    db::room::get_room_players(room_id, redis.clone()).await
+                                {
+                                    let msg = LobbyServerMessage::PlayerLeft { players };
+                                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
+                                        .await;
+
+                                    tracing::info!(
+                                        "Success kicking {} from {}",
+                                        player.wallet_address,
+                                        room_id
+                                    );
+                                    let kicked_msg = LobbyServerMessage::PlayerKicked {
+                                        player_id,
+                                        wallet_address,
+                                        display_name,
+                                    };
+                                    broadcast_to_lobby(
+                                        room_id,
+                                        &kicked_msg,
+                                        &connections,
+                                        redis.clone(),
+                                    )
+                                    .await;
+
+                                    let msg: LobbyServerMessage = LobbyServerMessage::NotifyKicked;
+
+                                    send_to_player(player_id, &connections, &msg).await;
+                                }
+
+                                remove_connection(player_id, &connections).await;
                             }
+                            LobbyClientMessage::UpdateGameState { new_state } => {
+                                let room_info =
+                                    match db::room::get_room_info(room_id, redis.clone()).await {
+                                        Ok(info) => info,
+                                        Err(e) => {
+                                            tracing::error!("Failed to fetch room info: {}", e);
+                                            send_error_to_player(
+                                                player.id,
+                                                e.to_string(),
+                                                &connections,
+                                            )
+                                            .await;
+                                            continue;
+                                        }
+                                    };
 
-                            if let Err(e) = db::room::update_game_state(
-                                room_id,
-                                new_state.clone(),
-                                redis.clone(),
-                            )
-                            .await
-                            {
-                                tracing::error!("Failed to update game state: {}", e);
-                                send_error_to_player(player.id, e.to_string(), &connections).await;
-                            } else {
-                                if new_state == GameState::InProgress {
-                                    let players =
-                                        db::room::get_room_players(room_id, redis.clone())
-                                            .await
-                                            .unwrap_or_default();
-                                    let not_ready: Vec<_> = players
-                                        .into_iter()
-                                        .filter(|p| p.state != PlayerState::Ready)
-                                        .collect();
+                                if room_info.creator_id != player.id {
+                                    tracing::warn!(
+                                        "Unauthorized game state update attempt by {}",
+                                        player.wallet_address
+                                    );
+                                    send_error_to_player(
+                                        player.id,
+                                        "Only creator can update game state",
+                                        &connections,
+                                    )
+                                    .await;
+                                    continue;
+                                }
 
-                                    if !not_ready.is_empty() {
-                                        let msg = LobbyServerMessage::PlayersNotReady {
-                                            players: not_ready,
-                                        };
-                                        send_to_player(player.id, &connections, &msg).await;
-
-                                        let game_starting = LobbyServerMessage::GameState {
-                                            state: new_state,
-                                            ready_players: None,
-                                        };
-                                        broadcast_to_lobby(
-                                            room_id,
-                                            &game_starting,
-                                            &connections,
-                                            redis.clone(),
-                                        )
+                                if let Err(e) = db::room::update_game_state(
+                                    room_id,
+                                    new_state.clone(),
+                                    redis.clone(),
+                                )
+                                .await
+                                {
+                                    tracing::error!("Failed to update game state: {}", e);
+                                    send_error_to_player(player.id, e.to_string(), &connections)
                                         .await;
-                                        return; // don't start the game
-                                    }
+                                } else {
+                                    if new_state == GameState::InProgress {
+                                        let players =
+                                            db::room::get_room_players(room_id, redis.clone())
+                                                .await
+                                                .unwrap_or_default();
+                                        let not_ready: Vec<_> = players
+                                            .into_iter()
+                                            .filter(|p| p.state != PlayerState::Ready)
+                                            .collect();
 
-                                    let redis_clone = redis.clone();
-                                    let conns_clone = connections.clone();
-                                    let player_clone = player.clone();
-                                    tokio::spawn(async move {
-                                        start_countdown(
-                                            room_id,
-                                            player_clone,
-                                            redis_clone,
-                                            conns_clone,
-                                        )
-                                        .await;
-                                    });
+                                        if !not_ready.is_empty() {
+                                            let msg = LobbyServerMessage::PlayersNotReady {
+                                                players: not_ready,
+                                            };
+                                            send_to_player(player.id, &connections, &msg).await;
 
-                                    if let Ok(info) =
-                                        db::room::get_room_info(room_id, redis.clone()).await
-                                    {
-                                        if info.state == GameState::InProgress {
                                             let game_starting = LobbyServerMessage::GameState {
                                                 state: new_state,
                                                 ready_players: None,
@@ -592,10 +589,42 @@ pub async fn handle_incoming_messages(
                                                 redis.clone(),
                                             )
                                             .await;
-                                        } else {
-                                            tracing::info!(
-                                                "Game state was reverted before start, skipping GameState message"
-                                            );
+                                            return; // don't start the game
+                                        }
+
+                                        let redis_clone = redis.clone();
+                                        let conns_clone = connections.clone();
+                                        let player_clone = player.clone();
+                                        tokio::spawn(async move {
+                                            start_countdown(
+                                                room_id,
+                                                player_clone,
+                                                redis_clone,
+                                                conns_clone,
+                                            )
+                                            .await;
+                                        });
+
+                                        if let Ok(info) =
+                                            db::room::get_room_info(room_id, redis.clone()).await
+                                        {
+                                            if info.state == GameState::InProgress {
+                                                let game_starting = LobbyServerMessage::GameState {
+                                                    state: new_state,
+                                                    ready_players: None,
+                                                };
+                                                broadcast_to_lobby(
+                                                    room_id,
+                                                    &game_starting,
+                                                    &connections,
+                                                    redis.clone(),
+                                                )
+                                                .await;
+                                            } else {
+                                                tracing::info!(
+                                                    "Game state was reverted before start, skipping GameState message"
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -603,9 +632,50 @@ pub async fn handle_incoming_messages(
                         }
                     }
                 }
+                Message::Ping(data) => {
+                    // Handle WebSocket ping with custom timestamp logic
+                    if data.len() == 8 {
+                        // Extract timestamp from ping data (8 bytes for u64)
+                        let mut ts_bytes = [0u8; 8];
+                        if data.len() >= 8 {
+                            ts_bytes.copy_from_slice(&data[..8]);
+                        }
+                        let client_ts = u64::from_le_bytes(ts_bytes);
+
+                        let now = Utc::now().timestamp_millis() as u64;
+                        let pong_time = now.saturating_sub(client_ts);
+
+                        // Send as LobbyServerMessage::Pong JSON instead of WebSocket pong
+                        let pong_msg = LobbyServerMessage::Pong {
+                            ts: client_ts,
+                            pong: pong_time,
+                        };
+                        send_to_player(player.id, &connections, &pong_msg).await;
+                    } else {
+                        // For standard WebSocket pings without timestamp, use current time
+                        let now = Utc::now().timestamp_millis() as u64;
+                        let pong_msg = LobbyServerMessage::Pong { ts: now, pong: 0 };
+                        send_to_player(player.id, &connections, &pong_msg).await;
+                    }
+                }
+                Message::Pong(_) => {
+                    // Client responded to our ping (if we were sending any)
+                    tracing::debug!("Received pong from player {}", player.id);
+                }
+                Message::Close(_) => {
+                    tracing::info!("Player {} closed connection", player.wallet_address);
+                    break;
+                }
+                _ => {}
+            },
+            Err(e) => {
+                tracing::error!(
+                    "WebSocket error for player {}: {}",
+                    player.wallet_address,
+                    e
+                );
+                break;
             }
-            Message::Close(_) => break,
-            _ => {}
         }
     }
 }
