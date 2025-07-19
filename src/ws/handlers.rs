@@ -12,6 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::Arc,
+    time::Instant,
 };
 use tokio::sync::Mutex;
 
@@ -36,7 +37,13 @@ use crate::{
 };
 use uuid::Uuid;
 
-// TODO: log to centralized logger
+#[derive(Debug)]
+pub struct ConnectionInfo {
+    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+    pub last_seen: Arc<Mutex<Instant>>,
+    pub is_healthy: Arc<Mutex<bool>>,
+}
+
 async fn store_connection(
     id: Uuid,
     sender: SplitSink<WebSocket, Message>,
@@ -135,6 +142,7 @@ pub async fn lexi_wars_handler(
         .map_err(|e| e.to_response())?;
 
     if room.state != GameState::InProgress {
+        tracing::error!("Room {} is not in progress", room_id);
         return Err(AppError::BadRequest("Game not in progress".into()).to_response());
     }
 
