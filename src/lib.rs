@@ -61,3 +61,23 @@ pub async fn start_server() {
     .await
     .unwrap();
 }
+
+//async fn cleanup_stale_connections(connections: &PlayerConnections) {
+//    let mut conns = connections.lock().await;
+//    let mut to_remove = Vec::new();
+
+//    for (player_id, conn_info) in conns.iter() {
+//        let last_seen = conn_info.last_seen.lock().await;
+//        let is_healthy = conn_info.is_healthy.lock().await;
+
+//        // Remove connections that haven't been seen for 5 minutes or are unhealthy
+//        if last_seen.elapsed().as_secs() > 300 || !*is_healthy {
+//            to_remove.push(*player_id);
+//        }
+//    }
+
+//    for player_id in to_remove {
+//        tracing::info!("Cleaning up stale connection for player {}", player_id);
+//        conns.remove(&player_id);
+//    }
+//}

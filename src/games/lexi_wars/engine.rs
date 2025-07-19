@@ -220,8 +220,6 @@ pub async fn handle_incoming_messages(
         match msg_result {
             Ok(msg) => match msg {
                 Message::Text(text) => {
-                    tracing::info!("Received from {}: {}", player.wallet_address, text);
-
                     let parsed = match serde_json::from_str::<LexiWarsClientMessage>(&text) {
                         Ok(msg) => msg,
                         Err(e) => {
@@ -377,6 +375,7 @@ pub async fn handle_incoming_messages(
                     }
                 }
                 Message::Ping(data) => {
+                    tracing::debug!("Received ping from player {}", player.id);
                     // Handle WebSocket ping with custom timestamp logic
                     if data.len() == 8 {
                         // Extract timestamp from ping data (8 bytes for u64)
