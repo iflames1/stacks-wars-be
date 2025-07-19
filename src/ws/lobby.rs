@@ -1,4 +1,5 @@
 use axum::extract::ws::Message;
+use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use uuid::Uuid;
 
@@ -182,6 +183,21 @@ pub async fn handle_incoming_messages(
             Message::Text(text) => {
                 if let Ok(parsed) = serde_json::from_str::<LobbyClientMessage>(&text) {
                     match parsed {
+                        LobbyClientMessage::Ping { ts } => {
+                            let now = Utc::now().timestamp_millis() as u64;
+                            let pong = now.saturating_sub(ts);
+
+                            tracing::debug!(
+                                "Received ping from user {}: ts={}, now={}, ping={}",
+                                player.wallet_address,
+                                ts,
+                                now,
+                                pong
+                            );
+
+                            let msg = LobbyServerMessage::Pong { ts, pong };
+                            send_to_player(player.id, &connections, &msg).await
+                        }
                         LobbyClientMessage::JoinLobby { tx_id } => {
                             let join_map = get_join_requests(room_id, &join_requests).await;
                             if let Some(req) = join_map.iter().find(|r| r.user.id == player.id) {

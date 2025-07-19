@@ -141,6 +141,9 @@ pub enum LobbyClientMessage {
     JoinLobby {
         tx_id: Option<String>,
     },
+    Ping {
+        ts: u64,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -185,6 +188,10 @@ pub enum LobbyServerMessage {
     Pending,
     Error {
         message: String,
+    },
+    Pong {
+        ts: u64,
+        pong: u64,
     },
 }
 
