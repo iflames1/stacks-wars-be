@@ -46,10 +46,10 @@ pub async fn broadcast_to_lobby(
         }
 
         // Clean up failed connections
-        drop(connection_guard);
-        for player_id in unhealthy_connections {
-            remove_connection(player_id, connections).await;
-        }
+        //drop(connection_guard);
+        //for player_id in unhealthy_connections {
+        //    remove_connection(player_id, connections).await;
+        //}
     }
 }
 
