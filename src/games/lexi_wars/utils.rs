@@ -5,7 +5,7 @@ use rand::{Rng, rng};
 use crate::{
     games::lexi_wars::rules::get_rules,
     models::game::{GameRoom, LexiWarsServerMessage, Player},
-    state::PlayerConnections,
+    state::ConnectionInfoMap,
 };
 use uuid::Uuid;
 
@@ -41,12 +41,12 @@ pub fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option
 pub async fn broadcast_to_player(
     target_player_id: Uuid,
     message: &LexiWarsServerMessage,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
 ) {
     let connection_guard = connections.lock().await;
-    if let Some(sender_arc) = connection_guard.get(&target_player_id) {
+    if let Some(connection_info) = connection_guard.get(&target_player_id) {
         if let Ok(serialized) = serde_json::to_string(message) {
-            let mut sender = sender_arc.lock().await;
+            let mut sender = connection_info.sender.lock().await;
             let _ = sender.send(Message::Text(serialized.into())).await;
         } else {
             tracing::error!("Failed to serialize LexiWarsServerMessage");
@@ -57,14 +57,14 @@ pub async fn broadcast_to_player(
 pub async fn broadcast_to_room(
     message: &LexiWarsServerMessage,
     room: &GameRoom,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
 ) {
     let connection_guard = connections.lock().await;
 
     if let Ok(serialized) = serde_json::to_string(message) {
         for player in room.players.iter().chain(room.eliminated_players.iter()) {
-            if let Some(sender_arc) = connection_guard.get(&player.id) {
-                let mut sender = sender_arc.lock().await;
+            if let Some(connection_info) = connection_guard.get(&player.id) {
+                let mut sender = connection_info.sender.lock().await;
                 let _ = sender.send(Message::Text(serialized.clone().into())).await;
             }
         }
@@ -77,7 +77,7 @@ pub async fn broadcast_word_entry_from_player(
     sender_player: &Player,
     word: &str,
     room: &GameRoom,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
 ) {
     let message = LexiWarsServerMessage::WordEntry {
         word: word.to_string(),

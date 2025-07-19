@@ -17,7 +17,7 @@ use crate::{
         GameData, GameRoom, GameState, LexiWarsClientMessage, LexiWarsServerMessage, Player,
         PlayerStanding,
     },
-    state::{PlayerConnections, RedisClient, SharedRooms},
+    state::{ConnectionInfoMap, RedisClient, SharedRooms},
 };
 use uuid::Uuid;
 
@@ -42,7 +42,7 @@ fn start_turn_timer(
     player_id: Uuid,
     room_id: Uuid,
     rooms: SharedRooms,
-    connections: PlayerConnections,
+    connections: ConnectionInfoMap,
     words: Arc<HashSet<String>>,
     redis: RedisClient,
 ) {
@@ -213,7 +213,7 @@ pub async fn handle_incoming_messages(
     room_id: Uuid,
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
     rooms: SharedRooms,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
     redis: RedisClient,
 ) {
     while let Some(msg_result) = receiver.next().await {

@@ -13,14 +13,14 @@ use crate::{
         },
         lobby::{JoinRequest, JoinState},
     },
-    state::{LobbyJoinRequests, PlayerConnections, RedisClient},
+    state::{ConnectionInfoMap, LobbyJoinRequests, RedisClient},
     ws::handlers::remove_connection,
 };
 
 pub async fn broadcast_to_lobby(
     room_id: Uuid,
     msg: &LobbyServerMessage,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
     redis: RedisClient,
 ) {
     let serialized = match serde_json::to_string(msg) {
@@ -36,8 +36,8 @@ pub async fn broadcast_to_lobby(
         let mut unhealthy_connections = Vec::new();
 
         for player in &players {
-            if let Some(sender_arc) = connection_guard.get(&player.id) {
-                let mut sender = sender_arc.lock().await;
+            if let Some(connection_info) = connection_guard.get(&player.id) {
+                let mut sender = connection_info.sender.lock().await;
                 if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
                     tracing::warn!("Failed to send message to player {}: {}", player.id, e);
                     unhealthy_connections.push(player.id);
@@ -45,10 +45,10 @@ pub async fn broadcast_to_lobby(
             }
         }
 
-        // Clean up failed connections
+        // Clean up failed connection_info
         //drop(connection_guard);
         //for player_id in unhealthy_connections {
-        //    remove_connection(player_id, connections).await;
+        //    remove_connection(player_id, connection_info).await;
         //}
     }
 }
@@ -56,11 +56,11 @@ pub async fn broadcast_to_lobby(
 async fn send_error_to_player(
     player_id: Uuid,
     message: impl Into<String>,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
 ) {
     let conns = connections.lock().await;
-    if let Some(sender) = conns.get(&player_id) {
-        let mut sender = sender.lock().await;
+    if let Some(connection_info) = conns.get(&player_id) {
+        let mut sender = connection_info.sender.lock().await;
         let error_msg = LobbyServerMessage::Error {
             message: message.into(),
         };
@@ -72,12 +72,12 @@ async fn send_error_to_player(
 
 async fn send_to_player(
     player_id: Uuid,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
     msg: &LobbyServerMessage,
 ) {
     let conns = connections.lock().await;
-    if let Some(sender) = conns.get(&player_id) {
-        let mut sender = sender.lock().await;
+    if let Some(connection_info) = conns.get(&player_id) {
+        let mut sender = connection_info.sender.lock().await;
         if let Err(e) = sender
             .send(Message::Text(serde_json::to_string(&msg).unwrap().into()))
             .await
@@ -186,7 +186,7 @@ pub async fn handle_incoming_messages(
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
     room_id: Uuid,
     player: &Player,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
 ) {
@@ -519,7 +519,7 @@ pub async fn handle_incoming_messages(
                                     send_to_player(player_id, &connections, &msg).await;
                                 }
 
-                                //remove_connection(player_id, &connections).await;
+                                //remove_connection(player_id, &connection_info).await;
                             }
                             LobbyClientMessage::UpdateGameState { new_state } => {
                                 let room_info =
@@ -684,7 +684,7 @@ async fn start_countdown(
     room_id: Uuid,
     player: Player,
     redis: RedisClient,
-    connections: PlayerConnections,
+    connections: ConnectionInfoMap,
 ) {
     for i in (0..=15).rev() {
         match db::room::get_room_info(room_id, redis.clone()).await {
