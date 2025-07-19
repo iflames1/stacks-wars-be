@@ -9,10 +9,9 @@ use axum::{
 use futures::{StreamExt, stream::SplitSink};
 use serde::Deserialize;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
     sync::Arc,
-    time::Instant,
 };
 use tokio::sync::Mutex;
 
@@ -27,36 +26,44 @@ use crate::{
         lobby::{JoinRequest, JoinState},
         word_loader::WORD_LIST,
     },
-    state::{AppState, LobbyJoinRequests, RedisClient},
+    state::{AppState, ConnectionInfo, LobbyJoinRequests, RedisClient},
     ws::lobby,
 };
 use crate::{errors::AppError, games::lexi_wars, models::game::LobbyServerMessage};
 use crate::{
     games::lexi_wars::rules::RuleContext,
-    state::{PlayerConnections, SharedRooms},
+    state::{ConnectionInfoMap, SharedRooms},
 };
 use uuid::Uuid;
 
-#[derive(Debug)]
-pub struct ConnectionInfo {
-    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
-    pub last_seen: Arc<Mutex<Instant>>,
-    pub is_healthy: Arc<Mutex<bool>>,
-}
-
 async fn store_connection(
-    id: Uuid,
+    player_id: Uuid,
     sender: SplitSink<WebSocket, Message>,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
 ) {
     let mut conns = connections.lock().await;
-    conns.insert(id, Arc::new(Mutex::new(sender)));
+
+    // Check if player had existing queued messages
+    let existing_queue = if let Some(old_conn) = conns.get(&player_id) {
+        old_conn.message_queue.clone()
+    } else {
+        Arc::new(Mutex::new(VecDeque::new()))
+    };
+
+    let conn_info = ConnectionInfo {
+        sender: Arc::new(Mutex::new(sender)),
+        message_queue: existing_queue,
+    };
+
+    conns.insert(player_id, Arc::new(conn_info));
+    tracing::debug!("Stored connection for player {}", player_id);
 }
 
-pub async fn remove_connection(id: Uuid, connections: &PlayerConnections) {
+pub async fn remove_connection(player_id: Uuid, connections: &ConnectionInfoMap) {
     let mut conns = connections.lock().await;
-    conns.remove(&id);
-    //tracing::info!("Player {} disconnected", player.wallet_address);
+    if conns.remove(&player_id).is_some() {
+        tracing::debug!("Removed connection for player {}", player_id);
+    }
 }
 
 async fn setup_player_and_room(
@@ -65,7 +72,7 @@ async fn setup_player_and_room(
     players: Vec<Player>,
     pool: Option<RoomPool>,
     rooms: &SharedRooms,
-    connections: &PlayerConnections,
+    connections: &ConnectionInfoMap,
 ) {
     let mut locked_rooms = rooms.lock().await;
 
@@ -203,7 +210,7 @@ async fn handle_lexi_wars_socket(
     players: Vec<Player>,
     pool: Option<RoomPool>,
     rooms: SharedRooms,
-    connections: PlayerConnections,
+    connections: ConnectionInfoMap,
     room_info: GameRoomInfo,
     redis: RedisClient,
 ) {
@@ -302,7 +309,7 @@ async fn handle_lobby_socket(
     socket: WebSocket,
     room_id: Uuid,
     player: Player,
-    connections: PlayerConnections,
+    connections: ConnectionInfoMap,
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
 ) {
