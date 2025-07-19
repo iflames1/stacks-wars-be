@@ -187,14 +187,6 @@ pub async fn handle_incoming_messages(
                             let now = Utc::now().timestamp_millis() as u64;
                             let pong = now.saturating_sub(ts);
 
-                            tracing::debug!(
-                                "Received ping from user {}: ts={}, now={}, ping={}",
-                                player.wallet_address,
-                                ts,
-                                now,
-                                pong
-                            );
-
                             let msg = LobbyServerMessage::Pong { ts, pong };
                             send_to_player(player.id, &connections, &msg).await
                         }

@@ -1,4 +1,5 @@
 use axum::extract::ws::Message;
+use chrono::Utc;
 use futures::StreamExt;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
@@ -228,9 +229,15 @@ pub async fn handle_incoming_messages(
             };
 
             match parsed {
+                LexiWarsClientMessage::Ping { ts } => {
+                    let now = Utc::now().timestamp_millis() as u64;
+                    let pong = now.saturating_sub(ts);
+
+                    let msg = LexiWarsServerMessage::Pong { ts, pong };
+                    broadcast_to_player(player.id, &msg, connections).await
+                }
                 LexiWarsClientMessage::WordEntry { word } => {
                     let cleaned_word = word.trim().to_lowercase();
-                    // now continue the original logic with `cleaned_word`
                     let advance_turn: bool;
 
                     {
