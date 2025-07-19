@@ -434,7 +434,7 @@ pub async fn handle_incoming_messages(
                                     broadcast_to_lobby(room_id, &msg, &connections, redis.clone())
                                         .await;
                                 }
-                                remove_connection(player.id, &connections).await;
+                                //remove_connection(player.id, &connections).await;
                                 break;
                             }
                             LobbyClientMessage::KickPlayer {
@@ -519,7 +519,7 @@ pub async fn handle_incoming_messages(
                                     send_to_player(player_id, &connections, &msg).await;
                                 }
 
-                                remove_connection(player_id, &connections).await;
+                                //remove_connection(player_id, &connections).await;
                             }
                             LobbyClientMessage::UpdateGameState { new_state } => {
                                 let room_info =

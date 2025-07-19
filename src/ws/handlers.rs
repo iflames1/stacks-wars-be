@@ -315,7 +315,6 @@ async fn handle_lobby_socket(
         lobby::broadcast_to_lobby(room_id, &join_msg, &connections, redis.clone()).await;
     }
 
-    // Handle messages with better error recovery
     lobby::handle_incoming_messages(
         receiver,
         room_id,
@@ -326,7 +325,6 @@ async fn handle_lobby_socket(
     )
     .await;
 
-    // Clean up
     remove_connection(player.id, &connections).await;
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
