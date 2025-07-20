@@ -41,23 +41,29 @@ pub async fn queue_message_for_player(
     player_id: Uuid,
     message: String,
     redis: &RedisClient,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut conn = redis.get().await?;
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
     let key = format!("player_queue:{}", player_id);
 
-    // Use Redis list to store messages with 5-minute TTL
+    // Use Redis list to store messages with 2-minute TTL
     let _: () = redis::cmd("LPUSH")
         .arg(&key)
         .arg(&message)
         .query_async(&mut *conn)
-        .await?;
+        .await
+        .map_err(AppError::RedisCommandError)?;
 
-    // Set TTL to 5 minutes (300 seconds)
+    // Set TTL to 2 minutes (120 seconds)
     let _: () = redis::cmd("EXPIRE")
         .arg(&key)
-        .arg(3000)
+        .arg(120)
         .query_async(&mut *conn)
-        .await?;
+        .await
+        .map_err(AppError::RedisCommandError)?;
 
     tracing::debug!("Queued message for player {} in Redis", player_id);
     Ok(())
@@ -66,8 +72,12 @@ pub async fn queue_message_for_player(
 pub async fn get_queued_messages_for_player(
     player_id: Uuid,
     redis: &RedisClient,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut conn = redis.get().await?;
+) -> Result<Vec<String>, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
     let key = format!("player_queue:{}", player_id);
 
     // Get all messages and delete the key atomically
@@ -76,11 +86,16 @@ pub async fn get_queued_messages_for_player(
         .arg(0)
         .arg(-1)
         .query_async(&mut *conn)
-        .await?;
+        .await
+        .map_err(AppError::RedisCommandError)?;
 
     if !messages.is_empty() {
         // Delete the key after retrieving messages
-        let _: () = redis::cmd("DEL").arg(&key).query_async(&mut *conn).await?;
+        let _: () = redis::cmd("DEL")
+            .arg(&key)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
 
         tracing::info!(
             "Retrieved {} queued messages for player {}",
@@ -96,9 +111,9 @@ pub async fn get_queued_messages_for_player(
 async fn store_connection(
     player_id: Uuid,
     sender: SplitSink<WebSocket, Message>,
-    connection_info: &ConnectionInfoMap,
+    connections: &ConnectionInfoMap,
 ) {
-    let mut conns = connection_info.lock().await;
+    let mut conns = connections.lock().await;
     let conn_info = ConnectionInfo {
         sender: Arc::new(Mutex::new(sender)),
     };
@@ -109,11 +124,11 @@ async fn store_connection(
 async fn store_connection_and_send_queued_messages(
     player_id: Uuid,
     sender: SplitSink<WebSocket, Message>,
-    connection_info: &ConnectionInfoMap,
+    connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
     // Store the connection first
-    store_connection(player_id, sender, connection_info).await;
+    store_connection(player_id, sender, connections).await;
 
     // Check for queued messages and send them
     match get_queued_messages_for_player(player_id, redis).await {
@@ -125,7 +140,7 @@ async fn store_connection_and_send_queued_messages(
                     player_id
                 );
 
-                let conns = connection_info.lock().await;
+                let conns = connections.lock().await;
                 if let Some(conn_info) = conns.get(&player_id) {
                     let mut sender_guard = conn_info.sender.lock().await;
 
