@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::{
@@ -11,9 +11,33 @@ use crate::{
     models::{User, lobby::JoinState},
 };
 
-#[derive(Debug)]
+// Custom serialization for Arc<HashSet<String>>
+fn serialize_word_list<S>(
+    word_list: &Arc<HashSet<String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let vec: Vec<&String> = word_list.iter().collect();
+    vec.serialize(serializer)
+}
+
+fn deserialize_word_list<'de, D>(deserializer: D) -> Result<Arc<HashSet<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let vec: Vec<String> = Vec::deserialize(deserializer)?;
+    Ok(Arc::new(vec.into_iter().collect()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GameData {
     LexiWar {
+        #[serde(
+            serialize_with = "serialize_word_list",
+            deserialize_with = "deserialize_word_list"
+        )]
         word_list: Arc<HashSet<String>>,
         // maybe future: round state, scores, difficulty, etc.
     },
@@ -29,7 +53,7 @@ pub struct GameType {
     pub min_players: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameRoom {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,

@@ -9,21 +9,18 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub rooms: SharedRooms,
     pub connections: ConnectionInfoMap,
     pub redis: RedisClient,
     pub lobby_join_requests: LobbyJoinRequests,
     pub bot: Bot,
 }
 
-use crate::models::{game::GameRoom, lobby::JoinRequest};
+use crate::models::lobby::JoinRequest;
 
 #[derive(Debug)]
 pub struct ConnectionInfo {
     pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
-
-pub type SharedRooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 

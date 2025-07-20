@@ -8,31 +8,22 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt, stream::SplitSink};
 use serde::Deserialize;
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    db,
-    games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
-    models::{
-        game::{
-            GameData, GameRoom, GameRoomInfo, GameState, LexiWarsServerMessage, Player,
-            PlayerState, RoomPool,
-        },
-        lobby::{JoinRequest, JoinState},
-        word_loader::WORD_LIST,
-    },
-    state::{AppState, ConnectionInfo, LobbyJoinRequests, RedisClient},
-    ws::lobby,
+    db::{self, game_room::create_or_get_game_room},
+    state::ConnectionInfoMap,
 };
 use crate::{errors::AppError, games::lexi_wars, models::game::LobbyServerMessage};
 use crate::{
-    games::lexi_wars::rules::RuleContext,
-    state::{ConnectionInfoMap, SharedRooms},
+    games::lexi_wars::utils::broadcast_to_room,
+    models::{
+        game::{GameRoomInfo, GameState, LexiWarsServerMessage, Player, PlayerState, RoomPool},
+        lobby::{JoinRequest, JoinState},
+    },
+    state::{AppState, ConnectionInfo, LobbyJoinRequests, RedisClient},
+    ws::lobby,
 };
 use uuid::Uuid;
 
@@ -96,9 +87,9 @@ pub async fn get_queued_messages_for_player(
 async fn store_connection(
     player_id: Uuid,
     sender: SplitSink<WebSocket, Message>,
-    connection_info: &ConnectionInfoMap,
+    connections: &ConnectionInfoMap,
 ) {
-    let mut conns = connection_info.lock().await;
+    let mut conns = connections.lock().await;
     let conn_info = ConnectionInfo {
         sender: Arc::new(Mutex::new(sender)),
     };
@@ -109,11 +100,11 @@ async fn store_connection(
 async fn store_connection_and_send_queued_messages(
     player_id: Uuid,
     sender: SplitSink<WebSocket, Message>,
-    connection_info: &ConnectionInfoMap,
+    connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
     // Store the connection first
-    store_connection(player_id, sender, connection_info).await;
+    store_connection(player_id, sender, connections).await;
 
     // Check for queued messages and send them
     match get_queued_messages_for_player(player_id, redis).await {
@@ -125,7 +116,7 @@ async fn store_connection_and_send_queued_messages(
                     player_id
                 );
 
-                let conns = connection_info.lock().await;
+                let conns = connections.lock().await;
                 if let Some(conn_info) = conns.get(&player_id) {
                     let mut sender_guard = conn_info.sender.lock().await;
 
@@ -175,57 +166,48 @@ async fn setup_player_and_room(
     room_info: GameRoomInfo,
     players: Vec<Player>,
     pool: Option<RoomPool>,
-    rooms: &SharedRooms,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    let mut locked_rooms = rooms.lock().await;
+    // Create or get existing room from Redis
+    match create_or_get_game_room(&room_info, players, pool, redis.clone()).await {
+        Ok(mut room) => {
+            let already_exists = room.players.iter().any(|p| p.id == player.id);
 
-    // Check if this room is already active in memory
-    let room = locked_rooms.entry(room_info.id).or_insert_with(|| {
-        tracing::info!("Initializing new in-memory GameRoom for {}", room_info.id);
-        let word_list = WORD_LIST.clone();
+            if !already_exists {
+                tracing::info!(
+                    "Adding player {} ({}) to room {}",
+                    player.wallet_address,
+                    player.id,
+                    room.info.id
+                );
 
-        GameRoom {
-            info: room_info.clone(),
-            players: players.clone(),
-            data: GameData::LexiWar { word_list },
-            eliminated_players: vec![],
-            current_turn_id: room_info.creator_id,
-            used_words: HashMap::new(),
-            used_words_global: HashSet::new(),
-            rule_context: RuleContext {
-                min_word_length: 4,
-                random_letter: generate_random_letter(),
-            },
-            rule_index: 0,
-            pool,
+                // Add player to room and update in Redis
+                room.players.push(player.clone());
+                if let Err(e) =
+                    db::game_room::store_game_room(room_info.id, &room, redis.clone()).await
+                {
+                    tracing::error!("Failed to update room in Redis: {}", e);
+                }
+            } else {
+                tracing::info!(
+                    "Player {} already exists in room {}, skipping re-add",
+                    player.wallet_address,
+                    room.info.id
+                );
+            }
+
+            if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id)
+            {
+                let next_turn_msg = LexiWarsServerMessage::Turn {
+                    current_turn: current_player.clone(),
+                };
+                broadcast_to_room(&next_turn_msg, &room, connections, redis).await;
+            }
         }
-    });
-
-    let already_exists = room.players.iter().any(|p| p.id == player.id);
-
-    if !already_exists {
-        tracing::info!(
-            "Adding player {} ({}) to room {}",
-            player.wallet_address,
-            player.id,
-            room.info.id
-        );
-        room.players.push(player.clone());
-    } else {
-        tracing::info!(
-            "Player {} already exists in room {}, skipping re-add",
-            player.wallet_address,
-            room.info.id
-        );
-    }
-
-    if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id) {
-        let next_turn_msg = LexiWarsServerMessage::Turn {
-            current_turn: current_player.clone(),
-        };
-        broadcast_to_room(&next_turn_msg, &room, &connections, redis).await;
+        Err(e) => {
+            tracing::error!("Failed to setup room {}: {}", room_info.id, e);
+        }
     }
 }
 
@@ -244,10 +226,8 @@ pub async fn lexi_wars_handler(
     tracing::info!("New WebSocket connection from {}", addr);
 
     let player_id = query.user_id;
-
     let redis = state.redis.clone();
     let connections = state.connections.clone();
-    let rooms = state.rooms.clone();
 
     let room = db::room::get_room_info(room_id, redis.clone())
         .await
@@ -276,7 +256,6 @@ pub async fn lexi_wars_handler(
         .await
         .map_err(|e| e.to_response())?;
 
-    // TODO: avoid cloning all players
     let players_clone = players.clone();
 
     let matched_player = players
@@ -300,7 +279,6 @@ pub async fn lexi_wars_handler(
             matched_player,
             players_clone,
             pool,
-            rooms,
             connections,
             room_info,
             redis,
@@ -314,7 +292,6 @@ async fn handle_lexi_wars_socket(
     player: Player,
     players: Vec<Player>,
     pool: Option<RoomPool>,
-    rooms: SharedRooms,
     connections: ConnectionInfoMap,
     room_info: GameRoomInfo,
     redis: RedisClient,
@@ -323,26 +300,10 @@ async fn handle_lexi_wars_socket(
 
     store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
-    setup_player_and_room(
-        &player,
-        room_info,
-        players,
-        pool,
-        &rooms,
-        &connections,
-        &redis,
-    )
-    .await;
+    setup_player_and_room(&player, room_info, players, pool, &connections, &redis).await;
 
-    lexi_wars::engine::handle_incoming_messages(
-        &player,
-        room_id,
-        receiver,
-        rooms,
-        &connections,
-        redis,
-    )
-    .await;
+    lexi_wars::engine::handle_incoming_messages(&player, room_id, receiver, &connections, redis)
+        .await;
 
     remove_connection(player.id, &connections).await;
 }
@@ -429,7 +390,7 @@ async fn handle_lobby_socket(
 ) {
     let (sender, receiver) = socket.split();
 
-    store_connection(player.id, sender, &connections).await;
+    store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerJoined { players };

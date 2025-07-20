@@ -5,7 +5,11 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    db::{room::update_room_player_after_game, update_game_state},
+    db::{
+        game_room::{get_game_room, update_game_room},
+        room::update_room_player_after_game,
+        update_game_state,
+    },
     games::lexi_wars::{
         rules::get_rule_by_index,
         utils::{
@@ -17,7 +21,7 @@ use crate::{
         GameData, GameRoom, GameState, LexiWarsClientMessage, LexiWarsServerMessage, Player,
         PlayerStanding,
     },
-    state::{ConnectionInfoMap, RedisClient, SharedRooms},
+    state::{ConnectionInfoMap, RedisClient},
 };
 use uuid::Uuid;
 
@@ -41,26 +45,25 @@ fn get_prize(room: &mut GameRoom, position: usize) -> Option<f64> {
 fn start_turn_timer(
     player_id: Uuid,
     room_id: Uuid,
-    rooms: SharedRooms,
     connections: ConnectionInfoMap,
     words: Arc<HashSet<String>>,
     redis: RedisClient,
 ) {
     tokio::spawn(async move {
         for i in (0..=30).rev() {
-            {
-                let rooms_guard = rooms.lock().await;
-                if let Some(room) = rooms_guard.get(&room_id) {
+            // Check if room still exists and turn hasn't changed
+            match get_game_room(room_id, redis.clone()).await {
+                Ok(room) => {
                     if room.current_turn_id != player_id {
                         let countdown_msg = LexiWarsServerMessage::Countdown { time: 10 };
                         broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
-
                         tracing::info!("turn changed, stopping timer");
                         return;
                     }
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
                     broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
-                } else {
+                }
+                Err(_) => {
                     tracing::error!("room not found, stopping timer");
                     return;
                 }
@@ -69,19 +72,31 @@ fn start_turn_timer(
             sleep(Duration::from_secs(1)).await;
         }
 
-        // time ran out
-        let mut rooms_guard = rooms.lock().await;
-        if let Some(room) = rooms_guard.get_mut(&room_id) {
+        // Time ran out - update room in Redis
+        match update_game_room(room_id, redis.clone(), |room| {
             if room.current_turn_id == player_id {
                 tracing::info!("Player {} timed out", player_id);
 
                 let next_player_id = get_next_player_and_wrap(room, player_id);
 
-                // remove player from room and save position
+                // Remove player from room and save position
                 if let Some(pos) = room.players.iter().position(|p| p.id == player_id) {
                     let player = room.players.remove(pos);
                     room.eliminated_players.push(player.clone());
 
+                    // Update current turn to next player if available
+                    if let Some(next_id) = next_player_id {
+                        room.current_turn_id = next_id;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            Ok(room) => {
+                // Handle player elimination logic
+                let eliminated_player = room.eliminated_players.iter().find(|p| p.id == player_id);
+                if let Some(player) = eliminated_player {
                     let position = room.players.len() + 1;
 
                     let rank_msg = LexiWarsServerMessage::Rank {
@@ -89,9 +104,9 @@ fn start_turn_timer(
                     };
                     broadcast_to_player(player_id, &rank_msg, &connections, &redis).await;
 
-                    let player_used_words = room.used_words.remove(&player.id).unwrap_or_default();
-
-                    let prize = get_prize(room, position);
+                    let player_used_words =
+                        room.used_words.get(&player.id).cloned().unwrap_or_default();
+                    let prize = get_prize(&mut room.clone(), position);
 
                     if let Err(e) = update_room_player_after_game(
                         room_id,
@@ -114,78 +129,14 @@ fn start_turn_timer(
                     }
                 }
 
-                // check game over
+                // Check game over
                 if room.players.len() == 1 {
-                    let winner = room.players.remove(0);
-                    room.eliminated_players.push(winner.clone());
-
-                    let position = room.players.len() + 1;
-
-                    let rank_msg = LexiWarsServerMessage::Rank {
-                        rank: position.to_string(),
-                    };
-                    broadcast_to_player(player_id, &rank_msg, &connections, &redis).await;
-
-                    let player_used_words = room.used_words.remove(&winner.id).unwrap_or_default();
-
-                    let prize = get_prize(room, position);
-
-                    if let Err(e) = update_room_player_after_game(
-                        room_id,
-                        winner.id,
-                        1,
-                        prize,
-                        player_used_words,
-                        redis.clone(),
-                    )
-                    .await
+                    handle_game_over(room_id, &room, &connections, redis.clone()).await;
+                } else if !room.players.is_empty() {
+                    // Continue game with next player
+                    if let Some(current_player) =
+                        room.players.iter().find(|p| p.id == room.current_turn_id)
                     {
-                        tracing::error!("Error updating player in Redis: {}", e);
-                    }
-
-                    if let Some(amount) = prize {
-                        if amount > 0.0 {
-                            let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
-                        }
-                    }
-
-                    let gameover_msg = LexiWarsServerMessage::GameOver;
-                    broadcast_to_room(&gameover_msg, &room, &connections, &redis).await;
-
-                    let standing: Vec<PlayerStanding> = room
-                        .eliminated_players
-                        .iter()
-                        .rev()
-                        .enumerate()
-                        .map(|(index, player)| PlayerStanding {
-                            player: player.clone(),
-                            rank: index + 1,
-                        })
-                        .collect();
-
-                    let final_standing_msg = LexiWarsServerMessage::FinalStanding { standing };
-                    broadcast_to_room(&final_standing_msg, &room, &connections, &redis).await;
-
-                    if let Err(e) =
-                        update_game_state(room_id, GameState::Finished, redis.clone()).await
-                    {
-                        tracing::error!("Error updating game state in Redis: {}", e);
-                    }
-
-                    return;
-                }
-
-                if room.players.is_empty() {
-                    tracing::warn!("fix: room {} is now empty", room.info.id); // never really gets here
-                    return;
-                }
-
-                //continue game if players > 1
-                if let Some(next_id) = next_player_id {
-                    room.current_turn_id = next_id;
-
-                    if let Some(current_player) = room.players.iter().find(|p| p.id == next_id) {
                         let next_turn_msg = LexiWarsServerMessage::Turn {
                             current_turn: current_player.clone(),
                         };
@@ -193,26 +144,78 @@ fn start_turn_timer(
                     }
 
                     start_turn_timer(
-                        next_id,
+                        room.current_turn_id,
                         room_id,
-                        rooms.clone(),
                         connections.clone(),
                         words.clone(),
                         redis.clone(),
                     );
-                } else {
-                    tracing::warn!("No next player found in room {}", room.info.id);
                 }
+            }
+            Err(e) => {
+                tracing::error!("Failed to update room after timeout: {}", e);
             }
         }
     });
+}
+
+async fn handle_game_over(
+    room_id: Uuid,
+    room: &GameRoom,
+    connections: &ConnectionInfoMap,
+    redis: RedisClient,
+) {
+    if let Some(winner) = room.players.first() {
+        let player_used_words = room.used_words.get(&winner.id).cloned().unwrap_or_default();
+        let prize = get_prize(&mut room.clone(), 1);
+
+        if let Err(e) = update_room_player_after_game(
+            room_id,
+            winner.id,
+            1,
+            prize,
+            player_used_words,
+            redis.clone(),
+        )
+        .await
+        {
+            tracing::error!("Error updating winner in Redis: {}", e);
+        }
+
+        if let Some(amount) = prize {
+            if amount > 0.0 {
+                let prize_msg = LexiWarsServerMessage::Prize { amount };
+                broadcast_to_player(winner.id, &prize_msg, connections, &redis).await;
+            }
+        }
+    }
+
+    let gameover_msg = LexiWarsServerMessage::GameOver;
+    broadcast_to_room(&gameover_msg, &room, connections, &redis).await;
+
+    let standing: Vec<PlayerStanding> = room
+        .eliminated_players
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(index, player)| PlayerStanding {
+            player: player.clone(),
+            rank: index + 1,
+        })
+        .collect();
+
+    let final_standing_msg = LexiWarsServerMessage::FinalStanding { standing };
+    broadcast_to_room(&final_standing_msg, &room, connections, &redis).await;
+
+    if let Err(e) = update_game_state(room_id, GameState::Finished, redis.clone()).await {
+        tracing::error!("Error updating game state in Redis: {}", e);
+    }
 }
 
 pub async fn handle_incoming_messages(
     player: &Player,
     room_id: Uuid,
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
-    rooms: SharedRooms,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
 ) {
@@ -238,69 +241,47 @@ pub async fn handle_incoming_messages(
                         }
                         LexiWarsClientMessage::WordEntry { word } => {
                             let cleaned_word = word.trim().to_lowercase();
-                            let advance_turn: bool;
 
-                            {
-                                let mut rooms_guard = rooms.lock().await;
-                                let room = rooms_guard.get_mut(&room_id).unwrap();
-                                let words = match &room.data {
-                                    GameData::LexiWar { word_list } => word_list.clone(),
+                            // Get current room state
+                            let room = match get_game_room(room_id, redis.clone()).await {
+                                Ok(room) => room,
+                                Err(_) => {
+                                    tracing::error!("Room {} not found", room_id);
+                                    continue;
+                                }
+                            };
+
+                            let words = match &room.data {
+                                GameData::LexiWar { word_list } => word_list.clone(),
+                            };
+
+                            // Check turn
+                            if player.id != room.current_turn_id {
+                                tracing::info!("Not {}'s turn", player.wallet_address);
+                                continue;
+                            }
+
+                            // Check if word is used
+                            if room.used_words_global.contains(&cleaned_word) {
+                                tracing::info!("This word have been used: {}", cleaned_word);
+                                let used_word_msg = LexiWarsServerMessage::UsedWord {
+                                    word: cleaned_word.clone(),
                                 };
-
-                                // check turn
-                                if player.id != room.current_turn_id {
-                                    tracing::info!("Not {}'s turn", player.wallet_address); // broadcast turn to players
-                                    continue;
-                                }
-
-                                // check if word is used
-                                if room.used_words_global.contains(&cleaned_word) {
-                                    tracing::info!("This word have been used: {}", cleaned_word);
-                                    let used_word_msg = LexiWarsServerMessage::UsedWord {
-                                        word: cleaned_word.clone(),
-                                    };
-                                    broadcast_to_player(
-                                        player.id,
-                                        &used_word_msg,
-                                        connections,
-                                        &redis,
-                                    )
+                                broadcast_to_player(player.id, &used_word_msg, connections, &redis)
                                     .await;
-                                    continue;
-                                }
+                                continue;
+                            }
 
-                                // apply rule
-                                if let Some(rule) =
-                                    get_rule_by_index(room.rule_index, &room.rule_context)
-                                {
-                                    // untested check
-                                    if rule.name != "min_length" {
-                                        if cleaned_word.len() < room.rule_context.min_word_length {
-                                            let reason = format!(
-                                                "Word must be at least {} characters!",
-                                                room.rule_context.min_word_length
-                                            );
-                                            tracing::info!("Rule failed: {}", reason);
-                                            let validation_msg =
-                                                LexiWarsServerMessage::Validate { msg: reason };
-                                            broadcast_to_player(
-                                                player.id,
-                                                &validation_msg,
-                                                connections,
-                                                &redis,
-                                            )
-                                            .await;
-                                            continue;
-                                        }
-                                    }
-                                    let rule_msg = LexiWarsServerMessage::Rule {
-                                        rule: rule.description,
-                                    };
-                                    broadcast_to_room(&rule_msg, &room, &connections, &redis).await;
-                                    if let Err(reason) =
-                                        (rule.validate)(&cleaned_word, &room.rule_context)
-                                    {
-                                        tracing::info!("Rule failed: {}", reason);
+                            // Apply rule validation
+                            if let Some(rule) =
+                                get_rule_by_index(room.rule_index, &room.rule_context)
+                            {
+                                if rule.name != "min_length" {
+                                    if cleaned_word.len() < room.rule_context.min_word_length {
+                                        let reason = format!(
+                                            "Word must be at least {} characters!",
+                                            room.rule_context.min_word_length
+                                        );
                                         let validation_msg =
                                             LexiWarsServerMessage::Validate { msg: reason };
                                         broadcast_to_player(
@@ -312,15 +293,18 @@ pub async fn handle_incoming_messages(
                                         .await;
                                         continue;
                                     }
-                                } else {
-                                    tracing::error!("fix invalid rule index {}", room.rule_index);
                                 }
 
-                                // check if word is valid
-                                if !words.contains(&cleaned_word) {
-                                    let validation_msg = LexiWarsServerMessage::Validate {
-                                        msg: "Invalid word".to_string(),
-                                    };
+                                let rule_msg = LexiWarsServerMessage::Rule {
+                                    rule: rule.description,
+                                };
+                                broadcast_to_room(&rule_msg, &room, connections, &redis).await;
+
+                                if let Err(reason) =
+                                    (rule.validate)(&cleaned_word, &room.rule_context)
+                                {
+                                    let validation_msg =
+                                        LexiWarsServerMessage::Validate { msg: reason };
                                     broadcast_to_player(
                                         player.id,
                                         &validation_msg,
@@ -328,99 +312,107 @@ pub async fn handle_incoming_messages(
                                         &redis,
                                     )
                                     .await;
-                                    tracing::info!(
-                                        "invalid word from {}: {}",
-                                        player.wallet_address,
-                                        cleaned_word
-                                    );
                                     continue;
                                 }
+                            }
 
-                                // add to used words
+                            // Check if word is valid
+                            if !words.contains(&cleaned_word) {
+                                let validation_msg = LexiWarsServerMessage::Validate {
+                                    msg: "Invalid word".to_string(),
+                                };
+                                broadcast_to_player(
+                                    player.id,
+                                    &validation_msg,
+                                    connections,
+                                    &redis,
+                                )
+                                .await;
+                                continue;
+                            }
+
+                            // Update room with new word and next turn
+                            match update_game_room(room_id, redis.clone(), |room| {
+                                // Add to used words
                                 room.used_words_global.insert(cleaned_word.clone());
                                 room.used_words
                                     .entry(player.id)
                                     .or_default()
                                     .push(cleaned_word.clone());
 
-                                // store next player id
+                                // Get next player
                                 if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
                                     room.current_turn_id = next_id;
+                                }
+                            })
+                            .await
+                            {
+                                Ok(updated_room) => {
+                                    // Broadcast word entry
+                                    broadcast_word_entry_from_player(
+                                        player,
+                                        &cleaned_word,
+                                        &updated_room,
+                                        connections,
+                                        &redis,
+                                    )
+                                    .await;
 
-                                    if let Some(current_player) =
-                                        room.players.iter().find(|p| p.id == next_id)
+                                    // Broadcast next turn
+                                    if let Some(current_player) = updated_room
+                                        .players
+                                        .iter()
+                                        .find(|p| p.id == updated_room.current_turn_id)
                                     {
                                         let next_turn_msg = LexiWarsServerMessage::Turn {
                                             current_turn: current_player.clone(),
                                         };
                                         broadcast_to_room(
                                             &next_turn_msg,
-                                            &room,
-                                            &connections,
+                                            &updated_room,
+                                            connections,
                                             &redis,
                                         )
                                         .await;
                                     }
-                                } else {
-                                    tracing::error!("couldn't find next player");
-                                };
 
-                                // start game loop
-                                start_turn_timer(
-                                    room.current_turn_id,
-                                    room_id,
-                                    rooms.clone(),
-                                    connections.clone(),
-                                    words.clone(),
-                                    redis.clone(),
-                                );
-
-                                advance_turn = true;
-                            }
-                            if advance_turn {
-                                let room_gaurd = rooms.lock().await;
-                                let room = room_gaurd.get(&room_id).unwrap();
-                                broadcast_word_entry_from_player(
-                                    player,
-                                    &cleaned_word,
-                                    &room,
-                                    &connections,
-                                    &redis,
-                                )
-                                .await;
+                                    // Start turn timer
+                                    start_turn_timer(
+                                        updated_room.current_turn_id,
+                                        room_id,
+                                        connections.clone(),
+                                        words.clone(),
+                                        redis.clone(),
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to update room: {}", e);
+                                }
                             }
                         }
                     }
                 }
                 Message::Ping(data) => {
-                    tracing::debug!("Received ping from player {}", player.id);
-                    // Handle WebSocket ping with custom timestamp logic
                     if data.len() == 8 {
-                        // Extract timestamp from ping data (8 bytes for u64)
                         let mut ts_bytes = [0u8; 8];
-                        if data.len() >= 8 {
-                            ts_bytes.copy_from_slice(&data[..8]);
-                        }
+                        ts_bytes.copy_from_slice(&data[..8]);
                         let client_ts = u64::from_le_bytes(ts_bytes);
 
                         let now = Utc::now().timestamp_millis() as u64;
                         let pong_time = now.saturating_sub(client_ts);
 
-                        // Send as LexiWarsServerMessage::Pong JSON instead of WebSocket pong
                         let pong_msg = LexiWarsServerMessage::Pong {
                             ts: client_ts,
                             pong: pong_time,
                         };
-                        broadcast_to_player(player.id, &pong_msg, &connections, &redis).await;
+                        broadcast_to_player(player.id, &pong_msg, connections, &redis).await;
                     } else {
-                        // For standard WebSocket pings without timestamp, use current time
                         let now = Utc::now().timestamp_millis() as u64;
                         let pong_msg = LexiWarsServerMessage::Pong { ts: now, pong: 0 };
-                        broadcast_to_player(player.id, &pong_msg, &connections, &redis).await;
+                        broadcast_to_player(player.id, &pong_msg, connections, &redis).await;
                     }
                 }
                 Message::Pong(_) => {
-                    // Client responded to our ping (if we were sending any)
                     tracing::debug!("Received pong from player {}", player.id);
                 }
                 Message::Close(_) => {

@@ -10,7 +10,7 @@ pub mod ws;
 use axum::Router;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
-use state::{AppState, ConnectionInfoMap, SharedRooms};
+use state::{AppState, ConnectionInfoMap};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
@@ -28,12 +28,10 @@ pub async fn start_server() {
     let bot = Bot::new(bot_token);
 
     let redis_pool = Pool::builder().build(manager).await.unwrap();
-    let rooms: SharedRooms = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
 
     let state = AppState {
-        rooms,
         connections,
         redis: redis_pool,
         lobby_join_requests,
