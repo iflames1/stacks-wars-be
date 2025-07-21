@@ -15,7 +15,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
 
-use crate::state::LobbyJoinRequests;
+use crate::{games::init::initialize_games, state::LobbyJoinRequests};
 
 pub async fn start_server() {
     dotenvy::dotenv().ok();
@@ -28,6 +28,13 @@ pub async fn start_server() {
     let bot = Bot::new(bot_token);
 
     let redis_pool = Pool::builder().build(manager).await.unwrap();
+
+    // Initialize games in database
+    if let Err(e) = initialize_games(redis_pool.clone()).await {
+        tracing::error!("Failed to initialize games: {}", e);
+        panic!("Failed to initialize games: {}", e);
+    }
+
     let rooms: SharedRooms = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
