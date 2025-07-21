@@ -8,7 +8,7 @@ use crate::{
 
 pub async fn get_rooms_by_game_id(
     game_id: Uuid,
-    filter_state: Option<GameState>,
+    filter_states: Option<Vec<GameState>>,
     redis: RedisClient,
 ) -> Result<Vec<GameRoomInfo>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -37,8 +37,8 @@ pub async fn get_rooms_by_game_id(
             let info: GameRoomInfo = serde_json::from_str(&json)
                 .map_err(|_| AppError::Deserialization("Invalid room info".into()))?;
 
-            if let Some(ref state_filter) = filter_state {
-                if &info.state != state_filter {
+            if let Some(ref state_filters) = filter_states {
+                if !state_filters.contains(&info.state) {
                     continue;
                 }
             }
@@ -68,7 +68,10 @@ pub async fn get_room(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo,
     Ok(info)
 }
 
-pub async fn get_all_rooms(redis: RedisClient) -> Result<Vec<GameRoomInfo>, AppError> {
+pub async fn get_all_rooms(
+    filter_states: Option<Vec<GameState>>,
+    redis: RedisClient,
+) -> Result<Vec<GameRoomInfo>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -89,6 +92,13 @@ pub async fn get_all_rooms(redis: RedisClient) -> Result<Vec<GameRoomInfo>, AppE
             .map_err(|e| AppError::RedisCommandError(e.into()))?;
         let room: GameRoomInfo = serde_json::from_str(&value)
             .map_err(|_| AppError::Deserialization("Invalid room info".to_string()))?;
+
+        if let Some(ref state_filters) = filter_states {
+            if !state_filters.contains(&room.state) {
+                continue;
+            }
+        }
+
         rooms.push(room);
     }
 
