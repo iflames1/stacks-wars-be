@@ -1,6 +1,6 @@
 use crate::{
     db,
-    models::game::{LobbyServerMessage, Player},
+    models::{game::Player, lobby::LobbyServerMessage},
     state::{ConnectionInfoMap, RedisClient},
     ws::handlers::{
         lobby::message_handler::{broadcast_to_lobby, handler::send_error_to_player},

@@ -8,8 +8,8 @@ use crate::{
     errors::AppError,
     models::{
         User,
-        game::{LobbyClientMessage, LobbyServerMessage, PendingJoin, Player},
-        lobby::{JoinRequest, JoinState},
+        game::Player,
+        lobby::{JoinRequest, JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
     },
     state::{ConnectionInfoMap, LobbyJoinRequests, RedisClient},
     ws::handlers::{

@@ -1,5 +1,5 @@
 use crate::{
-    models::game::{LobbyServerMessage, Player},
+    models::{game::Player, lobby::LobbyServerMessage},
     state::{ConnectionInfoMap, RedisClient},
     ws::handlers::lobby::message_handler::handler::send_to_player,
 };

@@ -4,7 +4,6 @@ use axum::{
     response::IntoResponse,
 };
 use futures::StreamExt;
-use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -15,9 +14,10 @@ use crate::{
     games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
     models::{
         game::{
-            GameData, GameRoom, GameRoomInfo, GameState, LexiWarsServerMessage, Player,
-            PlayerState, RoomPool,
+            GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, RoomPool,
+            WsQueryParams,
         },
+        lexi_wars::LexiWarsServerMessage,
         word_loader::WORD_LIST,
     },
     state::{AppState, RedisClient},
@@ -87,11 +87,6 @@ async fn setup_player_and_room(
         };
         broadcast_to_room(&next_turn_msg, &room, &connections, redis).await;
     }
-}
-
-#[derive(Deserialize)]
-pub struct WsQueryParams {
-    user_id: Uuid,
 }
 
 pub async fn lexi_wars_handler(

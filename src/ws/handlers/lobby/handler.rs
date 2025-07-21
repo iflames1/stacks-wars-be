@@ -3,29 +3,23 @@ use axum::{
     response::IntoResponse,
 };
 use futures::StreamExt;
-use serde::Deserialize;
 use std::net::SocketAddr;
 
 use crate::{
     db,
     models::{
-        game::{Player, PlayerState},
+        game::{Player, PlayerState, WsQueryParams},
         lobby::{JoinRequest, JoinState},
     },
     state::{AppState, LobbyJoinRequests, RedisClient},
     ws::handlers::lobby::message_handler,
 };
 use crate::{
-    models::game::LobbyServerMessage,
+    models::lobby::LobbyServerMessage,
     ws::handlers::utils::store_connection_and_send_queued_messages,
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
 use uuid::Uuid;
-
-#[derive(Deserialize)]
-pub struct WsQueryParams {
-    user_id: Uuid,
-}
 
 pub async fn lobby_ws_handler(
     ws: WebSocketUpgrade,

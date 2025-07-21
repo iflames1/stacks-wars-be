@@ -4,7 +4,10 @@ use rand::{Rng, rng};
 
 use crate::{
     games::lexi_wars::rules::get_rules,
-    models::game::{GameRoom, LexiWarsServerMessage, Player},
+    models::{
+        game::{GameRoom, Player},
+        lexi_wars::LexiWarsServerMessage,
+    },
     state::{ConnectionInfoMap, RedisClient},
     ws::handlers::utils::queue_message_for_player,
 };

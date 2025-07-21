@@ -1,8 +1,8 @@
 use crate::{
     db,
     models::{
-        game::{LobbyServerMessage, Player},
-        lobby::JoinState,
+        game::Player,
+        lobby::{JoinState, LobbyServerMessage},
     },
     state::{ConnectionInfoMap, LobbyJoinRequests, RedisClient},
     ws::handlers::lobby::message_handler::{
