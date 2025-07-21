@@ -94,14 +94,37 @@ pub async fn get_room_extended_handler(
 
 #[derive(Deserialize)]
 pub struct RoomQuery {
-    state: Option<GameState>,
+    state: Option<String>,
 }
+fn parse_states(state_param: Option<String>) -> Option<Vec<GameState>> {
+    state_param
+        .map(|s| {
+            s.split(',')
+                .filter_map(|state_str| {
+                    let trimmed = state_str.trim();
+                    match trimmed.to_lowercase().as_str() {
+                        "waiting" => Some(GameState::Waiting),
+                        "inprogress" | "in_progress" => Some(GameState::InProgress),
+                        "finished" => Some(GameState::Finished),
+                        _ => {
+                            tracing::warn!("Invalid state filter: {}", trimmed);
+                            None
+                        }
+                    }
+                })
+                .collect()
+        })
+        .filter(|states: &Vec<GameState>| !states.is_empty())
+}
+
 pub async fn get_rooms_by_game_id_handler(
     Path(game_id): Path<Uuid>,
     Query(query): Query<RoomQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
-    let rooms = get_rooms_by_game_id(game_id, query.state, state.redis.clone())
+    let filter_states = parse_states(query.state);
+
+    let rooms = get_rooms_by_game_id(game_id, filter_states, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving rooms by game ID: {}", e);
@@ -129,7 +152,9 @@ pub async fn get_all_rooms_handler(
     Query(query): Query<RoomQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
-    let rooms = get_all_rooms(query.state, state.redis.clone())
+    let filter_states = parse_states(query.state);
+
+    let rooms = get_all_rooms(filter_states, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving all rooms: {}", e);
