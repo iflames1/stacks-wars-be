@@ -17,8 +17,11 @@ use crate::{
         update_game_state, update_player_state,
     },
     errors::AppError,
-    models::game::{
-        ClaimState, GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPoolInput,
+    models::{
+        game::{
+            ClaimState, GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPoolInput,
+        },
+        lobby::RoomQuery,
     },
     state::AppState,
 };
@@ -92,10 +95,6 @@ pub async fn get_room_extended_handler(
     Ok(Json(extended))
 }
 
-#[derive(Deserialize)]
-pub struct RoomQuery {
-    state: Option<String>,
-}
 fn parse_states(state_param: Option<String>) -> Option<Vec<GameState>> {
     state_param
         .map(|s| {
@@ -124,7 +123,16 @@ pub async fn get_rooms_by_game_id_handler(
 ) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
     let filter_states = parse_states(query.state);
 
-    let rooms = get_rooms_by_game_id(game_id, filter_states, state.redis.clone())
+    let (page, limit) = if let Some(p) = query.page {
+        let page = p.max(1);
+        let limit = query.limit.unwrap_or(12).min(100); // Default 12, max 100 per page
+        (page, limit)
+    } else {
+        // No pagination - return all items
+        (1, u32::MAX)
+    };
+
+    let rooms = get_rooms_by_game_id(game_id, filter_states, page, limit, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving rooms by game ID: {}", e);
@@ -154,7 +162,16 @@ pub async fn get_all_rooms_handler(
 ) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
     let filter_states = parse_states(query.state);
 
-    let rooms = get_all_rooms(filter_states, state.redis.clone())
+    let (page, limit) = if let Some(p) = query.page {
+        let page = p.max(1); // Ensure page is at least 1
+        let limit = query.limit.unwrap_or(12).min(100); // Default 12, max 100 per page
+        (page, limit)
+    } else {
+        // No pagination - return all items
+        (1, u32::MAX)
+    };
+
+    let rooms = get_all_rooms(filter_states, page, limit, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving all rooms: {}", e);
