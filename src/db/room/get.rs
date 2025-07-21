@@ -47,6 +47,9 @@ pub async fn get_rooms_by_game_id(
         }
     }
 
+    // Sort by created_at in descending order (latest first)
+    rooms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
     Ok(rooms)
 }
 
@@ -101,6 +104,9 @@ pub async fn get_all_rooms(
 
         rooms.push(room);
     }
+
+    // Sort by created_at in descending order (latest first)
+    rooms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
     Ok(rooms)
 }
