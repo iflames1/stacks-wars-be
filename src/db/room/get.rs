@@ -2,13 +2,18 @@ use uuid::Uuid;
 
 use crate::{
     errors::AppError,
-    models::game::{GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool},
+    models::{
+        game::{GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool},
+        lobby::PaginationMeta,
+    },
     state::RedisClient,
 };
 
 pub async fn get_rooms_by_game_id(
     game_id: Uuid,
     filter_states: Option<Vec<GameState>>,
+    page: u32,
+    limit: u32,
     redis: RedisClient,
 ) -> Result<Vec<GameRoomInfo>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -47,10 +52,35 @@ pub async fn get_rooms_by_game_id(
         }
     }
 
-    // Sort by created_at in descending order (latest first)
     rooms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    Ok(rooms)
+    // Apply pagination
+    let total_count = rooms.len() as u32;
+    let total_pages = if total_count == 0 {
+        1
+    } else if limit == u32::MAX {
+        1
+    } else {
+        (total_count + limit - 1) / limit
+    };
+    let offset = (page - 1) * limit;
+
+    let paginated_rooms = rooms
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
+
+    let _pagination_meta = PaginationMeta {
+        page,
+        limit,
+        total_count,
+        total_pages,
+        has_next: page < total_pages,
+        has_previous: page > 1,
+    };
+
+    Ok(paginated_rooms)
 }
 
 pub async fn get_room(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo, AppError> {
@@ -73,6 +103,8 @@ pub async fn get_room(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo,
 
 pub async fn get_all_rooms(
     filter_states: Option<Vec<GameState>>,
+    page: u32,
+    limit: u32,
     redis: RedisClient,
 ) -> Result<Vec<GameRoomInfo>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -108,7 +140,33 @@ pub async fn get_all_rooms(
     // Sort by created_at in descending order (latest first)
     rooms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    Ok(rooms)
+    // Apply pagination
+    let total_count = rooms.len() as u32;
+    let total_pages = if total_count == 0 {
+        1
+    } else if limit == u32::MAX {
+        1
+    } else {
+        (total_count + limit - 1) / limit
+    };
+    let offset = (page - 1) * limit;
+
+    let paginated_rooms = rooms
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
+
+    let _pagination_meta = PaginationMeta {
+        page,
+        limit,
+        total_count,
+        total_pages,
+        has_next: page < total_pages,
+        has_previous: page > 1,
+    };
+
+    Ok(paginated_rooms)
 }
 
 pub async fn get_room_players(room_id: Uuid, redis: RedisClient) -> Result<Vec<Player>, AppError> {
