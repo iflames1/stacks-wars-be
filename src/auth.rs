@@ -49,7 +49,7 @@ impl AuthClaims {
 }
 
 pub fn generate_jwt(user: &User) -> Result<String, AppError> {
-    let expiration = (Utc::now() + Duration::hours(24)).timestamp() as usize;
+    let expiration = (Utc::now() + Duration::days(7)).timestamp() as usize;
     let claims = Claims {
         sub: user.id.to_string(),
         wallet: user.wallet_address.clone(),
