@@ -6,10 +6,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    games::lexi_wars::rules::RuleContext,
-    models::{User, lobby::JoinState},
-};
+use crate::games::lexi_wars::rules::RuleContext;
+
+#[derive(Deserialize)]
+pub struct WsQueryParams {
+    pub user_id: Uuid,
+}
 
 #[derive(Debug)]
 pub enum GameData {
@@ -116,110 +118,4 @@ pub struct RoomExtended {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
     pub pool: Option<RoomPool>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum LobbyClientMessage {
-    UpdatePlayerState {
-        new_state: PlayerState,
-    },
-    UpdateGameState {
-        new_state: GameState,
-    },
-    LeaveRoom,
-    KickPlayer {
-        player_id: Uuid,
-        wallet_address: String,
-        display_name: Option<String>,
-    },
-    RequestJoin,
-    PermitJoin {
-        user_id: Uuid,
-        allow: bool,
-    },
-    JoinLobby {
-        tx_id: Option<String>,
-    },
-    Ping {
-        ts: u64,
-    },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PendingJoin {
-    pub user: User,
-    pub state: JoinState,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum LobbyServerMessage {
-    PlayerJoined {
-        players: Vec<Player>,
-    },
-    PlayerLeft {
-        players: Vec<Player>,
-    },
-    PlayerUpdated {
-        players: Vec<Player>,
-    },
-    PlayerKicked {
-        player_id: Uuid,
-        wallet_address: String,
-        display_name: Option<String>,
-    },
-    NotifyKicked,
-    Countdown {
-        time: u64,
-    },
-    GameState {
-        state: GameState,
-        ready_players: Option<Vec<Uuid>>,
-    },
-    PendingPlayers {
-        pending_players: Vec<PendingJoin>,
-    },
-    PlayersNotReady {
-        players: Vec<Player>,
-    },
-    Allowed,
-    Rejected,
-    Pending,
-    Error {
-        message: String,
-    },
-    Pong {
-        ts: u64,
-        pong: u64,
-    },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum LexiWarsClientMessage {
-    WordEntry { word: String },
-    Ping { ts: u64 },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PlayerStanding {
-    pub player: Player,
-    pub rank: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum LexiWarsServerMessage {
-    Turn { current_turn: Player },
-    Rule { rule: String },
-    Countdown { time: u64 },
-    Rank { rank: String },
-    Validate { msg: String },
-    WordEntry { word: String, sender: Player },
-    UsedWord { word: String },
-    GameOver,
-    FinalStanding { standing: Vec<PlayerStanding> },
-    Prize { amount: f64 },
-    Pong { ts: u64, pong: u64 },
 }

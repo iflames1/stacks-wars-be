@@ -13,9 +13,9 @@ use crate::{
             get_next_player_and_wrap,
         },
     },
-    models::game::{
-        GameData, GameRoom, GameState, LexiWarsClientMessage, LexiWarsServerMessage, Player,
-        PlayerStanding,
+    models::{
+        game::{GameData, GameRoom, GameState, Player},
+        lexi_wars::{LexiWarsClientMessage, LexiWarsServerMessage, PlayerStanding},
     },
     state::{ConnectionInfoMap, RedisClient, SharedRooms},
 };

@@ -1,5 +1,4 @@
 pub mod game;
-pub mod redis_client;
 pub mod room;
 pub mod tx;
 pub mod user;
