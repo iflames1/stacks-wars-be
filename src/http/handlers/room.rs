@@ -126,12 +126,15 @@ pub async fn get_room_handler(
 }
 
 pub async fn get_all_rooms_handler(
+    Query(query): Query<RoomQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
-    let rooms = get_all_rooms(state.redis.clone()).await.map_err(|e| {
-        tracing::error!("Error retrieving all rooms: {}", e);
-        e.to_response()
-    })?;
+    let rooms = get_all_rooms(query.state, state.redis.clone())
+        .await
+        .map_err(|e| {
+            tracing::error!("Error retrieving all rooms: {}", e);
+            e.to_response()
+        })?;
 
     tracing::info!("Retrieved {} rooms", rooms.len());
     Ok(Json(rooms))

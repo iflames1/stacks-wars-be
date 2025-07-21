@@ -68,7 +68,10 @@ pub async fn get_room(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo,
     Ok(info)
 }
 
-pub async fn get_all_rooms(redis: RedisClient) -> Result<Vec<GameRoomInfo>, AppError> {
+pub async fn get_all_rooms(
+    filter_state: Option<GameState>,
+    redis: RedisClient,
+) -> Result<Vec<GameRoomInfo>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -89,6 +92,13 @@ pub async fn get_all_rooms(redis: RedisClient) -> Result<Vec<GameRoomInfo>, AppE
             .map_err(|e| AppError::RedisCommandError(e.into()))?;
         let room: GameRoomInfo = serde_json::from_str(&value)
             .map_err(|_| AppError::Deserialization("Invalid room info".to_string()))?;
+
+        if let Some(ref state_filter) = filter_state {
+            if &room.state != state_filter {
+                continue;
+            }
+        }
+
         rooms.push(room);
     }
 
