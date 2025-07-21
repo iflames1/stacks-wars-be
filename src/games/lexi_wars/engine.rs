@@ -116,19 +116,22 @@ fn start_turn_timer(
 
                 // check game over
                 if room.players.len() == 1 {
-                    let winner = room.players.remove(0);
-                    room.eliminated_players.push(winner.clone());
+                    // Check if game is already finished to prevent double execution
+                    if room.info.state == GameState::Finished {
+                        tracing::warn!("Game already finished for room {}", room_id);
+                        return;
+                    }
 
-                    let position = room.players.len() + 1;
+                    let winner = room.players.remove(0);
 
                     let rank_msg = LexiWarsServerMessage::Rank {
-                        rank: position.to_string(),
+                        rank: "1".to_string(),
                     };
-                    broadcast_to_player(player_id, &rank_msg, &connections, &redis).await;
+                    broadcast_to_player(winner.id, &rank_msg, &connections, &redis).await;
 
                     let player_used_words = room.used_words.remove(&winner.id).unwrap_or_default();
 
-                    let prize = get_prize(room, position);
+                    let prize = get_prize(room, 1);
 
                     if let Err(e) = update_room_player_after_game(
                         room_id,
@@ -146,10 +149,17 @@ fn start_turn_timer(
                     if let Some(amount) = prize {
                         if amount > 0.0 {
                             let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
+                            broadcast_to_player(winner.id, &prize_msg, &connections, &redis).await;
                         }
                     }
 
+                    // Move winner to eliminated_players
+                    room.eliminated_players.push(winner.clone());
+
+                    // Update game state first to prevent race conditions
+                    room.info.state = GameState::Finished;
+
+                    // Send game over messages
                     let gameover_msg = LexiWarsServerMessage::GameOver;
                     broadcast_to_room(&gameover_msg, &room, &connections, &redis).await;
 
@@ -175,7 +185,6 @@ fn start_turn_timer(
 
                     return;
                 }
-
                 if room.players.is_empty() {
                     tracing::warn!("fix: room {} is now empty", room.info.id); // never really gets here
                     return;
