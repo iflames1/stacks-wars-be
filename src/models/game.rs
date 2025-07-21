@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -111,6 +112,7 @@ pub struct GameRoomInfo {
     pub game_name: String,
     pub participants: usize,
     pub contract_address: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Serialize)]

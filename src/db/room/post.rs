@@ -1,3 +1,4 @@
+use chrono::Utc;
 use redis::AsyncCommands;
 use teloxide::Bot;
 use uuid::Uuid;
@@ -38,6 +39,7 @@ pub async fn create_room(
         game_name,
         participants: 1,
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
+        created_at: Utc::now(),
     };
 
     let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
