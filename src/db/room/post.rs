@@ -40,6 +40,7 @@ pub async fn create_room(
         participants: 1,
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
         created_at: Utc::now(),
+        connected_players: Vec::new(),
     };
 
     let creator_user = get_user_by_id(creator_id, redis.clone()).await?;

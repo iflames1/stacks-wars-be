@@ -19,27 +19,31 @@ pub fn generate_random_letter() -> char {
 }
 
 pub fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uuid> {
-    let players = &room.players;
+    // Use connected_players instead of all players
+    let connected_players = &room.connected_players;
 
-    players.iter().position(|p| p.id == current_id).map(|i| {
-        let next_index = (i + 1) % players.len();
-        let next_id = players[next_index].id;
-        let wrapped = next_index == 0;
+    connected_players
+        .iter()
+        .position(|p| p.id == current_id)
+        .map(|i| {
+            let next_index = (i + 1) % connected_players.len();
+            let next_id = connected_players[next_index].id;
+            let wrapped = next_index == 0;
 
-        if wrapped {
-            let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
+            if wrapped {
+                let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
 
-            // If we wrapped to first rule again, increase difficulty
-            if next_rule_index == 0 {
-                room.rule_context.min_word_length += 2;
+                // If we wrapped to first rule again, increase difficulty
+                if next_rule_index == 0 {
+                    room.rule_context.min_word_length += 2;
+                }
+
+                room.rule_index = next_rule_index;
+                room.rule_context.random_letter = generate_random_letter();
             }
 
-            room.rule_index = next_rule_index;
-            room.rule_context.random_letter = generate_random_letter();
-        }
-
-        next_id
-    })
+            next_id
+        })
 }
 
 pub async fn broadcast_to_player(
@@ -66,28 +70,30 @@ pub async fn broadcast_to_player(
                 e
             );
 
-            // Queue the message when send fails
-            drop(sender);
-            drop(connection_guard);
+            if message.should_queue() {
+                drop(sender);
+                drop(connection_guard);
 
-            if let Err(queue_err) =
-                queue_message_for_player(target_player_id, serialized, redis).await
-            {
-                tracing::error!(
-                    "Failed to queue message for player {}: {}",
-                    target_player_id,
-                    queue_err
-                );
+                if let Err(queue_err) =
+                    queue_message_for_player(target_player_id, serialized, redis).await
+                {
+                    tracing::error!(
+                        "Failed to queue message for player {}: {}",
+                        target_player_id,
+                        queue_err
+                    );
+                }
             }
         }
     } else {
-        // Player not connected, queue the message
-        if let Err(e) = queue_message_for_player(target_player_id, serialized, redis).await {
-            tracing::error!(
-                "Failed to queue message for offline player {}: {}",
-                target_player_id,
-                e
-            );
+        if message.should_queue() {
+            if let Err(e) = queue_message_for_player(target_player_id, serialized, redis).await {
+                tracing::error!(
+                    "Failed to queue message for offline player {}: {}",
+                    target_player_id,
+                    e
+                );
+            }
         }
     }
 }
@@ -108,33 +114,43 @@ pub async fn broadcast_to_room(
 
     let connection_guard = connections.lock().await;
 
-    for player in room.players.iter().chain(room.eliminated_players.iter()) {
+    // Use connected_players instead of all players
+    for player in room
+        .connected_players
+        .iter()
+        .chain(room.eliminated_players.iter())
+    {
         if let Some(conn_info) = connection_guard.get(&player.id) {
             let mut sender = conn_info.sender.lock().await;
             if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
                 tracing::warn!("Failed to send message to player {}: {}", player.id, e);
 
-                // Queue the message when send fails
-                drop(sender);
+                // Only queue the message if it should be queued
+                if message.should_queue() {
+                    drop(sender);
 
-                if let Err(queue_err) =
-                    queue_message_for_player(player.id, serialized.clone(), redis).await
-                {
-                    tracing::error!(
-                        "Failed to queue message for player {}: {}",
-                        player.id,
-                        queue_err
-                    );
+                    if let Err(queue_err) =
+                        queue_message_for_player(player.id, serialized.clone(), redis).await
+                    {
+                        tracing::error!(
+                            "Failed to queue message for player {}: {}",
+                            player.id,
+                            queue_err
+                        );
+                    }
                 }
             }
         } else {
-            // Player not connected, queue the message
-            if let Err(e) = queue_message_for_player(player.id, serialized.clone(), redis).await {
-                tracing::error!(
-                    "Failed to queue message for offline player {}: {}",
-                    player.id,
-                    e
-                );
+            // Player not connected, only queue if message should be queued
+            if message.should_queue() {
+                if let Err(e) = queue_message_for_player(player.id, serialized.clone(), redis).await
+                {
+                    tracing::error!(
+                        "Failed to queue message for offline player {}: {}",
+                        player.id,
+                        e
+                    );
+                }
             }
         }
     }

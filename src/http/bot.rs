@@ -29,7 +29,7 @@ pub async fn broadcast_lobby_created(
         .as_ref()
         .map(|addr| {
             format!(
-                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}?chain=testnet\n)",
+                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}?chain=testnet)\n",
                 addr
             )
         })
@@ -41,12 +41,16 @@ pub async fn broadcast_lobby_created(
         .map(|desc| format!("📝 *Description:* {}\n", desc))
         .unwrap_or_default();
 
+    let lobby_link = format!("https://stackswars.com/lobby/{}", payload.room_id);
+    let lobby_url: Url = Url::parse(&lobby_link).unwrap();
+
     let caption = format!(
         "🆕 *New Lobby Created*\n\n\
         🏷 *Name:* {}\n\
         🎮 *Game:* {}\n\
         🧑‍🚀 *Creator:* {}\n\
-        {}{}",
+        {}{}\
+        \n🔗 *Link:* `{}`",
         payload.room_name,
         payload.game_name,
         payload
@@ -54,13 +58,13 @@ pub async fn broadcast_lobby_created(
             .unwrap_or(payload.wallet_address.clone()),
         description,
         contract_line,
+        lobby_link
     );
 
-    let lobby_link: Url =
-        Url::parse(&format!("https://stackswars.com/lobby/{}", payload.room_id)).unwrap();
+    // Create keyboard with join button only
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
         "🚀 Join Now",
-        lobby_link,
+        lobby_url,
     )]]);
 
     bot.send_photo(

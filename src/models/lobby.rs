@@ -118,3 +118,29 @@ pub enum LobbyServerMessage {
         pong: u64,
     },
 }
+
+// Add this to your lobby.rs file (assuming it exists)
+impl LobbyServerMessage {
+    /// Determines if this message should be queued for offline players
+    pub fn should_queue(&self) -> bool {
+        match self {
+            // Time-sensitive messages that should NOT be queued
+            LobbyServerMessage::Countdown { .. } => false,
+            LobbyServerMessage::Pong { .. } => false,
+
+            // Important messages that SHOULD be queued
+            LobbyServerMessage::Error { .. } => true,
+            LobbyServerMessage::Allowed { .. } => true,
+            LobbyServerMessage::GameState { .. } => true,
+            LobbyServerMessage::PlayersNotReady { .. } => true,
+            LobbyServerMessage::PlayerJoined { .. } => true,
+            LobbyServerMessage::PlayerLeft { .. } => true,
+            LobbyServerMessage::PlayerKicked { .. } => true,
+            LobbyServerMessage::Rejected { .. } => true,
+            LobbyServerMessage::PendingPlayers { .. } => true,
+            LobbyServerMessage::NotifyKicked => true,
+            LobbyServerMessage::PlayerUpdated { .. } => true,
+            LobbyServerMessage::Pending { .. } => true,
+        }
+    }
+}

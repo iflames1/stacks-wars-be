@@ -44,7 +44,8 @@ pub struct GameRoom {
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
     pub pool: Option<RoomPool>,
-    pub connected_players: HashSet<Uuid>,
+    pub connected_players: Vec<Player>,
+    pub connected_players_count: usize,
     pub game_started: bool,
 }
 
@@ -103,7 +104,7 @@ pub enum GameState {
     Finished,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GameRoomInfo {
     pub id: Uuid,
     pub name: String,
@@ -115,6 +116,7 @@ pub struct GameRoomInfo {
     pub participants: usize,
     pub contract_address: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub connected_players: Vec<Player>,
 }
 
 #[derive(Serialize)]

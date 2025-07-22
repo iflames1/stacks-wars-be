@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -17,6 +17,7 @@ use crate::{
             GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, RoomPool,
             WsQueryParams,
         },
+        lexi_wars::LexiWarsServerMessage,
         word_loader::WORD_LIST,
     },
     state::{AppState, RedisClient},
@@ -59,7 +60,8 @@ async fn setup_player_and_room(
             },
             rule_index: 0,
             pool,
-            connected_players: HashSet::new(),
+            connected_players: room_info.connected_players.clone(),
+            connected_players_count: room_info.connected_players.len(),
             game_started: false,
         }
     });
@@ -82,9 +84,13 @@ async fn setup_player_and_room(
         );
     }
 
-    // Track connected player
+    // Track connected player - add to connected_players if not already there
+    let already_connected = room.connected_players.iter().any(|p| p.id == player.id);
     let was_empty = room.connected_players.is_empty();
-    room.connected_players.insert(player.id);
+
+    if !already_connected {
+        room.connected_players.push(player.clone());
+    }
 
     tracing::info!(
         "Player {} connected to room {}. Connected: {}/{}",
@@ -116,7 +122,7 @@ pub async fn lexi_wars_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    tracing::info!("New WebSocket connection from {}", addr);
+    tracing::info!("New Lexi-Wars WebSocket connection from {}", addr);
 
     let player_id = query.user_id;
 
@@ -128,9 +134,40 @@ pub async fn lexi_wars_handler(
         .await
         .map_err(|e| e.to_response())?;
 
+    let is_game_started = {
+        let rooms_guard = rooms.lock().await;
+        if let Some(game_room) = rooms_guard.get(&room_id) {
+            game_room.game_started
+        } else {
+            false // If not in memory, game hasn't started yet
+        }
+    };
+
     if room.state != GameState::InProgress {
         tracing::error!("Room {} is not in progress", room_id);
         return Err(AppError::BadRequest("Game not in progress".into()).to_response());
+    }
+    if is_game_started {
+        let is_reconnecting = room.connected_players.iter().any(|p| p.id == player_id);
+
+        if !is_reconnecting {
+            tracing::info!(
+                "Player {} trying to join after game started - not an initial player",
+                player_id
+            );
+
+            // Send AlreadyStarted message and close connection
+            return Ok(ws.on_upgrade(move |mut socket| async move {
+                let already_started_msg = LexiWarsServerMessage::AlreadyStarted;
+                let serialized = serde_json::to_string(&already_started_msg).unwrap();
+                let _ = socket
+                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                    .await;
+                let _ = socket.close().await;
+            }));
+        }
+
+        tracing::info!("Player {} reconnecting to started game", player_id);
     }
 
     let pool = if let Some(ref addr) = room.contract_address {
@@ -219,18 +256,42 @@ async fn handle_lexi_wars_socket(
     )
     .await;
 
-    // Remove player from connected_players when they disconnect
+    // Remove player from connected_players when they disconnect, but only if game hasn't started
     {
         let mut rooms_guard = rooms.lock().await;
         if let Some(room) = rooms_guard.get_mut(&room_id) {
-            room.connected_players.remove(&player.id);
-            tracing::info!(
-                "Player {} disconnected from room {}. Connected: {}/{}",
-                player.wallet_address,
-                room_id,
-                room.connected_players.len(),
-                room.players.len()
-            );
+            if let Some(pos) = room
+                .connected_players
+                .iter()
+                .position(|p| p.id == player.id)
+            {
+                // Only remove from connected_players if game hasn't started
+                if !room.game_started {
+                    room.connected_players.remove(pos);
+                    tracing::info!(
+                        "Player {} disconnected from room {} (pre-game). Connected: {}/{}",
+                        player.wallet_address,
+                        room_id,
+                        room.connected_players.len(),
+                        room.players.len()
+                    );
+                } else {
+                    tracing::info!(
+                        "Player {} disconnected from room {} (during game). Keeping in connected_players for game continuity.",
+                        player.wallet_address,
+                        room_id
+                    );
+                }
+
+                // If the disconnected player was the current turn, assign to next connected player
+                if room.current_turn_id == player.id
+                    && !room.connected_players.is_empty()
+                    && !room.game_started
+                {
+                    room.current_turn_id = room.connected_players[0].id;
+                    tracing::info!("Reassigned current turn to player {}", room.current_turn_id);
+                }
+            }
         }
     }
 
