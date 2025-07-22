@@ -129,6 +129,17 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
+    // Get room info first to check if user is creator
+    let room_key = format!("room:{}:info", room_id);
+    let room_json: String = redis::cmd("GET")
+        .arg(&room_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| AppError::NotFound("Room not found".into()))?;
+
+    let room: GameRoomInfo =
+        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
     let players_key = format!("room:{}:players", room_id);
 
     let players: Vec<String> = redis::cmd("SMEMBERS")
@@ -147,6 +158,56 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         None => return Err(AppError::BadRequest("User not in room".into())),
     };
 
+    // Check if the user trying to leave is the creator
+    if room.creator_id == user_id {
+        if players.len() == 1 {
+            tracing::info!(
+                "Creator is leaving empty room, cleaning up room {}",
+                room_id
+            );
+
+            // Remove from game:{}:rooms set
+            let game_rooms_key = format!("game:{}:rooms", room.game_id);
+            let _: () = redis::cmd("SREM")
+                .arg(&game_rooms_key)
+                .arg(room_id.to_string())
+                .query_async(&mut *conn)
+                .await
+                .map_err(|error| AppError::RedisCommandError(error.into()))?;
+
+            // Delete room info
+            let _: () = redis::cmd("DEL")
+                .arg(&room_key)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|error| AppError::RedisCommandError(error.into()))?;
+
+            // Delete players set
+            let _: () = redis::cmd("DEL")
+                .arg(&players_key)
+                .query_async(&mut *conn)
+                .await
+                .map_err(|error| AppError::RedisCommandError(error.into()))?;
+
+            // Delete pool if it exists
+            if room.contract_address.is_some() {
+                let pool_key = format!("room:{}:pool", room_id);
+                let _: () = redis::cmd("DEL")
+                    .arg(&pool_key)
+                    .query_async(&mut *conn)
+                    .await
+                    .map_err(|error| AppError::RedisCommandError(error.into()))?;
+            }
+
+            tracing::info!("Room {} completely deleted", room_id);
+            return Ok(());
+        } else {
+            return Err(AppError::BadRequest(
+                "Creator cannot leave room while other participants are present".into(),
+            ));
+        }
+    }
+
     let _: () = redis::cmd("SREM")
         .arg(&players_key)
         .arg(&player_to_remove_json)
@@ -154,21 +215,12 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
         .await
         .map_err(|error| AppError::RedisCommandError(error.into()))?;
 
-    let room_key = format!("room:{}:info", room_id);
-    let room_json: String = redis::cmd("GET")
-        .arg(&room_key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|_| AppError::NotFound("Room not found".into()))?;
-
-    let mut room: GameRoomInfo =
-        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    if room.participants > 0 {
-        room.participants -= 1;
+    let mut updated_room = room;
+    if updated_room.participants > 0 {
+        updated_room.participants -= 1;
     }
 
-    if let Some(contract_address) = &room.contract_address {
+    if let Some(contract_address) = &updated_room.contract_address {
         tracing::info!("Deducting entry fee {}", contract_address);
         let pool_key = format!("room:{}:pool", room_id);
         let pool_json: String = redis::cmd("GET")
@@ -197,7 +249,7 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
     }
 
     let updated_json =
-        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
+        serde_json::to_string(&updated_room).map_err(|e| AppError::Serialization(e.to_string()))?;
 
     let _: () = redis::cmd("SET")
         .arg(room_key)
@@ -208,7 +260,6 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
 
     Ok(())
 }
-
 // should only creator update state
 pub async fn update_game_state(
     room_id: Uuid,
