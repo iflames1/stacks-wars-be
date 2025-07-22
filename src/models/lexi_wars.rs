@@ -28,4 +28,6 @@ pub enum LexiWarsServerMessage {
     FinalStanding { standing: Vec<PlayerStanding> },
     Prize { amount: f64 },
     Pong { ts: u64, pong: u64 },
+    Start { time: u32, started: bool },
+    StartFailed,
 }
