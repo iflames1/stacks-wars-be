@@ -11,13 +11,12 @@ use std::{
 
 use crate::{
     db,
-    games::lexi_wars::utils::{broadcast_to_room, generate_random_letter},
+    games::lexi_wars::{engine::start_auto_start_timer, utils::generate_random_letter},
     models::{
         game::{
             GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, RoomPool,
             WsQueryParams,
         },
-        lexi_wars::LexiWarsServerMessage,
         word_loader::WORD_LIST,
     },
     state::{AppState, RedisClient},
@@ -60,6 +59,8 @@ async fn setup_player_and_room(
             },
             rule_index: 0,
             pool,
+            connected_players: HashSet::new(),
+            game_started: false,
         }
     });
 
@@ -81,11 +82,30 @@ async fn setup_player_and_room(
         );
     }
 
-    if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id) {
-        let next_turn_msg = LexiWarsServerMessage::Turn {
-            current_turn: current_player.clone(),
-        };
-        broadcast_to_room(&next_turn_msg, &room, &connections, redis).await;
+    // Track connected player
+    let was_empty = room.connected_players.is_empty();
+    room.connected_players.insert(player.id);
+
+    tracing::info!(
+        "Player {} connected to room {}. Connected: {}/{}",
+        player.wallet_address,
+        room.info.id,
+        room.connected_players.len(),
+        room.players.len()
+    );
+
+    // Start auto-start timer when first player connects
+    if was_empty && !room.game_started {
+        tracing::info!(
+            "First player connected, starting auto-start timer for room {}",
+            room.info.id
+        );
+        start_auto_start_timer(
+            room.info.id,
+            rooms.clone(),
+            connections.clone(),
+            redis.clone(),
+        );
     }
 }
 
@@ -193,11 +213,26 @@ async fn handle_lexi_wars_socket(
         &player,
         room_id,
         receiver,
-        rooms,
+        rooms.clone(),
         &connections,
         redis,
     )
     .await;
+
+    // Remove player from connected_players when they disconnect
+    {
+        let mut rooms_guard = rooms.lock().await;
+        if let Some(room) = rooms_guard.get_mut(&room_id) {
+            room.connected_players.remove(&player.id);
+            tracing::info!(
+                "Player {} disconnected from room {}. Connected: {}/{}",
+                player.wallet_address,
+                room_id,
+                room.connected_players.len(),
+                room.players.len()
+            );
+        }
+    }
 
     remove_connection(player.id, &connections).await;
 }

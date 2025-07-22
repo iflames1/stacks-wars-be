@@ -38,6 +38,150 @@ fn get_prize(room: &mut GameRoom, position: usize) -> Option<f64> {
     prize
 }
 
+pub fn start_auto_start_timer(
+    room_id: Uuid,
+    rooms: SharedRooms,
+    connections: ConnectionInfoMap,
+    redis: RedisClient,
+) {
+    tokio::spawn(async move {
+        for i in (0..=10).rev() {
+            {
+                let mut rooms_guard = rooms.lock().await;
+                if let Some(room) = rooms_guard.get_mut(&room_id) {
+                    let connected_count = room.connected_players.len();
+                    let total_players = room.players.len();
+
+                    tracing::info!(
+                        "Auto-start timer: {}s, connected: {}/{}",
+                        i,
+                        connected_count,
+                        total_players
+                    );
+
+                    // If all players are connected, start immediately
+                    if connected_count == total_players {
+                        tracing::info!("All players connected, starting game immediately");
+
+                        let start_msg = LexiWarsServerMessage::Start {
+                            time: i,
+                            started: true,
+                        };
+                        broadcast_to_room(&start_msg, &room, &connections, &redis).await;
+
+                        room.game_started = true;
+
+                        // Start the first turn
+                        if let Some(current_player) =
+                            room.players.iter().find(|p| p.id == room.current_turn_id)
+                        {
+                            let turn_msg = LexiWarsServerMessage::Turn {
+                                current_turn: current_player.clone(),
+                            };
+                            broadcast_to_room(&turn_msg, &room, &connections, &redis).await;
+
+                            // Start the turn timer
+                            let words = match &room.data {
+                                GameData::LexiWar { word_list } => word_list.clone(),
+                            };
+
+                            start_turn_timer(
+                                room.current_turn_id,
+                                room_id,
+                                rooms.clone(),
+                                connections.clone(),
+                                words,
+                                redis.clone(),
+                            );
+                        }
+                        return;
+                    }
+
+                    // Send countdown update
+                    let start_msg = LexiWarsServerMessage::Start {
+                        time: i,
+                        started: false,
+                    };
+                    broadcast_to_room(&start_msg, &room, &connections, &redis).await;
+                } else {
+                    tracing::error!("Room not found during auto-start timer, stopping");
+                    return;
+                }
+            }
+
+            sleep(Duration::from_secs(1)).await;
+        }
+
+        // Timer expired, check if we have at least 50% of players
+        let mut rooms_guard = rooms.lock().await;
+        if let Some(room) = rooms_guard.get_mut(&room_id) {
+            let connected_count = room.connected_players.len();
+            let total_players = room.players.len();
+            let required_players = (total_players + 1) / 2; // At least 50% (rounded up)
+
+            tracing::info!(
+                "Auto-start timer expired: connected {}/{}, required: {}",
+                connected_count,
+                total_players,
+                required_players
+            );
+
+            if connected_count >= required_players {
+                tracing::info!(
+                    "Sufficient players connected ({}%), starting game",
+                    (connected_count * 100) / total_players
+                );
+
+                let start_msg = LexiWarsServerMessage::Start {
+                    time: 0,
+                    started: true,
+                };
+                broadcast_to_room(&start_msg, &room, &connections, &redis).await;
+
+                room.game_started = true;
+
+                // Start the first turn
+                if let Some(current_player) =
+                    room.players.iter().find(|p| p.id == room.current_turn_id)
+                {
+                    let turn_msg = LexiWarsServerMessage::Turn {
+                        current_turn: current_player.clone(),
+                    };
+                    broadcast_to_room(&turn_msg, &room, &connections, &redis).await;
+
+                    // Start the turn timer
+                    let words = match &room.data {
+                        GameData::LexiWar { word_list } => word_list.clone(),
+                    };
+
+                    start_turn_timer(
+                        room.current_turn_id,
+                        room_id,
+                        rooms.clone(),
+                        connections.clone(),
+                        words,
+                        redis.clone(),
+                    );
+                }
+            } else {
+                tracing::info!("Insufficient players connected, returning room to waiting state");
+
+                let start_failed_msg = LexiWarsServerMessage::StartFailed;
+                broadcast_to_room(&start_failed_msg, &room, &connections, &redis).await;
+
+                // Reset room state
+                room.game_started = false;
+                room.connected_players.clear();
+
+                if let Err(e) = update_game_state(room_id, GameState::Waiting, redis.clone()).await
+                {
+                    tracing::error!("Error updating game state to Waiting: {}", e);
+                }
+            }
+        }
+    });
+}
+
 fn start_turn_timer(
     player_id: Uuid,
     room_id: Uuid,
@@ -246,6 +390,23 @@ pub async fn handle_incoming_messages(
                             broadcast_to_player(player.id, &msg, connections, &redis).await
                         }
                         LexiWarsClientMessage::WordEntry { word } => {
+                            // Check if game has started before processing word entries
+                            {
+                                let rooms_guard = rooms.lock().await;
+                                if let Some(room) = rooms_guard.get(&room_id) {
+                                    if !room.game_started {
+                                        tracing::info!(
+                                            "Game not started yet, ignoring word entry from {}",
+                                            player.wallet_address
+                                        );
+                                        continue;
+                                    }
+                                } else {
+                                    tracing::error!("Room not found for word entry");
+                                    continue;
+                                }
+                            }
+
                             let cleaned_word = word.trim().to_lowercase();
                             let advance_turn: bool;
 

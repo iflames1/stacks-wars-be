@@ -44,6 +44,8 @@ pub struct GameRoom {
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
     pub pool: Option<RoomPool>,
+    pub connected_players: HashSet<Uuid>,
+    pub game_started: bool,
 }
 
 #[derive(Serialize)]
