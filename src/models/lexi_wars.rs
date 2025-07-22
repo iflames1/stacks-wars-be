@@ -30,4 +30,5 @@ pub enum LexiWarsServerMessage {
     Pong { ts: u64, pong: u64 },
     Start { time: u32, started: bool },
     StartFailed,
+    AlreadyStarted,
 }

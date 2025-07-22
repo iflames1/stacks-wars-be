@@ -19,27 +19,31 @@ pub fn generate_random_letter() -> char {
 }
 
 pub fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uuid> {
-    let players = &room.players;
+    // Use connected_players instead of all players
+    let connected_players = &room.connected_players;
 
-    players.iter().position(|p| p.id == current_id).map(|i| {
-        let next_index = (i + 1) % players.len();
-        let next_id = players[next_index].id;
-        let wrapped = next_index == 0;
+    connected_players
+        .iter()
+        .position(|p| p.id == current_id)
+        .map(|i| {
+            let next_index = (i + 1) % connected_players.len();
+            let next_id = connected_players[next_index].id;
+            let wrapped = next_index == 0;
 
-        if wrapped {
-            let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
+            if wrapped {
+                let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
 
-            // If we wrapped to first rule again, increase difficulty
-            if next_rule_index == 0 {
-                room.rule_context.min_word_length += 2;
+                // If we wrapped to first rule again, increase difficulty
+                if next_rule_index == 0 {
+                    room.rule_context.min_word_length += 2;
+                }
+
+                room.rule_index = next_rule_index;
+                room.rule_context.random_letter = generate_random_letter();
             }
 
-            room.rule_index = next_rule_index;
-            room.rule_context.random_letter = generate_random_letter();
-        }
-
-        next_id
-    })
+            next_id
+        })
 }
 
 pub async fn broadcast_to_player(
@@ -108,7 +112,12 @@ pub async fn broadcast_to_room(
 
     let connection_guard = connections.lock().await;
 
-    for player in room.players.iter().chain(room.eliminated_players.iter()) {
+    // Use connected_players instead of all players
+    for player in room
+        .connected_players
+        .iter()
+        .chain(room.eliminated_players.iter())
+    {
         if let Some(conn_info) = connection_guard.get(&player.id) {
             let mut sender = conn_info.sender.lock().await;
             if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {

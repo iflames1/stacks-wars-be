@@ -5,7 +5,10 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    db::{room::update_room_player_after_game, update_game_state},
+    db::{
+        room::{put::update_connected_players, update_room_player_after_game},
+        update_game_state,
+    },
     games::lexi_wars::{
         rules::get_rule_by_index,
         utils::{
@@ -21,18 +24,22 @@ use crate::{
 };
 use uuid::Uuid;
 
-fn get_prize(room: &mut GameRoom, position: usize) -> Option<f64> {
-    let prize = room.pool.as_ref().map(|pool| match position {
-        1 => {
-            if room.eliminated_players.len() == 2 {
-                (pool.current_amount * 70.0) / 100.0
-            } else {
-                (pool.current_amount * 50.0) / 100.0
+fn get_prize(room: &GameRoom, position: usize) -> Option<f64> {
+    let prize = room.pool.as_ref().map(|pool| {
+        // Use the fixed connected_players_count instead of current connected_players.len()
+        let total_pool = pool.entry_amount * room.connected_players_count as f64;
+        match position {
+            1 => {
+                if room.connected_players_count == 2 {
+                    (total_pool * 70.0) / 100.0
+                } else {
+                    (total_pool * 50.0) / 100.0
+                }
             }
+            2 => (total_pool * 30.0) / 100.0,
+            3 => (total_pool * 20.0) / 100.0,
+            _ => 0.0,
         }
-        2 => (pool.current_amount * 30.0) / 100.0,
-        3 => (pool.current_amount * 20.0) / 100.0,
-        _ => 0.0,
     });
 
     prize
@@ -63,17 +70,38 @@ pub fn start_auto_start_timer(
                     if connected_count == total_players {
                         tracing::info!("All players connected, starting game immediately");
 
+                        // Set current_turn_id to first connected player
+                        if let Some(first_connected) = room.connected_players.first() {
+                            room.current_turn_id = first_connected.id;
+                        }
+
+                        // Store the fixed count for prize calculation
+                        room.connected_players_count = room.connected_players.len();
+
+                        // Update connected players in Redis
+                        if let Err(e) = update_connected_players(
+                            room_id,
+                            room.connected_players.clone(),
+                            redis.clone(),
+                        )
+                        .await
+                        {
+                            tracing::error!("Failed to update connected players in Redis: {}", e);
+                        }
+
+                        room.game_started = true; // after update_connected_players
+
                         let start_msg = LexiWarsServerMessage::Start {
                             time: i,
                             started: true,
                         };
                         broadcast_to_room(&start_msg, &room, &connections, &redis).await;
 
-                        room.game_started = true;
-
                         // Start the first turn
-                        if let Some(current_player) =
-                            room.players.iter().find(|p| p.id == room.current_turn_id)
+                        if let Some(current_player) = room
+                            .connected_players
+                            .iter()
+                            .find(|p| p.id == room.current_turn_id)
                         {
                             let turn_msg = LexiWarsServerMessage::Turn {
                                 current_turn: current_player.clone(),
@@ -112,12 +140,12 @@ pub fn start_auto_start_timer(
             sleep(Duration::from_secs(1)).await;
         }
 
-        // Timer expired, check if we have at least 50% of players
+        // Timer expired, check if we have at least 50% of players and minimum 2 players
         let mut rooms_guard = rooms.lock().await;
         if let Some(room) = rooms_guard.get_mut(&room_id) {
             let connected_count = room.connected_players.len();
             let total_players = room.players.len();
-            let required_players = (total_players + 1) / 2; // At least 50% (rounded up)
+            let required_players = std::cmp::max(2, (total_players + 1) / 2); // At least 2 players and 50% (rounded up)
 
             tracing::info!(
                 "Auto-start timer expired: connected {}/{}, required: {}",
@@ -126,11 +154,29 @@ pub fn start_auto_start_timer(
                 required_players
             );
 
-            if connected_count >= required_players {
+            if connected_count >= required_players && connected_count > 1 {
                 tracing::info!(
                     "Sufficient players connected ({}%), starting game",
                     (connected_count * 100) / total_players
                 );
+
+                // Set current_turn_id to first connected player
+                if let Some(first_connected) = room.connected_players.first() {
+                    room.current_turn_id = first_connected.id;
+                }
+
+                // Store the fixed count for prize calculation
+                room.connected_players_count = room.connected_players.len();
+
+                // Update connected players in Redis
+                if let Err(e) =
+                    update_connected_players(room_id, room.connected_players.clone(), redis.clone())
+                        .await
+                {
+                    tracing::error!("Failed to update connected players in Redis: {}", e);
+                }
+
+                room.game_started = true; // after update_connected_players
 
                 let start_msg = LexiWarsServerMessage::Start {
                     time: 0,
@@ -138,11 +184,11 @@ pub fn start_auto_start_timer(
                 };
                 broadcast_to_room(&start_msg, &room, &connections, &redis).await;
 
-                room.game_started = true;
-
                 // Start the first turn
-                if let Some(current_player) =
-                    room.players.iter().find(|p| p.id == room.current_turn_id)
+                if let Some(current_player) = room
+                    .connected_players
+                    .iter()
+                    .find(|p| p.id == room.current_turn_id)
                 {
                     let turn_msg = LexiWarsServerMessage::Turn {
                         current_turn: current_player.clone(),
@@ -164,7 +210,9 @@ pub fn start_auto_start_timer(
                     );
                 }
             } else {
-                tracing::info!("Insufficient players connected, returning room to waiting state");
+                tracing::info!(
+                    "Insufficient players connected or less than 2 players, returning room to waiting state"
+                );
 
                 let start_failed_msg = LexiWarsServerMessage::StartFailed;
                 broadcast_to_room(&start_failed_msg, &room, &connections, &redis).await;
@@ -196,7 +244,7 @@ fn start_turn_timer(
                 let rooms_guard = rooms.lock().await;
                 if let Some(room) = rooms_guard.get(&room_id) {
                     if room.current_turn_id != player_id {
-                        let countdown_msg = LexiWarsServerMessage::Countdown { time: 10 };
+                        let countdown_msg = LexiWarsServerMessage::Countdown { time: 30 };
                         broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
 
                         tracing::info!("turn changed, stopping timer");
@@ -221,12 +269,15 @@ fn start_turn_timer(
 
                 let next_player_id = get_next_player_and_wrap(room, player_id);
 
-                // remove player from room and save position
-                if let Some(pos) = room.players.iter().position(|p| p.id == player_id) {
-                    let player = room.players.remove(pos);
+                if let Some(pos) = room
+                    .connected_players
+                    .iter()
+                    .position(|p| p.id == player_id)
+                {
+                    let player = room.connected_players.remove(pos);
                     room.eliminated_players.push(player.clone());
 
-                    let position = room.players.len() + 1;
+                    let position = room.connected_players.len() + 1;
 
                     let rank_msg = LexiWarsServerMessage::Rank {
                         rank: position.to_string(),
@@ -259,14 +310,14 @@ fn start_turn_timer(
                 }
 
                 // check game over
-                if room.players.len() == 1 {
+                if room.connected_players.len() == 1 {
                     // Check if game is already finished to prevent double execution
                     if room.info.state == GameState::Finished {
                         tracing::warn!("Game already finished for room {}", room_id);
                         return;
                     }
 
-                    let winner = room.players.remove(0);
+                    let winner = room.connected_players.remove(0);
 
                     let rank_msg = LexiWarsServerMessage::Rank {
                         rank: "1".to_string(),
@@ -329,16 +380,18 @@ fn start_turn_timer(
 
                     return;
                 }
-                if room.players.is_empty() {
+                if room.connected_players.is_empty() {
                     tracing::warn!("fix: room {} is now empty", room.info.id); // never really gets here
                     return;
                 }
 
-                //continue game if players > 1
+                //continue game if connected_players > 1
                 if let Some(next_id) = next_player_id {
                     room.current_turn_id = next_id;
 
-                    if let Some(current_player) = room.players.iter().find(|p| p.id == next_id) {
+                    if let Some(current_player) =
+                        room.connected_players.iter().find(|p| p.id == next_id)
+                    {
                         let next_turn_msg = LexiWarsServerMessage::Turn {
                             current_turn: current_player.clone(),
                         };
@@ -419,7 +472,7 @@ pub async fn handle_incoming_messages(
 
                                 // check turn
                                 if player.id != room.current_turn_id {
-                                    tracing::info!("Not {}'s turn", player.wallet_address); // broadcast turn to players
+                                    tracing::info!("Not {}'s turn", player.wallet_address);
                                     continue;
                                 }
 

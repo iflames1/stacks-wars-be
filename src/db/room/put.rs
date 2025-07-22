@@ -260,6 +260,7 @@ pub async fn leave_room(room_id: Uuid, user_id: Uuid, redis: RedisClient) -> Res
 
     Ok(())
 }
+
 // should only creator update state
 pub async fn update_game_state(
     room_id: Uuid,
@@ -552,6 +553,41 @@ pub async fn update_room_player_after_game(
             .await
             .map_err(|e| AppError::RedisCommandError(e.into()))?;
     }
+
+    Ok(())
+}
+
+pub async fn update_connected_players(
+    room_id: Uuid,
+    connected_players: Vec<Player>,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let room_key = format!("room:{}:info", room_id);
+    let room_json: String = redis::cmd("GET")
+        .arg(&room_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| AppError::NotFound("Room not found".into()))?;
+
+    let mut room: GameRoomInfo =
+        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    room.connected_players = connected_players;
+
+    let updated_json =
+        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let _: () = redis::cmd("SET")
+        .arg(room_key)
+        .arg(updated_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
     Ok(())
 }
