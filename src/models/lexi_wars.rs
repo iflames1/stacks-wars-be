@@ -32,3 +32,28 @@ pub enum LexiWarsServerMessage {
     StartFailed,
     AlreadyStarted,
 }
+
+impl LexiWarsServerMessage {
+    pub fn should_queue(&self) -> bool {
+        match self {
+            // Time-sensitive messages that should NOT be queued
+            LexiWarsServerMessage::Countdown { .. } => false,
+            LexiWarsServerMessage::Pong { .. } => false,
+            LexiWarsServerMessage::Start { started: false, .. } => false,
+
+            // Important messages that SHOULD be queued
+            LexiWarsServerMessage::Turn { .. } => true,
+            LexiWarsServerMessage::Rule { .. } => true,
+            LexiWarsServerMessage::Rank { .. } => true,
+            LexiWarsServerMessage::Validate { .. } => true,
+            LexiWarsServerMessage::WordEntry { .. } => true,
+            LexiWarsServerMessage::UsedWord { .. } => true,
+            LexiWarsServerMessage::GameOver => true,
+            LexiWarsServerMessage::FinalStanding { .. } => true,
+            LexiWarsServerMessage::Prize { .. } => true,
+            LexiWarsServerMessage::Start { started: true, .. } => true, // Game actually started
+            LexiWarsServerMessage::StartFailed => true,
+            LexiWarsServerMessage::AlreadyStarted => true,
+        }
+    }
+}
