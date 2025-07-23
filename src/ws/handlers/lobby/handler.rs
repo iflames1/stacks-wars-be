@@ -106,7 +106,7 @@ async fn handle_lobby_socket(
     store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
-        let join_msg = LobbyServerMessage::PlayerJoined { players };
+        let join_msg = LobbyServerMessage::PlayerUpdated { players };
         message_handler::broadcast_to_lobby(room_id, &join_msg, &connections, redis.clone()).await;
     }
 
@@ -123,7 +123,7 @@ async fn handle_lobby_socket(
     remove_connection(player.id, &connections).await;
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
-        let msg = LobbyServerMessage::PlayerLeft { players };
+        let msg = LobbyServerMessage::PlayerUpdated { players };
         message_handler::broadcast_to_lobby(room_id, &msg, &connections, redis).await;
     }
 }

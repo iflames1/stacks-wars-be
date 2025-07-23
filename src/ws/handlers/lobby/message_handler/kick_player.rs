@@ -62,7 +62,7 @@ pub async fn kick_player(
         tracing::error!("Failed to kick player: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
-        let msg = LobbyServerMessage::PlayerLeft { players };
+        let msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
 
         tracing::info!("Success kicking {} from {}", player.wallet_address, room_id);
