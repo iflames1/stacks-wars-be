@@ -40,10 +40,10 @@ impl LexiWarsServerMessage {
             LexiWarsServerMessage::Countdown { .. } => false,
             LexiWarsServerMessage::Pong { .. } => false,
             LexiWarsServerMessage::Start { started: false, .. } => false,
+            LexiWarsServerMessage::Turn { .. } => false,
+            LexiWarsServerMessage::Rule { .. } => false,
 
             // Important messages that SHOULD be queued
-            LexiWarsServerMessage::Turn { .. } => true,
-            LexiWarsServerMessage::Rule { .. } => true,
             LexiWarsServerMessage::Rank { .. } => true,
             LexiWarsServerMessage::Validate { .. } => true,
             LexiWarsServerMessage::WordEntry { .. } => true,

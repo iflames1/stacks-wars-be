@@ -97,6 +97,15 @@ pub fn start_auto_start_timer(
                         };
                         broadcast_to_room(&start_msg, &room, &connections, &redis).await;
 
+                        // Set the initial rule and broadcast it
+                        if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                            room.current_rule = Some(rule.description.clone());
+                            let rule_msg = LexiWarsServerMessage::Rule {
+                                rule: rule.description,
+                            };
+                            broadcast_to_room(&rule_msg, &room, &connections, &redis).await;
+                        }
+
                         // Start the first turn
                         if let Some(current_player) = room
                             .connected_players
@@ -183,6 +192,15 @@ pub fn start_auto_start_timer(
                     started: true,
                 };
                 broadcast_to_room(&start_msg, &room, &connections, &redis).await;
+
+                // Set the initial rule and broadcast it
+                if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                    room.current_rule = Some(rule.description.clone());
+                    let rule_msg = LexiWarsServerMessage::Rule {
+                        rule: rule.description,
+                    };
+                    broadcast_to_room(&rule_msg, &room, &connections, &redis).await;
+                }
 
                 // Start the first turn
                 if let Some(current_player) = room
@@ -496,6 +514,9 @@ pub async fn handle_incoming_messages(
                                 if let Some(rule) =
                                     get_rule_by_index(room.rule_index, &room.rule_context)
                                 {
+                                    // Update current rule
+                                    room.current_rule = Some(rule.description.clone());
+
                                     // untested check
                                     if rule.name != "min_length" {
                                         if cleaned_word.len() < room.rule_context.min_word_length {
@@ -569,6 +590,13 @@ pub async fn handle_incoming_messages(
                                 // store next player id
                                 if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
                                     room.current_turn_id = next_id;
+
+                                    // Update current rule for next turn
+                                    if let Some(rule) =
+                                        get_rule_by_index(room.rule_index, &room.rule_context)
+                                    {
+                                        room.current_rule = Some(rule.description.clone());
+                                    }
 
                                     if let Some(current_player) =
                                         room.players.iter().find(|p| p.id == next_id)
