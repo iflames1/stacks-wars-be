@@ -2,23 +2,24 @@ use axum::{
     extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade, ws::WebSocket},
     response::IntoResponse,
 };
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 
+use crate::ws::handlers::{
+    lobby::message_handler::handler::send_error_to_player,
+    utils::store_connection_and_send_queued_messages,
+};
 use crate::{
     db,
     models::{
-        game::{Player, PlayerState, WsQueryParams},
-        lobby::{JoinRequest, JoinState},
+        game::{GameState, Player, PlayerState, WsQueryParams},
+        lobby::{JoinRequest, JoinState, LobbyServerMessage},
     },
     state::{AppState, LobbyJoinRequests, RedisClient},
     ws::handlers::lobby::message_handler,
 };
-use crate::{
-    models::lobby::LobbyServerMessage,
-    ws::handlers::utils::store_connection_and_send_queued_messages,
-};
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
+use axum::extract::ws::{CloseFrame, Message};
 use uuid::Uuid;
 
 pub async fn lobby_ws_handler(
@@ -101,7 +102,65 @@ async fn handle_lobby_socket(
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
 ) {
-    let (sender, receiver) = socket.split();
+    let (mut sender, receiver) = socket.split();
+
+    // Check room state immediately upon connection
+    match db::room::get_room_info(room_id, redis.clone()).await {
+        Ok(room_info) => {
+            // Always broadcast the current game state
+            let ready_players = match db::room::get_ready_room_players(room_id, redis.clone()).await
+            {
+                Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
+                Err(e) => {
+                    tracing::error!("❌ Failed to get ready players: {}", e);
+                    send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                    vec![]
+                }
+            };
+            let game_state_msg = LobbyServerMessage::GameState {
+                state: room_info.state.clone(),
+                ready_players: Some(ready_players),
+            };
+
+            let serialized = match serde_json::to_string(&game_state_msg) {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::error!("Failed to serialize GameState message: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                tracing::error!("Failed to send game state to player {}: {}", player.id, e);
+                return;
+            }
+
+            // If game is in progress, close the connection immediately
+            if room_info.state == GameState::InProgress {
+                tracing::info!(
+                    "Player {} trying to connect to lobby while game is in progress - closing connection",
+                    player.wallet_address
+                );
+
+                let close_frame = CloseFrame {
+                    code: axum::extract::ws::close_code::NORMAL,
+                    reason: "Game already in progress".into(),
+                };
+
+                let _ = sender.send(Message::Close(Some(close_frame))).await;
+                return;
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to get room info for {}: {}", room_id, e);
+            let close_frame = CloseFrame {
+                code: axum::extract::ws::close_code::ABNORMAL,
+                reason: "Failed to get room information".into(),
+            };
+            let _ = sender.send(Message::Close(Some(close_frame))).await;
+            return;
+        }
+    }
 
     store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 

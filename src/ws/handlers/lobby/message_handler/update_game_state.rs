@@ -13,6 +13,8 @@ use crate::{
         utils::remove_connection,
     },
 };
+use axum::extract::ws::{CloseFrame, Message};
+use futures::SinkExt;
 use uuid::Uuid;
 
 pub async fn update_game_state(
@@ -95,6 +97,36 @@ pub async fn update_game_state(
     }
 }
 
+async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionInfoMap) {
+    let connections_guard = connections.lock().await;
+
+    let mut target_connections = Vec::new();
+    for &player_id in player_ids {
+        if let Some(connection_info) = connections_guard.get(&player_id) {
+            target_connections.push((player_id, connection_info.clone()));
+        }
+    }
+
+    drop(connections_guard);
+
+    for (player_id, connection_info) in target_connections {
+        {
+            let mut sender = connection_info.sender.lock().await;
+            tracing::info!(
+                "Closing lobby connection for player {} (game starting)",
+                player_id
+            );
+
+            let close_frame = CloseFrame {
+                code: axum::extract::ws::close_code::NORMAL,
+                reason: "Game starting - redirecting to game".into(),
+            };
+
+            let _ = sender.send(Message::Close(Some(close_frame))).await;
+        }
+    }
+}
+
 async fn start_countdown(
     room_id: Uuid,
     player: Player,
@@ -159,9 +191,16 @@ async fn start_countdown(
             broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
 
             if ready_players.len() > 1 {
-                for player in players {
+                // Get all player IDs from the room for disconnection
+                let all_player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
+
+                // Remove connections from state
+                for player in &players {
                     remove_connection(player.id, &connections).await;
                 }
+
+                // Close WebSocket connections with proper close frame
+                close_lobby_connections(&all_player_ids, &connections).await;
             }
         }
     }
