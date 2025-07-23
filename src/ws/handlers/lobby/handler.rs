@@ -5,10 +5,6 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 
-use crate::ws::handlers::{
-    lobby::message_handler::handler::send_error_to_player,
-    utils::store_connection_and_send_queued_messages,
-};
 use crate::{
     db,
     models::{
@@ -19,6 +15,13 @@ use crate::{
     ws::handlers::lobby::message_handler,
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
+use crate::{
+    state::LobbyCountdowns,
+    ws::handlers::{
+        lobby::message_handler::handler::send_error_to_player,
+        utils::store_connection_and_send_queued_messages,
+    },
+};
 use axum::extract::ws::{CloseFrame, Message};
 use uuid::Uuid;
 
@@ -35,6 +38,7 @@ pub async fn lobby_ws_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
     let join_requests = state.lobby_join_requests.clone();
+    let countdowns = state.lobby_countdowns.clone();
 
     let players = db::room::get_room_players(room_id, redis.clone())
         .await
@@ -49,6 +53,7 @@ pub async fn lobby_ws_handler(
                 connections,
                 redis,
                 join_requests,
+                countdowns,
             )
         }));
     }
@@ -90,6 +95,7 @@ pub async fn lobby_ws_handler(
             connections,
             redis,
             join_requests,
+            countdowns,
         )
     }))
 }
@@ -101,12 +107,22 @@ async fn handle_lobby_socket(
     connections: ConnectionInfoMap,
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
+    countdowns: LobbyCountdowns,
 ) {
     let (mut sender, receiver) = socket.split();
 
     // Check room state immediately upon connection
     match db::room::get_room_info(room_id, redis.clone()).await {
         Ok(room_info) => {
+            // Check if there's an active countdown
+            let countdown_time = {
+                let countdowns_guard = countdowns.lock().await;
+                countdowns_guard
+                    .get(&room_id)
+                    .map(|state| state.current_time)
+                    .unwrap_or(15)
+            };
+
             // Always broadcast the current game state
             let ready_players = match db::room::get_ready_room_players(room_id, redis.clone()).await
             {
@@ -135,10 +151,26 @@ async fn handle_lobby_socket(
                 return;
             }
 
-            // If game is in progress, close the connection immediately
-            if room_info.state == GameState::InProgress {
+            let countdown_msg = LobbyServerMessage::Countdown {
+                time: countdown_time,
+            };
+            let serialized = match serde_json::to_string(&countdown_msg) {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::error!("Failed to serialize Countdown message: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                tracing::error!("Failed to send countdown to player {}: {}", player.id, e);
+                return;
+            }
+
+            // If game is in progress and countdown is 0, close the connection immediately
+            if room_info.state == GameState::InProgress && countdown_time == 0 {
                 tracing::info!(
-                    "Player {} trying to connect to lobby while game is in progress - closing connection",
+                    "Player {} trying to connect to lobby while game is in progress (countdown finished) - closing connection",
                     player.wallet_address
                 );
 
@@ -176,6 +208,7 @@ async fn handle_lobby_socket(
         &connections,
         redis.clone(),
         join_requests,
+        countdowns,
     )
     .await;
 

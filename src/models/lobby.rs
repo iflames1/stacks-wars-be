@@ -89,7 +89,7 @@ pub enum LobbyServerMessage {
     },
     NotifyKicked,
     Countdown {
-        time: u64,
+        time: u32,
     },
     GameState {
         state: GameState,

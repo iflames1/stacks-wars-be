@@ -14,6 +14,7 @@ pub struct AppState {
     pub redis: RedisClient,
     pub lobby_join_requests: LobbyJoinRequests,
     pub bot: Bot,
+    pub lobby_countdowns: LobbyCountdowns,
 }
 
 use crate::models::{game::GameRoom, lobby::JoinRequest};
@@ -23,6 +24,17 @@ pub struct ConnectionInfo {
     pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CountdownState {
+    pub current_time: u32,
+}
+
+impl Default for CountdownState {
+    fn default() -> Self {
+        Self { current_time: 15 }
+    }
+}
+
 pub type SharedRooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
@@ -30,3 +42,5 @@ pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 pub type RedisClient = Pool<RedisConnectionManager>;
 
 pub type LobbyJoinRequests = Arc<Mutex<HashMap<Uuid, Vec<JoinRequest>>>>;
+
+pub type LobbyCountdowns = Arc<Mutex<HashMap<Uuid, CountdownState>>>;

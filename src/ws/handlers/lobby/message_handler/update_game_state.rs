@@ -4,7 +4,7 @@ use crate::{
         game::{GameState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
-    state::{ConnectionInfoMap, RedisClient},
+    state::{ConnectionInfoMap, CountdownState, LobbyCountdowns, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             broadcast_to_lobby,
@@ -23,6 +23,7 @@ pub async fn update_game_state(
     player: &Player,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
+    countdowns: &LobbyCountdowns,
 ) {
     let room_info = match db::room::get_room_info(room_id, redis.clone()).await {
         Ok(info) => info,
@@ -75,9 +76,17 @@ pub async fn update_game_state(
 
             let redis_clone = redis.clone();
             let conns_clone = connections.clone();
+            let countdowns_clone = countdowns.clone();
             let player_clone = player.clone();
             tokio::spawn(async move {
-                start_countdown(room_id, player_clone, redis_clone, conns_clone).await;
+                start_countdown(
+                    room_id,
+                    player_clone,
+                    redis_clone,
+                    conns_clone,
+                    countdowns_clone,
+                )
+                .await;
             });
 
             if let Ok(info) = db::room::get_room_info(room_id, redis.clone()).await {
@@ -92,6 +101,12 @@ pub async fn update_game_state(
                         "Game state was reverted before start, skipping GameState message"
                     );
                 }
+            }
+        } else {
+            // If game state is not InProgress, clear any existing countdown
+            {
+                let mut countdowns_guard = countdowns.lock().await;
+                countdowns_guard.remove(&room_id);
             }
         }
     }
@@ -132,12 +147,33 @@ async fn start_countdown(
     player: Player,
     redis: RedisClient,
     connections: ConnectionInfoMap,
+    countdowns: LobbyCountdowns,
 ) {
+    // Initialize countdown state
+    {
+        let mut countdowns_guard = countdowns.lock().await;
+        countdowns_guard.insert(room_id, CountdownState { current_time: 15 });
+    }
+
     for i in (0..=15).rev() {
+        // Update countdown state
+        {
+            let mut countdowns_guard = countdowns.lock().await;
+            if let Some(countdown_state) = countdowns_guard.get_mut(&room_id) {
+                countdown_state.current_time = i;
+            }
+        }
+
         match db::room::get_room_info(room_id, redis.clone()).await {
             Ok(info) => {
                 if info.state != GameState::InProgress {
                     tracing::info!("Countdown interrupted by state change");
+
+                    // Clear countdown state
+                    {
+                        let mut countdowns_guard = countdowns.lock().await;
+                        countdowns_guard.remove(&room_id);
+                    }
 
                     let msg = LobbyServerMessage::GameState {
                         state: info.state,
@@ -151,6 +187,12 @@ async fn start_countdown(
             Err(e) => {
                 tracing::error!("Failed to check state: {}", e);
                 send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+
+                // Clear countdown state on error
+                {
+                    let mut countdowns_guard = countdowns.lock().await;
+                    countdowns_guard.remove(&room_id);
+                }
                 break;
             }
         }
@@ -189,6 +231,12 @@ async fn start_countdown(
                 ready_players: Some(ready_players.clone()),
             };
             broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+
+            // Clear countdown state since game has officially started
+            {
+                let mut countdowns_guard = countdowns.lock().await;
+                countdowns_guard.remove(&room_id);
+            }
 
             if ready_players.len() > 1 {
                 // Get all player IDs from the room for disconnection

@@ -11,7 +11,7 @@ use crate::{
         game::Player,
         lobby::{JoinRequest, JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
     },
-    state::{ConnectionInfoMap, LobbyJoinRequests, RedisClient},
+    state::{ConnectionInfoMap, LobbyCountdowns, LobbyJoinRequests, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             join_lobby::join_lobby, kick_player, leave_room, permit_join, ping, request_join,
@@ -247,6 +247,7 @@ pub async fn handle_incoming_messages(
     connections: &ConnectionInfoMap,
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
+    countdowns: LobbyCountdowns,
 ) {
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
@@ -308,8 +309,15 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::UpdateGameState { new_state } => {
-                                update_game_state(new_state, room_id, player, connections, &redis)
-                                    .await
+                                update_game_state(
+                                    new_state,
+                                    room_id,
+                                    player,
+                                    connections,
+                                    &redis,
+                                    &countdowns,
+                                )
+                                .await
                             }
                         }
                     }
