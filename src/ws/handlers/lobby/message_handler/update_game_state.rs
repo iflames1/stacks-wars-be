@@ -4,7 +4,7 @@ use crate::{
         game::{GameState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
-    state::{ConnectionInfoMap, RedisClient},
+    state::{ConnectionInfoMap, CountdownState, LobbyCountdowns, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             broadcast_to_lobby,
@@ -13,6 +13,8 @@ use crate::{
         utils::remove_connection,
     },
 };
+use axum::extract::ws::{CloseFrame, Message};
+use futures::SinkExt;
 use uuid::Uuid;
 
 pub async fn update_game_state(
@@ -21,6 +23,7 @@ pub async fn update_game_state(
     player: &Player,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
+    countdowns: &LobbyCountdowns,
 ) {
     let room_info = match db::room::get_room_info(room_id, redis.clone()).await {
         Ok(info) => info,
@@ -73,9 +76,17 @@ pub async fn update_game_state(
 
             let redis_clone = redis.clone();
             let conns_clone = connections.clone();
+            let countdowns_clone = countdowns.clone();
             let player_clone = player.clone();
             tokio::spawn(async move {
-                start_countdown(room_id, player_clone, redis_clone, conns_clone).await;
+                start_countdown(
+                    room_id,
+                    player_clone,
+                    redis_clone,
+                    conns_clone,
+                    countdowns_clone,
+                )
+                .await;
             });
 
             if let Ok(info) = db::room::get_room_info(room_id, redis.clone()).await {
@@ -91,6 +102,42 @@ pub async fn update_game_state(
                     );
                 }
             }
+        } else {
+            // If game state is not InProgress, clear any existing countdown
+            {
+                let mut countdowns_guard = countdowns.lock().await;
+                countdowns_guard.remove(&room_id);
+            }
+        }
+    }
+}
+
+async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionInfoMap) {
+    let connections_guard = connections.lock().await;
+
+    let mut target_connections = Vec::new();
+    for &player_id in player_ids {
+        if let Some(connection_info) = connections_guard.get(&player_id) {
+            target_connections.push((player_id, connection_info.clone()));
+        }
+    }
+
+    drop(connections_guard);
+
+    for (player_id, connection_info) in target_connections {
+        {
+            let mut sender = connection_info.sender.lock().await;
+            tracing::info!(
+                "Closing lobby connection for player {} (game starting)",
+                player_id
+            );
+
+            let close_frame = CloseFrame {
+                code: axum::extract::ws::close_code::NORMAL,
+                reason: "Game starting - redirecting to game".into(),
+            };
+
+            let _ = sender.send(Message::Close(Some(close_frame))).await;
         }
     }
 }
@@ -100,12 +147,33 @@ async fn start_countdown(
     player: Player,
     redis: RedisClient,
     connections: ConnectionInfoMap,
+    countdowns: LobbyCountdowns,
 ) {
+    // Initialize countdown state
+    {
+        let mut countdowns_guard = countdowns.lock().await;
+        countdowns_guard.insert(room_id, CountdownState { current_time: 15 });
+    }
+
     for i in (0..=15).rev() {
+        // Update countdown state
+        {
+            let mut countdowns_guard = countdowns.lock().await;
+            if let Some(countdown_state) = countdowns_guard.get_mut(&room_id) {
+                countdown_state.current_time = i;
+            }
+        }
+
         match db::room::get_room_info(room_id, redis.clone()).await {
             Ok(info) => {
                 if info.state != GameState::InProgress {
                     tracing::info!("Countdown interrupted by state change");
+
+                    // Clear countdown state
+                    {
+                        let mut countdowns_guard = countdowns.lock().await;
+                        countdowns_guard.remove(&room_id);
+                    }
 
                     let msg = LobbyServerMessage::GameState {
                         state: info.state,
@@ -119,6 +187,12 @@ async fn start_countdown(
             Err(e) => {
                 tracing::error!("Failed to check state: {}", e);
                 send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+
+                // Clear countdown state on error
+                {
+                    let mut countdowns_guard = countdowns.lock().await;
+                    countdowns_guard.remove(&room_id);
+                }
                 break;
             }
         }
@@ -158,10 +232,23 @@ async fn start_countdown(
             };
             broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
 
+            // Clear countdown state since game has officially started
+            {
+                let mut countdowns_guard = countdowns.lock().await;
+                countdowns_guard.remove(&room_id);
+            }
+
             if ready_players.len() > 1 {
-                for player in players {
+                // Get all player IDs from the room for disconnection
+                let all_player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
+
+                // Remove connections from state
+                for player in &players {
                     remove_connection(player.id, &connections).await;
                 }
+
+                // Close WebSocket connections with proper close frame
+                close_lobby_connections(&all_player_ids, &connections).await;
             }
         }
     }

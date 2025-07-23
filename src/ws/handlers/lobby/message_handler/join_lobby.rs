@@ -32,7 +32,7 @@ pub async fn join_lobby(
                     player.wallet_address,
                     room_id
                 );
-                let msg = LobbyServerMessage::PlayerJoined { players };
+                let msg = LobbyServerMessage::PlayerUpdated { players };
                 broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
             }
         } else {

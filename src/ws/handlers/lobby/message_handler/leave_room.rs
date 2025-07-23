@@ -20,7 +20,7 @@ pub async fn leave_room(
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         tracing::info!("Player {} left room {}", player.wallet_address, room_id);
-        let msg = LobbyServerMessage::PlayerLeft { players };
+        let msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
     }
     remove_connection(player.id, &connections).await;

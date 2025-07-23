@@ -360,6 +360,7 @@ pub async fn update_claim_state(
 ) -> Result<(), AppError> {
     let key = format!("room:{}:players", room_id);
     let pool_key = format!("room:{}:pool", room_id);
+    let room_key = format!("room:{}:info", room_id);
 
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
@@ -419,7 +420,7 @@ pub async fn update_claim_state(
         }
     }
 
-    player.claim = Some(claim_state);
+    player.claim = Some(claim_state.clone());
 
     // Replace player set
     let _: () = redis::cmd("DEL")
@@ -439,6 +440,35 @@ pub async fn update_claim_state(
             .await
             .map_err(|e| AppError::RedisCommandError(e.into()))?;
     }
+
+    // Update connected_players in room info if the player is in connected_players
+    let room_json: String = redis::cmd("GET")
+        .arg(&room_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| AppError::NotFound("Room not found".into()))?;
+
+    let mut room: GameRoomInfo =
+        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    // Update the player in connected_players if they exist there
+    if let Some(connected_player) = room
+        .connected_players
+        .iter_mut()
+        .find(|p| p.id == player_id)
+    {
+        connected_player.claim = Some(claim_state);
+    }
+
+    let updated_room_json =
+        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let _: () = redis::cmd("SET")
+        .arg(room_key)
+        .arg(updated_room_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
     Ok(())
 }
@@ -505,6 +535,7 @@ pub async fn update_room_player_after_game(
     redis: RedisClient,
 ) -> Result<(), AppError> {
     let players_key = format!("room:{}:players", room_id);
+    let room_key = format!("room:{}:info", room_id);
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -525,6 +556,8 @@ pub async fn update_room_player_after_game(
     let Some(player) = players.iter_mut().find(|p| p.id == player_id) else {
         return Err(AppError::BadRequest("Player not found".into()));
     };
+
+    // Update player data
     if let Some(prize) = prize {
         player.prize = Some(prize);
         player.claim = Some(ClaimState::NotClaimed);
@@ -533,7 +566,7 @@ pub async fn update_room_player_after_game(
         player.claim = None;
     }
     player.rank = Some(rank);
-    player.used_words = used_words;
+    player.used_words = used_words.clone();
 
     // Replace entire player set
     let _: () = redis::cmd("DEL")
@@ -553,6 +586,43 @@ pub async fn update_room_player_after_game(
             .await
             .map_err(|e| AppError::RedisCommandError(e.into()))?;
     }
+
+    // Update connected_players in room info if the player is in connected_players
+    let room_json: String = redis::cmd("GET")
+        .arg(&room_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|_| AppError::NotFound("Room not found".into()))?;
+
+    let mut room: GameRoomInfo =
+        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    // Update the player in connected_players if they exist there
+    if let Some(connected_player) = room
+        .connected_players
+        .iter_mut()
+        .find(|p| p.id == player_id)
+    {
+        if let Some(prize) = prize {
+            connected_player.prize = Some(prize);
+            connected_player.claim = Some(ClaimState::NotClaimed);
+        } else {
+            connected_player.prize = None;
+            connected_player.claim = None;
+        }
+        connected_player.rank = Some(rank);
+        connected_player.used_words = used_words;
+    }
+
+    let updated_room_json =
+        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let _: () = redis::cmd("SET")
+        .arg(room_key)
+        .arg(updated_room_json)
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
     Ok(())
 }

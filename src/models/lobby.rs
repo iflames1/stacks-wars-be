@@ -79,12 +79,6 @@ pub struct PendingJoin {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LobbyServerMessage {
-    PlayerJoined {
-        players: Vec<Player>,
-    },
-    PlayerLeft {
-        players: Vec<Player>,
-    },
     PlayerUpdated {
         players: Vec<Player>,
     },
@@ -95,7 +89,7 @@ pub enum LobbyServerMessage {
     },
     NotifyKicked,
     Countdown {
-        time: u64,
+        time: u32,
     },
     GameState {
         state: GameState,
@@ -133,8 +127,6 @@ impl LobbyServerMessage {
             LobbyServerMessage::Allowed { .. } => true,
             LobbyServerMessage::GameState { .. } => true,
             LobbyServerMessage::PlayersNotReady { .. } => true,
-            LobbyServerMessage::PlayerJoined { .. } => true,
-            LobbyServerMessage::PlayerLeft { .. } => true,
             LobbyServerMessage::PlayerKicked { .. } => true,
             LobbyServerMessage::Rejected { .. } => true,
             LobbyServerMessage::PendingPlayers { .. } => true,

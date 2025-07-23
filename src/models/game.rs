@@ -47,6 +47,7 @@ pub struct GameRoom {
     pub connected_players: Vec<Player>,
     pub connected_players_count: usize,
     pub game_started: bool,
+    pub current_rule: Option<String>,
 }
 
 #[derive(Serialize)]

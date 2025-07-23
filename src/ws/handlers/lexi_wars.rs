@@ -11,13 +11,16 @@ use std::{
 
 use crate::{
     db,
-    games::lexi_wars::{engine::start_auto_start_timer, utils::generate_random_letter},
+    games::lexi_wars::{
+        engine::start_auto_start_timer,
+        utils::{broadcast_to_player, generate_random_letter},
+    },
     models::{
         game::{
-            GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, RoomPool,
+            ClaimState, GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, RoomPool,
             WsQueryParams,
         },
-        lexi_wars::LexiWarsServerMessage,
+        lexi_wars::{LexiWarsServerMessage, PlayerStanding},
         word_loader::WORD_LIST,
     },
     state::{AppState, RedisClient},
@@ -63,6 +66,7 @@ async fn setup_player_and_room(
             connected_players: room_info.connected_players.clone(),
             connected_players_count: room_info.connected_players.len(),
             game_started: false,
+            current_rule: None,
         }
     });
 
@@ -134,6 +138,116 @@ pub async fn lexi_wars_handler(
         .await
         .map_err(|e| e.to_response())?;
 
+    // Check room state
+    if room.state != GameState::InProgress {
+        if room.state == GameState::Finished {
+            tracing::info!("Player {} trying to connect to finished game", player_id);
+
+            // Send game over info and close connection
+            return Ok(ws.on_upgrade(move |mut socket| async move {
+                // Send GameOver message first
+                let game_over_msg = LexiWarsServerMessage::GameOver;
+                let serialized = serde_json::to_string(&game_over_msg).unwrap();
+                let _ = socket
+                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                    .await;
+
+                // Get room data for final standing
+                if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+                    // Create final standing from players (they should have ranks)
+                    let mut players_with_ranks: Vec<_> =
+                        players.into_iter().filter(|p| p.rank.is_some()).collect();
+
+                    // Sort by rank (1st place first)
+                    players_with_ranks.sort_by_key(|p| p.rank.unwrap());
+
+                    let standing: Vec<PlayerStanding> = players_with_ranks
+                        .clone()
+                        .into_iter()
+                        .map(|player| PlayerStanding {
+                            rank: player.rank.unwrap(),
+                            player,
+                        })
+                        .collect();
+
+                    let final_standing_msg = LexiWarsServerMessage::FinalStanding { standing };
+                    let serialized = serde_json::to_string(&final_standing_msg).unwrap();
+                    let _ = socket
+                        .send(axum::extract::ws::Message::Text(serialized.into()))
+                        .await;
+
+                    // Send prize message if player has one AND hasn't claimed it yet
+                    if let Some(connecting_player) =
+                        players_with_ranks.iter().find(|p| p.id == player_id)
+                    {
+                        if let Some(prize_amount) = connecting_player.prize {
+                            // Check if player has not claimed the prize
+                            let should_send_prize = match &connecting_player.claim {
+                                Some(ClaimState::NotClaimed) => true,
+                                None => false,
+                                Some(ClaimState::Claimed { .. }) => false,
+                            };
+
+                            if should_send_prize {
+                                let prize_msg = LexiWarsServerMessage::Prize {
+                                    amount: prize_amount,
+                                };
+                                let serialized = serde_json::to_string(&prize_msg).unwrap();
+                                let _ = socket
+                                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                                    .await;
+                            } else {
+                                let prize_msg = LexiWarsServerMessage::Prize { amount: 0.0 };
+                                let serialized = serde_json::to_string(&prize_msg).unwrap();
+                                let _ = socket
+                                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                                    .await;
+                            }
+                        }
+                    }
+                }
+
+                let _ = socket.close().await;
+            }));
+        } else {
+            tracing::error!("Room {} is still in waiting", room_id);
+            return Err(AppError::BadRequest("Room is still in waiting".into()).to_response());
+        }
+    }
+
+    let players = db::room::get_room_players(room_id, redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
+    let players_clone = players.clone();
+
+    let matched_player = players
+        .into_iter()
+        .find(|p| p.id == player_id && p.state == PlayerState::Ready)
+        .ok_or_else(|| {
+            AppError::Unauthorized("Player not found or not ready in room".into()).to_response()
+        })?;
+
+    tracing::info!(
+        "Player {} allowed to join room {}",
+        matched_player.wallet_address,
+        room_id
+    );
+
+    let pool = if let Some(ref addr) = room.contract_address {
+        if !addr.is_empty() {
+            Some(
+                db::room::get_room_pool(room_id, redis.clone())
+                    .await
+                    .map_err(|e| e.to_response())?,
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let is_game_started = {
         let rooms_guard = rooms.lock().await;
         if let Some(game_room) = rooms_guard.get(&room_id) {
@@ -143,10 +257,6 @@ pub async fn lexi_wars_handler(
         }
     };
 
-    if room.state != GameState::InProgress {
-        tracing::error!("Room {} is not in progress", room_id);
-        return Err(AppError::BadRequest("Game not in progress".into()).to_response());
-    }
     if is_game_started {
         let is_reconnecting = room.connected_players.iter().any(|p| p.id == player_id);
 
@@ -170,40 +280,6 @@ pub async fn lexi_wars_handler(
         tracing::info!("Player {} reconnecting to started game", player_id);
     }
 
-    let pool = if let Some(ref addr) = room.contract_address {
-        if !addr.is_empty() {
-            Some(
-                db::room::get_room_pool(room_id, redis.clone())
-                    .await
-                    .map_err(|e| e.to_response())?,
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let players = db::room::get_room_players(room_id, redis.clone())
-        .await
-        .map_err(|e| e.to_response())?;
-
-    // TODO: avoid cloning all players
-    let players_clone = players.clone();
-
-    let matched_player = players
-        .into_iter()
-        .find(|p| p.id == player_id && p.state == PlayerState::Ready)
-        .ok_or_else(|| {
-            AppError::Unauthorized("Player not found or not ready in room".into()).to_response()
-        })?;
-
-    tracing::info!(
-        "Player {} allowed to join room {}",
-        matched_player.wallet_address,
-        room_id
-    );
-
     Ok(ws.on_upgrade(move |socket| {
         let room_info = room.clone();
         handle_lexi_wars_socket(
@@ -216,6 +292,7 @@ pub async fn lexi_wars_handler(
             connections,
             room_info,
             redis,
+            is_game_started,
         )
     }))
 }
@@ -230,6 +307,7 @@ async fn handle_lexi_wars_socket(
     connections: ConnectionInfoMap,
     room_info: GameRoomInfo,
     redis: RedisClient,
+    is_reconnecting_to_started_game: bool,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -246,6 +324,34 @@ async fn handle_lexi_wars_socket(
     )
     .await;
 
+    // Send reconnection state if joining an already started game
+    if is_reconnecting_to_started_game {
+        let rooms_guard = rooms.lock().await;
+        if let Some(room) = rooms_guard.get(&room_id) {
+            // Send current turn
+            if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id)
+            {
+                let turn_msg = LexiWarsServerMessage::Turn {
+                    current_turn: current_player.clone(),
+                };
+                broadcast_to_player(player.id, &turn_msg, &connections, &redis).await;
+            }
+
+            // Send current rule
+            if let Some(current_rule) = &room.current_rule {
+                let rule_msg = LexiWarsServerMessage::Rule {
+                    rule: current_rule.clone(),
+                };
+                broadcast_to_player(player.id, &rule_msg, &connections, &redis).await;
+            }
+
+            tracing::info!(
+                "Sent reconnection state to player {}",
+                player.wallet_address
+            );
+        }
+    }
+
     lexi_wars::engine::handle_incoming_messages(
         &player,
         room_id,
@@ -256,7 +362,7 @@ async fn handle_lexi_wars_socket(
     )
     .await;
 
-    // Remove player from connected_players when they disconnect, but only if game hasn't started
+    // Handle player disconnection
     {
         let mut rooms_guard = rooms.lock().await;
         if let Some(room) = rooms_guard.get_mut(&room_id) {
@@ -275,21 +381,21 @@ async fn handle_lexi_wars_socket(
                         room.connected_players.len(),
                         room.players.len()
                     );
+
+                    // If the disconnected player was the current turn, assign to next connected player
+                    if room.current_turn_id == player.id && !room.connected_players.is_empty() {
+                        room.current_turn_id = room.connected_players[0].id;
+                        tracing::info!(
+                            "Reassigned current turn to player {}",
+                            room.current_turn_id
+                        );
+                    }
                 } else {
                     tracing::info!(
                         "Player {} disconnected from room {} (during game). Keeping in connected_players for game continuity.",
                         player.wallet_address,
                         room_id
                     );
-                }
-
-                // If the disconnected player was the current turn, assign to next connected player
-                if room.current_turn_id == player.id
-                    && !room.connected_players.is_empty()
-                    && !room.game_started
-                {
-                    room.current_turn_id = room.connected_players[0].id;
-                    tracing::info!("Reassigned current turn to player {}", room.current_turn_id);
                 }
             }
         }

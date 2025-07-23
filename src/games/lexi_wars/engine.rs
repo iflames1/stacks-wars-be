@@ -13,7 +13,7 @@ use crate::{
         rules::get_rule_by_index,
         utils::{
             broadcast_to_player, broadcast_to_room, broadcast_word_entry_from_player,
-            get_next_player_and_wrap,
+            close_connections_for_players, get_next_player_and_wrap,
         },
     },
     models::{
@@ -96,6 +96,15 @@ pub fn start_auto_start_timer(
                             started: true,
                         };
                         broadcast_to_room(&start_msg, &room, &connections, &redis).await;
+
+                        // Set the initial rule and broadcast it
+                        if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                            room.current_rule = Some(rule.description.clone());
+                            let rule_msg = LexiWarsServerMessage::Rule {
+                                rule: rule.description,
+                            };
+                            broadcast_to_room(&rule_msg, &room, &connections, &redis).await;
+                        }
 
                         // Start the first turn
                         if let Some(current_player) = room
@@ -183,6 +192,15 @@ pub fn start_auto_start_timer(
                     started: true,
                 };
                 broadcast_to_room(&start_msg, &room, &connections, &redis).await;
+
+                // Set the initial rule and broadcast it
+                if let Some(rule) = get_rule_by_index(room.rule_index, &room.rule_context) {
+                    room.current_rule = Some(rule.description.clone());
+                    let rule_msg = LexiWarsServerMessage::Rule {
+                        rule: rule.description,
+                    };
+                    broadcast_to_room(&rule_msg, &room, &connections, &redis).await;
+                }
 
                 // Start the first turn
                 if let Some(current_player) = room
@@ -302,10 +320,8 @@ fn start_turn_timer(
                     }
 
                     if let Some(amount) = prize {
-                        if amount > 0.0 {
-                            let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
-                        }
+                        let prize_msg = LexiWarsServerMessage::Prize { amount };
+                        broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
                     }
                 }
 
@@ -342,10 +358,8 @@ fn start_turn_timer(
                     }
 
                     if let Some(amount) = prize {
-                        if amount > 0.0 {
-                            let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(winner.id, &prize_msg, &connections, &redis).await;
-                        }
+                        let prize_msg = LexiWarsServerMessage::Prize { amount };
+                        broadcast_to_player(winner.id, &prize_msg, &connections, &redis).await;
                     }
 
                     // Move winner to eliminated_players
@@ -377,6 +391,16 @@ fn start_turn_timer(
                     {
                         tracing::error!("Error updating game state in Redis: {}", e);
                     }
+
+                    // Close all player connections since the game has ended
+                    let all_player_ids: Vec<Uuid> =
+                        room.eliminated_players.iter().map(|p| p.id).collect();
+                    tracing::info!(
+                        "Game finished for room {}, closing {} connections",
+                        room_id,
+                        all_player_ids.len()
+                    );
+                    close_connections_for_players(&all_player_ids, &connections).await;
 
                     return;
                 }
@@ -496,6 +520,9 @@ pub async fn handle_incoming_messages(
                                 if let Some(rule) =
                                     get_rule_by_index(room.rule_index, &room.rule_context)
                                 {
+                                    // Update current rule
+                                    room.current_rule = Some(rule.description.clone());
+
                                     // untested check
                                     if rule.name != "min_length" {
                                         if cleaned_word.len() < room.rule_context.min_word_length {
@@ -569,6 +596,13 @@ pub async fn handle_incoming_messages(
                                 // store next player id
                                 if let Some(next_id) = get_next_player_and_wrap(room, player.id) {
                                     room.current_turn_id = next_id;
+
+                                    // Update current rule for next turn
+                                    if let Some(rule) =
+                                        get_rule_by_index(room.rule_index, &room.rule_context)
+                                    {
+                                        room.current_rule = Some(rule.description.clone());
+                                    }
 
                                     if let Some(current_player) =
                                         room.players.iter().find(|p| p.id == next_id)
