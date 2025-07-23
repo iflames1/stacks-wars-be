@@ -181,23 +181,27 @@ pub async fn lexi_wars_handler(
                         players_with_ranks.iter().find(|p| p.id == player_id)
                     {
                         if let Some(prize_amount) = connecting_player.prize {
-                            if prize_amount > 0.0 {
-                                // Check if player has not claimed the prize
-                                let should_send_prize = match &connecting_player.claim {
-                                    Some(ClaimState::NotClaimed) => true,
-                                    None => false,
-                                    Some(ClaimState::Claimed { .. }) => false,
-                                };
+                            // Check if player has not claimed the prize
+                            let should_send_prize = match &connecting_player.claim {
+                                Some(ClaimState::NotClaimed) => true,
+                                None => false,
+                                Some(ClaimState::Claimed { .. }) => false,
+                            };
 
-                                if should_send_prize {
-                                    let prize_msg = LexiWarsServerMessage::Prize {
-                                        amount: prize_amount,
-                                    };
-                                    let serialized = serde_json::to_string(&prize_msg).unwrap();
-                                    let _ = socket
-                                        .send(axum::extract::ws::Message::Text(serialized.into()))
-                                        .await;
-                                }
+                            if should_send_prize {
+                                let prize_msg = LexiWarsServerMessage::Prize {
+                                    amount: prize_amount,
+                                };
+                                let serialized = serde_json::to_string(&prize_msg).unwrap();
+                                let _ = socket
+                                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                                    .await;
+                            } else {
+                                let prize_msg = LexiWarsServerMessage::Prize { amount: 0.0 };
+                                let serialized = serde_json::to_string(&prize_msg).unwrap();
+                                let _ = socket
+                                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                                    .await;
                             }
                         }
                     }

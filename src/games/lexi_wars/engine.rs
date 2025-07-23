@@ -320,10 +320,8 @@ fn start_turn_timer(
                     }
 
                     if let Some(amount) = prize {
-                        if amount > 0.0 {
-                            let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
-                        }
+                        let prize_msg = LexiWarsServerMessage::Prize { amount };
+                        broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
                     }
                 }
 
@@ -360,10 +358,8 @@ fn start_turn_timer(
                     }
 
                     if let Some(amount) = prize {
-                        if amount > 0.0 {
-                            let prize_msg = LexiWarsServerMessage::Prize { amount };
-                            broadcast_to_player(winner.id, &prize_msg, &connections, &redis).await;
-                        }
+                        let prize_msg = LexiWarsServerMessage::Prize { amount };
+                        broadcast_to_player(winner.id, &prize_msg, &connections, &redis).await;
                     }
 
                     // Move winner to eliminated_players
