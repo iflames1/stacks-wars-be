@@ -1,4 +1,4 @@
-use axum::extract::ws::Message;
+use axum::extract::ws::{CloseFrame, Message};
 use futures::SinkExt;
 use rand::{Rng, rng};
 
@@ -169,4 +169,34 @@ pub async fn broadcast_word_entry_from_player(
     };
 
     broadcast_to_room(&message, room, connections, redis).await;
+}
+
+pub async fn close_connections_for_players(player_ids: &[Uuid], connections: &ConnectionInfoMap) {
+    let connections_guard = connections.lock().await;
+
+    let mut target_connections = Vec::new();
+    for &player_id in player_ids {
+        if let Some(connection_info) = connections_guard.get(&player_id) {
+            target_connections.push((player_id, connection_info.clone()));
+        }
+    }
+
+    drop(connections_guard);
+
+    for (player_id, connection_info) in target_connections {
+        {
+            let mut sender = connection_info.sender.lock().await;
+            tracing::info!(
+                "Closing connection for player {} (game finished)",
+                player_id
+            );
+
+            let close_frame = CloseFrame {
+                code: axum::extract::ws::close_code::NORMAL,
+                reason: "Game finished".into(),
+            };
+
+            let _ = sender.send(Message::Close(Some(close_frame))).await;
+        }
+    }
 }

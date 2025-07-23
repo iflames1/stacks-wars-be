@@ -13,7 +13,7 @@ use crate::{
         rules::get_rule_by_index,
         utils::{
             broadcast_to_player, broadcast_to_room, broadcast_word_entry_from_player,
-            get_next_player_and_wrap,
+            close_connections_for_players, get_next_player_and_wrap,
         },
     },
     models::{
@@ -395,6 +395,16 @@ fn start_turn_timer(
                     {
                         tracing::error!("Error updating game state in Redis: {}", e);
                     }
+
+                    // Close all player connections since the game has ended
+                    let all_player_ids: Vec<Uuid> =
+                        room.eliminated_players.iter().map(|p| p.id).collect();
+                    tracing::info!(
+                        "Game finished for room {}, closing {} connections",
+                        room_id,
+                        all_player_ids.len()
+                    );
+                    close_connections_for_players(&all_player_ids, &connections).await;
 
                     return;
                 }
