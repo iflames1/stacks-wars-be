@@ -15,6 +15,7 @@ pub struct BotNewLobbyPayload {
     pub game_name: String,
     pub game_image: String,
     pub contract_address: Option<String>,
+    pub entry_amount: Option<f64>,
     pub creator_display_name: Option<String>,
     pub wallet_address: String,
 }
@@ -35,6 +36,11 @@ pub async fn broadcast_lobby_created(
         })
         .unwrap_or_default();
 
+    let entry_fee_line = payload
+        .entry_amount
+        .map(|amount| format!("💵 *Entry Fee:* {} STX\n", amount))
+        .unwrap_or_default();
+
     let description = payload
         .description
         .as_ref()
@@ -49,7 +55,7 @@ pub async fn broadcast_lobby_created(
         🏷 *Name:* {}\n\
         🎮 *Game:* {}\n\
         🧑‍🚀 *Creator:* {}\n\
-        {}{}\
+        {}{}{}\
         \n🔗 *Link:* `{}`",
         payload.room_name,
         payload.game_name,
@@ -58,6 +64,7 @@ pub async fn broadcast_lobby_created(
             .unwrap_or(payload.wallet_address.clone()),
         description,
         contract_line,
+        entry_fee_line,
         lobby_link
     );
 
