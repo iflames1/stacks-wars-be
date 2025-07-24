@@ -55,7 +55,7 @@ pub async fn create_room(
         .await?;
 
         let pool_struct = RoomPool {
-            entry_amount: pool_input.entry_amount,
+            entry_amount: pool_input.entry_amount.clone(),
             contract_address: pool_input.contract_address.clone(),
             current_amount: pool_input.entry_amount,
         };
@@ -135,6 +135,7 @@ pub async fn create_room(
             description: room_info.description.clone(),
             game_name: room_info.game_name.clone(),
             game_image,
+            entry_amount: pool.as_ref().and_then(|p| Some(p.entry_amount)),
             contract_address: room_info.contract_address.clone(),
             creator_display_name: creator_user.display_name,
             wallet_address: creator_user.wallet_address,
