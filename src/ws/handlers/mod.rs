@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod lexi_wars;
 pub mod lobby;
 pub mod utils;

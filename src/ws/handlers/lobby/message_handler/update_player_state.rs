@@ -4,7 +4,7 @@ use crate::{
         game::{GameState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
-    state::{ConnectionInfoMap, RedisClient},
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::lobby::message_handler::{broadcast_to_lobby, handler::send_error_to_player},
 };
 use uuid::Uuid;
@@ -14,6 +14,7 @@ pub async fn update_player_state(
     room_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
+    chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
     if let Err(e) =
@@ -29,7 +30,14 @@ pub async fn update_player_state(
             room_id
         );
         let msg = LobbyServerMessage::PlayerUpdated { players };
-        broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+        broadcast_to_lobby(
+            room_id,
+            &msg,
+            &connections,
+            Some(&chat_connections),
+            redis.clone(),
+        )
+        .await;
 
         if new_state == PlayerState::NotReady {
             if let Ok(room_info) = db::room::get_room_info(room_id, redis.clone()).await {
@@ -41,7 +49,7 @@ pub async fn update_player_state(
                         state: GameState::Waiting,
                         ready_players: None,
                     };
-                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+                    broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
                 }
             }
         }

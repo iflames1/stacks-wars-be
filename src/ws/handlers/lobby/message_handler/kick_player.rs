@@ -4,7 +4,7 @@ use crate::{
         game::{GameState, Player},
         lobby::LobbyServerMessage,
     },
-    state::{ConnectionInfoMap, RedisClient},
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             broadcast_to_lobby,
@@ -22,6 +22,7 @@ pub async fn kick_player(
     room_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
+    chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
     let room_info = match db::room::get_room_info(room_id, redis.clone()).await {
@@ -63,7 +64,14 @@ pub async fn kick_player(
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerUpdated { players };
-        broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+        broadcast_to_lobby(
+            room_id,
+            &msg,
+            &connections,
+            Some(&chat_connections),
+            redis.clone(),
+        )
+        .await;
 
         tracing::info!("Success kicking {} from {}", player.wallet_address, room_id);
         let kicked_msg = LobbyServerMessage::PlayerKicked {
@@ -71,7 +79,7 @@ pub async fn kick_player(
             wallet_address,
             display_name,
         };
-        broadcast_to_lobby(room_id, &kicked_msg, &connections, redis.clone()).await;
+        broadcast_to_lobby(room_id, &kicked_msg, &connections, None, redis.clone()).await;
 
         let msg: LobbyServerMessage = LobbyServerMessage::NotifyKicked;
 
