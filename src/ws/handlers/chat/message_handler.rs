@@ -10,7 +10,7 @@ use crate::{
         game::Player,
     },
     state::{ChatConnectionInfoMap, ChatHistories, RedisClient},
-    ws::handlers::{chat::utils::send_chat_message_to_player, utils::queue_message_for_player},
+    ws::handlers::chat::utils::{queue_chat_message_for_player, send_chat_message_to_player},
 };
 
 pub async fn handle_incoming_chat_messages(
@@ -194,7 +194,8 @@ async fn broadcast_chat_to_room(
                         drop(connection_guard);
 
                         if let Err(queue_err) =
-                            queue_message_for_player(player.id, serialized.clone(), redis).await
+                            queue_chat_message_for_player(player.id, serialized.clone(), redis)
+                                .await
                         {
                             tracing::error!(
                                 "Failed to queue chat message for player {}: {}",
@@ -206,7 +207,8 @@ async fn broadcast_chat_to_room(
                     }
                 }
             } else if chat_msg.should_queue() {
-                if let Err(e) = queue_message_for_player(player.id, serialized.clone(), redis).await
+                if let Err(e) =
+                    queue_chat_message_for_player(player.id, serialized.clone(), redis).await
                 {
                     tracing::error!(
                         "Failed to queue chat message for offline player {}: {}",
