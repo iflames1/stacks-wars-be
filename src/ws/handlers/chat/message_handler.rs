@@ -20,7 +20,6 @@ pub async fn handle_incoming_chat_messages(
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
     chat_histories: ChatHistories,
-    mut is_room_member: bool,
 ) {
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
@@ -45,19 +44,31 @@ pub async fn handle_incoming_chat_messages(
                                 .await;
                             }
                             ChatClientMessage::Chat { text } => {
-                                // Re-check room membership on each chat attempt
-                                is_room_member = match db::room::get_room_players(
+                                let room_players = match db::room::get_room_players(
                                     room_id,
                                     redis.clone(),
                                 )
                                 .await
                                 {
-                                    Ok(players) => players.iter().any(|p| p.id == player.id),
+                                    Ok(players) => players,
                                     Err(e) => {
-                                        tracing::error!("Failed to check room membership: {}", e);
-                                        is_room_member // Keep previous state if check fails
+                                        tracing::error!("Failed to get room players: {}", e);
+                                        // Send error to user and continue
+                                        let error_msg = ChatServerMessage::Error {
+                                            message: "Failed to verify room membership".to_string(),
+                                        };
+                                        send_chat_message_to_player(
+                                            player.id,
+                                            &error_msg,
+                                            chat_connections,
+                                            &redis,
+                                        )
+                                        .await;
+                                        continue;
                                     }
                                 };
+
+                                let is_room_member = room_players.iter().any(|p| p.id == player.id);
 
                                 if !is_room_member {
                                     let error_msg = ChatServerMessage::Error {
@@ -104,10 +115,9 @@ pub async fn handle_incoming_chat_messages(
                                     history.add_message(chat_message.clone());
                                 }
 
-                                // Broadcast to all room members
                                 broadcast_chat_to_room(
-                                    room_id,
                                     &chat_message,
+                                    &room_players,
                                     chat_connections,
                                     &redis,
                                 )
@@ -163,8 +173,8 @@ pub async fn handle_incoming_chat_messages(
 }
 
 async fn broadcast_chat_to_room(
-    room_id: Uuid,
     chat_message: &ChatMessage,
+    room_players: &[Player],
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
@@ -179,43 +189,39 @@ async fn broadcast_chat_to_room(
         }
     };
 
-    // Get all room members
-    if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
-        let connection_guard = chat_connections.lock().await;
+    let connection_guard = chat_connections.lock().await;
 
-        for player in &room_players {
-            if let Some(conn_info) = connection_guard.get(&player.id) {
-                let mut sender = conn_info.sender.lock().await;
-                if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
-                    tracing::warn!("Failed to send chat message to player {}: {}", player.id, e);
+    for player in room_players {
+        if let Some(conn_info) = connection_guard.get(&player.id) {
+            let mut sender = conn_info.sender.lock().await;
+            if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
+                tracing::warn!("Failed to send chat message to player {}: {}", player.id, e);
 
-                    if chat_msg.should_queue() {
-                        drop(sender);
-                        drop(connection_guard);
+                if chat_msg.should_queue() {
+                    drop(sender);
+                    drop(connection_guard);
 
-                        if let Err(queue_err) =
-                            queue_chat_message_for_player(player.id, serialized.clone(), redis)
-                                .await
-                        {
-                            tracing::error!(
-                                "Failed to queue chat message for player {}: {}",
-                                player.id,
-                                queue_err
-                            );
-                        }
-                        return;
+                    if let Err(queue_err) =
+                        queue_chat_message_for_player(player.id, serialized.clone(), redis).await
+                    {
+                        tracing::error!(
+                            "Failed to queue chat message for player {}: {}",
+                            player.id,
+                            queue_err
+                        );
                     }
+                    return;
                 }
-            } else if chat_msg.should_queue() {
-                if let Err(e) =
-                    queue_chat_message_for_player(player.id, serialized.clone(), redis).await
-                {
-                    tracing::error!(
-                        "Failed to queue chat message for offline player {}: {}",
-                        player.id,
-                        e
-                    );
-                }
+            }
+        } else if chat_msg.should_queue() {
+            if let Err(e) =
+                queue_chat_message_for_player(player.id, serialized.clone(), redis).await
+            {
+                tracing::error!(
+                    "Failed to queue chat message for offline player {}: {}",
+                    player.id,
+                    e
+                );
             }
         }
     }

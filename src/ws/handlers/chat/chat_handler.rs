@@ -135,7 +135,6 @@ async fn handle_chat_socket(
         &chat_connections,
         redis.clone(),
         chat_histories,
-        is_room_member,
     )
     .await;
 
