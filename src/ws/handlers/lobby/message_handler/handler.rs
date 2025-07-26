@@ -8,11 +8,15 @@ use crate::{
     errors::AppError,
     models::{
         User,
+        chat::ChatServerMessage,
         game::Player,
         lobby::{JoinRequest, JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
     },
-    state::{ConnectionInfoMap, LobbyCountdowns, LobbyJoinRequests, RedisClient},
+    state::{
+        ChatConnectionInfoMap, ConnectionInfoMap, LobbyCountdowns, LobbyJoinRequests, RedisClient,
+    },
     ws::handlers::{
+        chat::utils::send_chat_message_to_player,
         lobby::message_handler::{
             join_lobby::join_lobby, kick_player, leave_room, permit_join, ping, request_join,
             update_game_state, update_player_state,
@@ -25,6 +29,7 @@ pub async fn broadcast_to_lobby(
     room_id: Uuid,
     msg: &LobbyServerMessage,
     connections: &ConnectionInfoMap,
+    chat_connections: Option<&ChatConnectionInfoMap>,
     redis: RedisClient,
 ) {
     let serialized = match serde_json::to_string(msg) {
@@ -77,6 +82,41 @@ pub async fn broadcast_to_lobby(
                     }
                 }
             }
+        }
+    }
+
+    // Notify chat connections about room changes
+    if matches!(msg, LobbyServerMessage::PlayerUpdated { .. }) {
+        if let Some(chat_conns) = chat_connections {
+            notify_chat_about_room_changes(room_id, chat_conns, &redis).await;
+        }
+    }
+}
+
+async fn notify_chat_about_room_changes(
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    // Get current room players
+    if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
+        let room_player_ids: std::collections::HashSet<Uuid> =
+            room_players.iter().map(|p| p.id).collect();
+
+        let connection_guard = chat_connections.lock().await;
+
+        // Check all chat connections and update permissions for players in this room
+        for (&player_id, _) in connection_guard.iter() {
+            let is_room_member = room_player_ids.contains(&player_id);
+            let permit_msg = ChatServerMessage::PermitChat {
+                allowed: is_room_member,
+            };
+
+            drop(connection_guard);
+
+            send_chat_message_to_player(player_id, &permit_msg, chat_connections, redis).await;
+
+            return;
         }
     }
 }
@@ -245,6 +285,7 @@ pub async fn handle_incoming_messages(
     room_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
+    chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
     countdowns: LobbyCountdowns,
@@ -265,6 +306,7 @@ pub async fn handle_incoming_messages(
                                     &join_requests,
                                     player,
                                     connections,
+                                    chat_connections,
                                     &redis,
                                 )
                                 .await
@@ -286,11 +328,19 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::UpdatePlayerState { new_state } => {
-                                update_player_state(new_state, room_id, player, connections, &redis)
-                                    .await
+                                update_player_state(
+                                    new_state,
+                                    room_id,
+                                    player,
+                                    connections,
+                                    chat_connections,
+                                    &redis,
+                                )
+                                .await
                             }
                             LobbyClientMessage::LeaveRoom => {
-                                leave_room(room_id, player, connections, &redis).await
+                                leave_room(room_id, player, connections, chat_connections, &redis)
+                                    .await
                             }
                             LobbyClientMessage::KickPlayer {
                                 player_id,
@@ -304,6 +354,7 @@ pub async fn handle_incoming_messages(
                                     room_id,
                                     player,
                                     connections,
+                                    chat_connections,
                                     &redis,
                                 )
                                 .await

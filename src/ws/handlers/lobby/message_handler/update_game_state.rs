@@ -70,7 +70,8 @@ pub async fn update_game_state(
                     state: new_state,
                     ready_players: None,
                 };
-                broadcast_to_lobby(room_id, &game_starting, &connections, redis.clone()).await;
+                broadcast_to_lobby(room_id, &game_starting, &connections, None, redis.clone())
+                    .await;
                 return; // don't start the game
             }
 
@@ -95,7 +96,8 @@ pub async fn update_game_state(
                         state: new_state,
                         ready_players: None,
                     };
-                    broadcast_to_lobby(room_id, &game_starting, &connections, redis.clone()).await;
+                    broadcast_to_lobby(room_id, &game_starting, &connections, None, redis.clone())
+                        .await;
                 } else {
                     tracing::info!(
                         "Game state was reverted before start, skipping GameState message"
@@ -179,7 +181,7 @@ async fn start_countdown(
                         state: info.state,
                         ready_players: None,
                     };
-                    broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+                    broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
 
                     break;
                 }
@@ -198,7 +200,7 @@ async fn start_countdown(
         }
 
         let countdown_msg = LobbyServerMessage::Countdown { time: i };
-        broadcast_to_lobby(room_id, &countdown_msg, &connections, redis.clone()).await;
+        broadcast_to_lobby(room_id, &countdown_msg, &connections, None, redis.clone()).await;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -230,7 +232,7 @@ async fn start_countdown(
                 state: GameState::InProgress,
                 ready_players: Some(ready_players.clone()),
             };
-            broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+            broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
 
             // Clear countdown state since game has officially started
             {

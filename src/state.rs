@@ -10,18 +10,25 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct AppState {
     pub rooms: SharedRooms,
-    pub connections: ConnectionInfoMap,
+    pub connections: ConnectionInfoMap, // For lobby and lexi-wars
+    pub chat_connections: ChatConnectionInfoMap, // For chat only
     pub redis: RedisClient,
     pub lobby_join_requests: LobbyJoinRequests,
     pub bot: Bot,
     pub lobby_countdowns: LobbyCountdowns,
+    pub chat_histories: ChatHistories,
 }
 
-use crate::models::{game::GameRoom, lobby::JoinRequest};
+use crate::models::{chat::ChatMessage, game::GameRoom, lobby::JoinRequest};
 
 #[derive(Debug)]
 pub struct ConnectionInfo {
     pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
+}
+
+#[derive(Debug)]
+pub struct ChatConnectionInfo {
+    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, // no need for room_id here, ChatConnectionInfoMap hashmap will track it
 }
 
 #[derive(Debug, Clone)]
@@ -35,12 +42,43 @@ impl Default for CountdownState {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ChatHistory {
+    pub messages: Vec<ChatMessage>,
+}
+
+impl ChatHistory {
+    pub fn new() -> Self {
+        Self {
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn add_message(&mut self, message: ChatMessage) {
+        self.messages.push(message);
+
+        // Keep only the last 50 messages
+        if self.messages.len() > 50 {
+            self.messages.remove(0);
+        }
+    }
+
+    pub fn get_messages(&self) -> Vec<ChatMessage> {
+        self.messages.clone()
+    }
+}
+
 pub type SharedRooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
+
+// Single chat connection per player, but track which room they're chatting in
+pub type ChatConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ChatConnectionInfo>>>>;
 
 pub type RedisClient = Pool<RedisConnectionManager>;
 
 pub type LobbyJoinRequests = Arc<Mutex<HashMap<Uuid, Vec<JoinRequest>>>>;
 
 pub type LobbyCountdowns = Arc<Mutex<HashMap<Uuid, CountdownState>>>;
+
+pub type ChatHistories = Arc<Mutex<HashMap<Uuid, ChatHistory>>>; // TODO: move to ChatConnectionInfoMap

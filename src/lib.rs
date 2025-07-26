@@ -10,7 +10,9 @@ pub mod ws;
 use axum::Router;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
-use state::{AppState, ConnectionInfoMap, LobbyCountdowns, SharedRooms};
+use state::{
+    AppState, ChatConnectionInfoMap, ChatHistories, ConnectionInfoMap, LobbyCountdowns, SharedRooms,
+};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
@@ -37,16 +39,20 @@ pub async fn start_server() {
 
     let rooms: SharedRooms = Default::default();
     let connections: ConnectionInfoMap = Default::default();
+    let chat_connections: ChatConnectionInfoMap = Default::default();
     let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
     let lobby_countdowns: LobbyCountdowns = Arc::new(Mutex::new(HashMap::new()));
+    let chat_histories: ChatHistories = Arc::new(Mutex::new(HashMap::new()));
 
     let state = AppState {
         rooms,
         connections,
+        chat_connections,
         redis: redis_pool,
         lobby_join_requests,
         bot,
         lobby_countdowns,
+        chat_histories,
     };
 
     let app = Router::new()

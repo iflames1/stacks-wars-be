@@ -4,7 +4,7 @@ use crate::{
         game::Player,
         lobby::{JoinState, LobbyServerMessage},
     },
-    state::{ConnectionInfoMap, LobbyJoinRequests, RedisClient},
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, LobbyJoinRequests, RedisClient},
     ws::handlers::lobby::message_handler::{
         broadcast_to_lobby,
         handler::{get_join_requests, send_error_to_player},
@@ -18,6 +18,7 @@ pub async fn join_lobby(
     join_requests: &LobbyJoinRequests,
     player: &Player,
     connections: &ConnectionInfoMap,
+    chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
     let join_map = get_join_requests(room_id, &join_requests).await;
@@ -33,7 +34,14 @@ pub async fn join_lobby(
                     room_id
                 );
                 let msg = LobbyServerMessage::PlayerUpdated { players };
-                broadcast_to_lobby(room_id, &msg, &connections, redis.clone()).await;
+                broadcast_to_lobby(
+                    room_id,
+                    &msg,
+                    &connections,
+                    Some(&chat_connections),
+                    redis.clone(),
+                )
+                .await;
             }
         } else {
             tracing::warn!(

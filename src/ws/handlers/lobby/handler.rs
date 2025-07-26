@@ -11,7 +11,7 @@ use crate::{
         game::{GameState, Player, PlayerState, WsQueryParams},
         lobby::{JoinRequest, JoinState, LobbyServerMessage},
     },
-    state::{AppState, LobbyJoinRequests, RedisClient},
+    state::{AppState, ChatConnectionInfoMap, LobbyJoinRequests, RedisClient},
     ws::handlers::lobby::message_handler,
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
@@ -37,6 +37,7 @@ pub async fn lobby_ws_handler(
     let player_id = query.user_id;
     let redis = state.redis.clone();
     let connections = state.connections.clone();
+    let chat_connections = state.chat_connections.clone();
     let join_requests = state.lobby_join_requests.clone();
     let countdowns = state.lobby_countdowns.clone();
 
@@ -51,6 +52,7 @@ pub async fn lobby_ws_handler(
                 room_id,
                 matched_player.into(),
                 connections,
+                chat_connections,
                 redis,
                 join_requests,
                 countdowns,
@@ -93,6 +95,7 @@ pub async fn lobby_ws_handler(
             room_id,
             idle_player,
             connections,
+            chat_connections,
             redis,
             join_requests,
             countdowns,
@@ -105,6 +108,7 @@ async fn handle_lobby_socket(
     room_id: Uuid,
     player: Player,
     connections: ConnectionInfoMap,
+    chat_connections: ChatConnectionInfoMap,
     redis: RedisClient,
     join_requests: LobbyJoinRequests,
     countdowns: LobbyCountdowns,
@@ -198,7 +202,14 @@ async fn handle_lobby_socket(
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };
-        message_handler::broadcast_to_lobby(room_id, &join_msg, &connections, redis.clone()).await;
+        message_handler::broadcast_to_lobby(
+            room_id,
+            &join_msg,
+            &connections,
+            Some(&chat_connections),
+            redis.clone(),
+        )
+        .await;
     }
 
     message_handler::handle_incoming_messages(
@@ -206,6 +217,7 @@ async fn handle_lobby_socket(
         room_id,
         &player,
         &connections,
+        &chat_connections,
         redis.clone(),
         join_requests,
         countdowns,
@@ -216,6 +228,13 @@ async fn handle_lobby_socket(
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerUpdated { players };
-        message_handler::broadcast_to_lobby(room_id, &msg, &connections, redis).await;
+        message_handler::broadcast_to_lobby(
+            room_id,
+            &msg,
+            &connections,
+            Some(&chat_connections),
+            redis,
+        )
+        .await;
     }
 }
