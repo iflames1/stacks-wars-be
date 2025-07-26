@@ -12,7 +12,7 @@ use crate::{
         lobby::{JoinRequest, JoinState, LobbyServerMessage},
     },
     state::{AppState, ChatConnectionInfoMap, LobbyJoinRequests, RedisClient},
-    ws::handlers::lobby::message_handler,
+    ws::handlers::lobby::message_handler::handler,
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
 use crate::{
@@ -202,7 +202,7 @@ async fn handle_lobby_socket(
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };
-        message_handler::broadcast_to_lobby(
+        handler::broadcast_to_lobby(
             room_id,
             &join_msg,
             &connections,
@@ -212,7 +212,7 @@ async fn handle_lobby_socket(
         .await;
     }
 
-    message_handler::handle_incoming_messages(
+    handler::handle_incoming_messages(
         receiver,
         room_id,
         &player,
@@ -228,13 +228,7 @@ async fn handle_lobby_socket(
 
     if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerUpdated { players };
-        message_handler::broadcast_to_lobby(
-            room_id,
-            &msg,
-            &connections,
-            Some(&chat_connections),
-            redis,
-        )
-        .await;
+        handler::broadcast_to_lobby(room_id, &msg, &connections, Some(&chat_connections), redis)
+            .await;
     }
 }
