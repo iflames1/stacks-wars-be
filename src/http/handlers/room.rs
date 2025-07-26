@@ -11,8 +11,8 @@ use crate::{
     db::{
         create_room, join_room, leave_room,
         room::{
-            get_all_rooms, get_room, get_room_extended, get_room_info, get_room_players,
-            get_rooms_by_game_id, update_claim_state,
+            get::get_all_rooms_extended, get_all_rooms, get_room, get_room_extended, get_room_info,
+            get_room_players, get_rooms_by_game_id, update_claim_state,
         },
         update_game_state, update_player_state,
     },
@@ -154,6 +154,32 @@ pub async fn get_room_handler(
 
     tracing::info!("Retrieved room info for room ID: {}", room_id);
     Ok(Json(room_info))
+}
+
+pub async fn get_all_rooms_extended_handler(
+    Query(query): Query<RoomQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<RoomExtended>>, (StatusCode, String)> {
+    let filter_states = parse_states(query.state);
+
+    let (page, limit) = if let Some(p) = query.page {
+        let page = p.max(1); // Ensure page is at least 1
+        let limit = query.limit.unwrap_or(12).min(100); // Default 12, max 100 per page
+        (page, limit)
+    } else {
+        // No pagination - return all items
+        (1, u32::MAX)
+    };
+
+    let rooms = get_all_rooms_extended(filter_states, page, limit, state.redis.clone())
+        .await
+        .map_err(|e| {
+            tracing::error!("Error retrieving all rooms extended: {}", e);
+            e.to_response()
+        })?;
+
+    tracing::info!("Retrieved {} extended rooms", rooms.len());
+    Ok(Json(rooms))
 }
 
 pub async fn get_all_rooms_handler(
