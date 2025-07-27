@@ -8,6 +8,8 @@ use uuid::Uuid;
 pub enum ChatClientMessage {
     Chat { text: String },
     Ping { ts: u64 },
+    Mic { enabled: bool },
+    Mute { muted: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +20,14 @@ pub struct ChatMessage {
     pub timestamp: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceParticipant {
+    pub player: Player,
+    pub mic_enabled: bool,
+    pub is_muted: bool,
+    pub is_speaking: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ChatServerMessage {
@@ -26,6 +36,10 @@ pub enum ChatServerMessage {
     ChatHistory { messages: Vec<ChatMessage> },
     Pong { ts: u64, pong: u64 },
     Error { message: String },
+    // Voice chat messages
+    VoicePermit { allowed: bool },
+    VoiceParticipants { participants: Vec<VoiceParticipant> },
+    VoiceParticipantUpdate { participant: VoiceParticipant },
 }
 
 impl ChatServerMessage {
@@ -39,6 +53,9 @@ impl ChatServerMessage {
             ChatServerMessage::Chat { .. } => true,
             ChatServerMessage::ChatHistory { .. } => true,
             ChatServerMessage::Error { .. } => true,
+            ChatServerMessage::VoicePermit { .. } => true,
+            ChatServerMessage::VoiceParticipants { .. } => true,
+            ChatServerMessage::VoiceParticipantUpdate { .. } => true,
         }
     }
 }

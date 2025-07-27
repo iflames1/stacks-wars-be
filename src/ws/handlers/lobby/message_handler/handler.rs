@@ -108,13 +108,20 @@ async fn notify_chat_about_room_changes(
         // Check all chat connections and update permissions for players in this room
         for (&player_id, _) in connection_guard.iter() {
             let is_room_member = room_player_ids.contains(&player_id);
+
+            // Send chat permission
             let permit_msg = ChatServerMessage::PermitChat {
                 allowed: is_room_member,
             };
-
             drop(connection_guard);
-
             send_chat_message_to_player(player_id, &permit_msg, chat_connections, redis).await;
+
+            // Send voice permission (same as chat permission)
+            let voice_permit_msg = ChatServerMessage::VoicePermit {
+                allowed: is_room_member,
+            };
+            send_chat_message_to_player(player_id, &voice_permit_msg, chat_connections, redis)
+                .await;
 
             return;
         }

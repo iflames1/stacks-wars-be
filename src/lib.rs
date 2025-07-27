@@ -10,8 +10,10 @@ pub mod ws;
 use axum::Router;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
+use mediasoup::{worker::WorkerSettings, worker_manager::WorkerManager};
 use state::{
-    AppState, ChatConnectionInfoMap, ChatHistories, ConnectionInfoMap, LobbyCountdowns, SharedRooms,
+    AppState, ChatConnectionInfoMap, ChatHistories, ConnectionInfoMap, LobbyCountdowns,
+    MediasoupWorker, SharedRooms, VoiceParticipants, VoiceRooms,
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
@@ -37,12 +39,26 @@ pub async fn start_server() {
         panic!("Failed to initialize games: {}", e);
     }
 
+    // Initialize mediasoup worker
+    let worker_manager = WorkerManager::new();
+    let worker = worker_manager
+        .create_worker(WorkerSettings::default())
+        .await
+        .expect("Failed to create mediasoup worker");
+
+    tracing::info!("Mediasoup worker created successfully");
+
     let rooms: SharedRooms = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let chat_connections: ChatConnectionInfoMap = Default::default();
     let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
     let lobby_countdowns: LobbyCountdowns = Arc::new(Mutex::new(HashMap::new()));
     let chat_histories: ChatHistories = Arc::new(Mutex::new(HashMap::new()));
+
+    // Initialize voice chat components
+    let mediasoup_worker: MediasoupWorker = Arc::new(Mutex::new(worker));
+    let voice_rooms: VoiceRooms = Arc::new(Mutex::new(HashMap::new()));
+    let voice_participants: VoiceParticipants = Arc::new(Mutex::new(HashMap::new()));
 
     let state = AppState {
         rooms,
@@ -53,6 +69,9 @@ pub async fn start_server() {
         bot,
         lobby_countdowns,
         chat_histories,
+        mediasoup_worker,
+        voice_rooms,
+        voice_participants,
     };
 
     let app = Router::new()

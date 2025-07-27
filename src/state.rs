@@ -2,6 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use futures::stream::SplitSink;
+use mediasoup::{router::Router, worker::Worker};
 use std::{collections::HashMap, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
@@ -17,9 +18,17 @@ pub struct AppState {
     pub bot: Bot,
     pub lobby_countdowns: LobbyCountdowns,
     pub chat_histories: ChatHistories,
+    // New voice chat components
+    pub mediasoup_worker: MediasoupWorker,
+    pub voice_rooms: VoiceRooms,
+    pub voice_participants: VoiceParticipants,
 }
 
-use crate::models::{chat::ChatMessage, game::GameRoom, lobby::JoinRequest};
+use crate::models::{
+    chat::{ChatMessage, VoiceParticipant},
+    game::GameRoom,
+    lobby::JoinRequest,
+};
 
 #[derive(Debug)]
 pub struct ConnectionInfo {
@@ -28,7 +37,7 @@ pub struct ConnectionInfo {
 
 #[derive(Debug)]
 pub struct ChatConnectionInfo {
-    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, // no need for room_id here, ChatConnectionInfoMap hashmap will track it
+    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +77,44 @@ impl ChatHistory {
     }
 }
 
+// New voice chat structs
+#[derive(Debug)]
+pub struct VoiceRoom {
+    pub room_id: Uuid,
+    pub router: Router,
+    pub participants: HashMap<Uuid, VoiceParticipant>,
+}
+
+impl VoiceRoom {
+    pub fn new(room_id: Uuid, router: Router) -> Self {
+        Self {
+            room_id,
+            router,
+            participants: HashMap::new(),
+        }
+    }
+
+    pub fn add_participant(&mut self, player_id: Uuid, participant: VoiceParticipant) {
+        self.participants.insert(player_id, participant);
+    }
+
+    pub fn remove_participant(&mut self, player_id: &Uuid) -> Option<VoiceParticipant> {
+        self.participants.remove(player_id)
+    }
+
+    pub fn get_participant(&self, player_id: &Uuid) -> Option<&VoiceParticipant> {
+        self.participants.get(player_id)
+    }
+
+    pub fn get_participant_mut(&mut self, player_id: &Uuid) -> Option<&mut VoiceParticipant> {
+        self.participants.get_mut(player_id)
+    }
+
+    pub fn get_all_participants(&self) -> Vec<VoiceParticipant> {
+        self.participants.values().cloned().collect()
+    }
+}
+
 pub type SharedRooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
@@ -82,3 +129,10 @@ pub type LobbyJoinRequests = Arc<Mutex<HashMap<Uuid, Vec<JoinRequest>>>>;
 pub type LobbyCountdowns = Arc<Mutex<HashMap<Uuid, CountdownState>>>;
 
 pub type ChatHistories = Arc<Mutex<HashMap<Uuid, ChatHistory>>>; // TODO: move to ChatConnectionInfoMap
+
+//
+pub type MediasoupWorker = Arc<Mutex<Worker>>;
+
+pub type VoiceRooms = Arc<Mutex<HashMap<Uuid, VoiceRoom>>>;
+
+pub type VoiceParticipants = Arc<Mutex<HashMap<Uuid, HashMap<Uuid, VoiceParticipant>>>>; // room_id -> player_id -> participant
