@@ -1,7 +1,7 @@
 use mediasoup::prelude::*;
 use mediasoup::worker::{WorkerLogLevel, WorkerLogTag};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::num::{NonZeroU8, NonZeroU32};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -61,11 +61,24 @@ impl VoiceConnection {
             .create_router(RouterOptions::new(media_codecs()))
             .await?;
 
+        let listen_ip_str = if std::env::var("RAILWAY_PUBLIC_DOMAIN").is_ok() {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        }
+        .to_string();
+
+        let addr = std::env::var("RAILWAY_PUBLIC_DOMAIN").ok();
+
+        let listen_ip: IpAddr = listen_ip_str
+            .parse()
+            .map_err(|e| format!("Invalid mediasoup listen ip: {} {}", listen_ip_str, e))?;
+
         let transport_options =
             WebRtcTransportOptions::new(WebRtcTransportListenInfos::new(ListenInfo {
                 protocol: Protocol::Udp,
-                ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                announced_address: None,
+                ip: listen_ip,
+                announced_address: addr,
                 port: None,
                 port_range: None,
                 flags: None,
