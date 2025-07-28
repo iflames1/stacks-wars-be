@@ -1,18 +1,20 @@
-use std::collections::HashMap;
-
 use axum::extract::ws::Message;
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
+use mediasoup::prelude::Transport;
 use uuid::Uuid;
 
 use crate::{
     db,
     models::{
-        chat::{ChatClientMessage, ChatMessage, ChatServerMessage, VoiceParticipant},
+        chat::{ChatClientMessage, ChatMessage, ChatServerMessage},
         game::Player,
     },
-    state::{ChatConnectionInfoMap, ChatHistories, RedisClient, VoiceParticipants, VoiceRooms},
-    ws::handlers::chat::utils::{queue_chat_message_for_player, send_chat_message_to_player},
+    state::{ChatConnectionInfoMap, ChatHistories, RedisClient},
+    ws::handlers::chat::{
+        utils::{queue_chat_message_for_player, send_chat_message_to_player},
+        voice::{VoiceConnections, broadcast_voice_participant_update},
+    },
 };
 
 pub async fn handle_incoming_chat_messages(
@@ -22,8 +24,7 @@ pub async fn handle_incoming_chat_messages(
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
     chat_histories: ChatHistories,
-    voice_participants: VoiceParticipants,
-    _voice_rooms: VoiceRooms,
+    voice_connections: VoiceConnections,
 ) {
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
@@ -58,25 +59,86 @@ pub async fn handle_incoming_chat_messages(
                                 )
                                 .await;
                             }
-                            ChatClientMessage::Mic { enabled } => {
-                                handle_mic_toggle(
-                                    enabled,
+                            ChatClientMessage::VoiceInit { rtp_capabilities } => {
+                                handle_voice_init(
+                                    player.id,
+                                    rtp_capabilities,
+                                    &voice_connections,
                                     room_id,
-                                    player,
+                                )
+                                .await;
+                            }
+                            ChatClientMessage::ConnectProducerTransport { dtls_parameters } => {
+                                handle_connect_producer_transport(
+                                    player.id,
+                                    dtls_parameters,
+                                    &voice_connections,
+                                    room_id,
                                     chat_connections,
                                     &redis,
-                                    &voice_participants,
+                                )
+                                .await;
+                            }
+                            ChatClientMessage::ConnectConsumerTransport { dtls_parameters } => {
+                                handle_connect_consumer_transport(
+                                    player.id,
+                                    dtls_parameters,
+                                    &voice_connections,
+                                    room_id,
+                                    chat_connections,
+                                    &redis,
+                                )
+                                .await;
+                            }
+                            ChatClientMessage::Produce {
+                                kind,
+                                rtp_parameters,
+                            } => {
+                                handle_produce(
+                                    player.id,
+                                    kind,
+                                    rtp_parameters,
+                                    &voice_connections,
+                                    room_id,
+                                    chat_connections,
+                                    &redis,
+                                )
+                                .await;
+                            }
+                            ChatClientMessage::Consume { producer_id } => {
+                                handle_consume(
+                                    player.id,
+                                    producer_id,
+                                    &voice_connections,
+                                    room_id,
+                                    chat_connections,
+                                    &redis,
+                                )
+                                .await;
+                            }
+                            ChatClientMessage::ConsumerResume { id } => {
+                                handle_consumer_resume(player.id, id, &voice_connections, room_id)
+                                    .await;
+                            }
+                            ChatClientMessage::Mic { enabled } => {
+                                handle_mic_toggle(
+                                    player.id,
+                                    enabled,
+                                    &voice_connections,
+                                    room_id,
+                                    chat_connections,
+                                    &redis,
                                 )
                                 .await;
                             }
                             ChatClientMessage::Mute { muted } => {
                                 handle_mute_toggle(
+                                    player.id,
                                     muted,
+                                    &voice_connections,
                                     room_id,
-                                    player,
                                     chat_connections,
                                     &redis,
-                                    &voice_participants,
                                 )
                                 .await;
                             }
@@ -113,29 +175,6 @@ pub async fn handle_incoming_chat_messages(
                 }
                 Message::Close(_) => {
                     tracing::info!("Player {} closed chat connection", player.wallet_address);
-
-                    // Clean up voice participant when disconnecting
-                    {
-                        let mut participants = voice_participants.lock().await;
-                        if let Some(room_participants) = participants.get_mut(&room_id) {
-                            room_participants.remove(&player.id);
-
-                            // Notify other participants about the disconnect
-                            if let Some(participant) = room_participants.get(&player.id) {
-                                let update_msg = ChatServerMessage::VoiceParticipantUpdate {
-                                    participant: participant.clone(),
-                                };
-                                broadcast_to_voice_participants(
-                                    room_id,
-                                    &update_msg,
-                                    chat_connections,
-                                    &redis,
-                                    &participants,
-                                )
-                                .await;
-                            }
-                        }
-                    }
                     break;
                 }
                 _ => {}
@@ -167,7 +206,7 @@ async fn handle_text_chat(
             let error_msg = ChatServerMessage::Error {
                 message: "Failed to verify room membership".to_string(),
             };
-            send_chat_message_to_player(player.id, &error_msg, chat_connections, redis).await;
+            send_chat_message_to_player(player.id, &error_msg, chat_connections, &redis).await;
             return;
         }
     };
@@ -178,7 +217,7 @@ async fn handle_text_chat(
         let error_msg = ChatServerMessage::Error {
             message: "You are not a member of this room".to_string(),
         };
-        send_chat_message_to_player(player.id, &error_msg, chat_connections, redis).await;
+        send_chat_message_to_player(player.id, &error_msg, chat_connections, &redis).await;
         return;
     }
 
@@ -186,11 +225,10 @@ async fn handle_text_chat(
         let error_msg = ChatServerMessage::Error {
             message: "Message cannot be empty".to_string(),
         };
-        send_chat_message_to_player(player.id, &error_msg, chat_connections, redis).await;
+        send_chat_message_to_player(player.id, &error_msg, chat_connections, &redis).await;
         return;
     }
 
-    // Create chat message
     let chat_message = ChatMessage {
         id: Uuid::new_v4(),
         text: text.trim().to_string(),
@@ -198,7 +236,6 @@ async fn handle_text_chat(
         timestamp: Utc::now(),
     };
 
-    // Store in chat history
     {
         let mut histories = chat_histories.lock().await;
         let history = histories
@@ -207,168 +244,7 @@ async fn handle_text_chat(
         history.add_message(chat_message.clone());
     }
 
-    broadcast_chat_to_room(&chat_message, &room_players, chat_connections, redis).await;
-}
-
-async fn handle_mic_toggle(
-    enabled: bool,
-    room_id: Uuid,
-    player: &Player,
-    chat_connections: &ChatConnectionInfoMap,
-    redis: &RedisClient,
-    voice_participants: &VoiceParticipants,
-) {
-    let mut participants = voice_participants.lock().await;
-    let room_participants = participants.entry(room_id).or_insert_with(HashMap::new);
-
-    // Update or create participant
-    if let Some(participant) = room_participants.get_mut(&player.id) {
-        participant.mic_enabled = enabled;
-    } else {
-        let new_participant = VoiceParticipant {
-            player: player.clone(),
-            mic_enabled: enabled,
-            is_muted: false,
-            is_speaking: false,
-        };
-        room_participants.insert(player.id, new_participant);
-    }
-
-    // Get updated participant for broadcast
-    if let Some(participant) = room_participants.get(&player.id) {
-        let update_msg = ChatServerMessage::VoiceParticipantUpdate {
-            participant: participant.clone(),
-        };
-
-        broadcast_to_voice_participants(
-            room_id,
-            &update_msg,
-            chat_connections,
-            redis,
-            &participants,
-        )
-        .await;
-    }
-
-    tracing::info!(
-        "Player {} {} their mic",
-        player.wallet_address,
-        if enabled { "enabled" } else { "disabled" }
-    );
-}
-
-async fn handle_mute_toggle(
-    muted: bool,
-    room_id: Uuid,
-    player: &Player,
-    chat_connections: &ChatConnectionInfoMap,
-    redis: &RedisClient,
-    voice_participants: &VoiceParticipants,
-) {
-    let mut participants = voice_participants.lock().await;
-    let room_participants = participants.entry(room_id).or_insert_with(HashMap::new);
-
-    // Update or create participant
-    if let Some(participant) = room_participants.get_mut(&player.id) {
-        participant.is_muted = muted;
-    } else {
-        let new_participant = VoiceParticipant {
-            player: player.clone(),
-            mic_enabled: false, // Default mic off
-            is_muted: muted,
-            is_speaking: false,
-        };
-        room_participants.insert(player.id, new_participant);
-    }
-
-    // Get updated participant for broadcast
-    if let Some(participant) = room_participants.get(&player.id) {
-        let update_msg = ChatServerMessage::VoiceParticipantUpdate {
-            participant: participant.clone(),
-        };
-
-        broadcast_to_voice_participants(
-            room_id,
-            &update_msg,
-            chat_connections,
-            redis,
-            &participants,
-        )
-        .await;
-    }
-
-    tracing::info!(
-        "Player {} {} themselves",
-        player.wallet_address,
-        if muted { "muted" } else { "unmuted" }
-    );
-}
-
-async fn broadcast_to_voice_participants(
-    room_id: Uuid,
-    msg: &ChatServerMessage,
-    chat_connections: &ChatConnectionInfoMap,
-    redis: &RedisClient,
-    participants: &std::collections::HashMap<
-        Uuid,
-        std::collections::HashMap<Uuid, VoiceParticipant>,
-    >,
-) {
-    if let Some(room_participants) = participants.get(&room_id) {
-        let serialized = match serde_json::to_string(msg) {
-            Ok(json) => json,
-            Err(e) => {
-                tracing::error!("Failed to serialize voice message: {}", e);
-                return;
-            }
-        };
-
-        let connection_guard = chat_connections.lock().await;
-
-        for participant in room_participants.values() {
-            if let Some(conn_info) = connection_guard.get(&participant.player.id) {
-                let mut sender = conn_info.sender.lock().await;
-                if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
-                    tracing::warn!(
-                        "Failed to send voice message to player {}: {}",
-                        participant.player.id,
-                        e
-                    );
-
-                    if msg.should_queue() {
-                        drop(sender);
-                        drop(connection_guard);
-
-                        if let Err(queue_err) = queue_chat_message_for_player(
-                            participant.player.id,
-                            serialized.clone(),
-                            redis,
-                        )
-                        .await
-                        {
-                            tracing::error!(
-                                "Failed to queue voice message for player {}: {}",
-                                participant.player.id,
-                                queue_err
-                            );
-                        }
-                        return;
-                    }
-                }
-            } else if msg.should_queue() {
-                if let Err(e) =
-                    queue_chat_message_for_player(participant.player.id, serialized.clone(), redis)
-                        .await
-                {
-                    tracing::error!(
-                        "Failed to queue voice message for offline player {}: {}",
-                        participant.player.id,
-                        e
-                    );
-                }
-            }
-        }
-    }
+    broadcast_chat_to_room(&chat_message, &room_players, chat_connections, &redis).await;
 }
 
 async fn broadcast_chat_to_room(
@@ -422,6 +298,342 @@ async fn broadcast_chat_to_room(
                     e
                 );
             }
+        }
+    }
+}
+
+// Voice message handlers
+async fn handle_voice_init(
+    player_id: Uuid,
+    rtp_capabilities: mediasoup::rtp_parameters::RtpCapabilities,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+) {
+    // Store client RTP capabilities for later use
+    let mut connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get_mut(&room_id) {
+        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+            voice_conn.client_rtp_capabilities = Some(rtp_capabilities);
+            tracing::info!("Voice initialized for player {}", player_id);
+        }
+    }
+}
+
+async fn handle_connect_producer_transport(
+    player_id: Uuid,
+    dtls_parameters: mediasoup::data_structures::DtlsParameters,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let mut connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get_mut(&room_id) {
+        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+            let transport = voice_conn.producer_transport.clone();
+            drop(connections);
+
+            match transport
+                .connect(
+                    mediasoup::webrtc_transport::WebRtcTransportRemoteParameters {
+                        dtls_parameters,
+                    },
+                )
+                .await
+            {
+                Ok(_) => {
+                    let msg = ChatServerMessage::ConnectedProducerTransport;
+                    send_chat_message_to_player(player_id, &msg, chat_connections, redis).await;
+                    tracing::info!("Producer transport connected for player {}", player_id);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to connect producer transport for player {}: {}",
+                        player_id,
+                        e
+                    );
+                    let error_msg = ChatServerMessage::Error {
+                        message: "Failed to connect producer transport".to_string(),
+                    };
+                    send_chat_message_to_player(player_id, &error_msg, chat_connections, redis)
+                        .await;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_connect_consumer_transport(
+    player_id: Uuid,
+    dtls_parameters: mediasoup::data_structures::DtlsParameters,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let mut connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get_mut(&room_id) {
+        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+            let transport = voice_conn.consumer_transport.clone();
+            drop(connections);
+
+            match transport
+                .connect(
+                    mediasoup::webrtc_transport::WebRtcTransportRemoteParameters {
+                        dtls_parameters,
+                    },
+                )
+                .await
+            {
+                Ok(_) => {
+                    let msg = ChatServerMessage::ConnectedConsumerTransport;
+                    send_chat_message_to_player(player_id, &msg, chat_connections, redis).await;
+                    tracing::info!("Consumer transport connected for player {}", player_id);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to connect consumer transport for player {}: {}",
+                        player_id,
+                        e
+                    );
+                    let error_msg = ChatServerMessage::Error {
+                        message: "Failed to connect consumer transport".to_string(),
+                    };
+                    send_chat_message_to_player(player_id, &error_msg, chat_connections, redis)
+                        .await;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_produce(
+    player_id: Uuid,
+    kind: mediasoup::rtp_parameters::MediaKind,
+    rtp_parameters: mediasoup::rtp_parameters::RtpParameters,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let mut connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get_mut(&room_id) {
+        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+            let transport = voice_conn.producer_transport.clone();
+            drop(connections);
+
+            match transport
+                .produce(mediasoup::producer::ProducerOptions::new(
+                    kind,
+                    rtp_parameters,
+                ))
+                .await
+            {
+                Ok(producer) => {
+                    let producer_id = producer.id();
+
+                    // Store producer
+                    let mut connections = voice_connections.lock().await;
+                    if let Some(room_connections) = connections.get_mut(&room_id) {
+                        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+                            voice_conn.producers.push(producer);
+                        }
+                    }
+                    drop(connections);
+
+                    let msg = ChatServerMessage::Produced { id: producer_id };
+                    send_chat_message_to_player(player_id, &msg, chat_connections, redis).await;
+                    tracing::info!(
+                        "{:?} producer created for player {}: {}",
+                        kind,
+                        player_id,
+                        producer_id
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to create {:?} producer for player {}: {}",
+                        kind,
+                        player_id,
+                        e
+                    );
+                    let error_msg = ChatServerMessage::Error {
+                        message: format!("Failed to create {:?} producer", kind),
+                    };
+                    send_chat_message_to_player(player_id, &error_msg, chat_connections, redis)
+                        .await;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_consume(
+    player_id: Uuid,
+    producer_id: mediasoup::producer::ProducerId,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get(&room_id) {
+        if let Some(voice_conn) = room_connections.get(&player_id) {
+            let transport = voice_conn.consumer_transport.clone();
+            let client_rtp_capabilities = voice_conn.client_rtp_capabilities.clone();
+            drop(connections);
+
+            if let Some(rtp_capabilities) = client_rtp_capabilities {
+                let mut options =
+                    mediasoup::consumer::ConsumerOptions::new(producer_id, rtp_capabilities);
+                options.paused = true;
+
+                match transport.consume(options).await {
+                    Ok(consumer) => {
+                        let consumer_id = consumer.id();
+                        let kind = consumer.kind();
+                        let rtp_parameters = consumer.rtp_parameters().clone();
+
+                        // Store consumer
+                        let mut connections = voice_connections.lock().await;
+                        if let Some(room_connections) = connections.get_mut(&room_id) {
+                            if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+                                voice_conn.consumers.insert(consumer_id, consumer);
+                            }
+                        }
+                        drop(connections);
+
+                        let msg = ChatServerMessage::Consumed {
+                            id: consumer_id,
+                            producer_id,
+                            kind,
+                            rtp_parameters,
+                        };
+                        send_chat_message_to_player(player_id, &msg, chat_connections, redis).await;
+                        tracing::info!(
+                            "{:?} consumer created for player {}: {}",
+                            kind,
+                            player_id,
+                            consumer_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to create consumer for player {}: {}",
+                            player_id,
+                            e
+                        );
+                        let error_msg = ChatServerMessage::Error {
+                            message: "Failed to create consumer".to_string(),
+                        };
+                        send_chat_message_to_player(player_id, &error_msg, chat_connections, redis)
+                            .await;
+                    }
+                }
+            } else {
+                tracing::error!("No client RTP capabilities stored for player {}", player_id);
+                let error_msg = ChatServerMessage::Error {
+                    message: "Voice not initialized".to_string(),
+                };
+                send_chat_message_to_player(player_id, &error_msg, chat_connections, redis).await;
+            }
+        }
+    }
+}
+async fn handle_consumer_resume(
+    player_id: Uuid,
+    consumer_id: mediasoup::consumer::ConsumerId,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+) {
+    let connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get(&room_id) {
+        if let Some(voice_conn) = room_connections.get(&player_id) {
+            if let Some(consumer) = voice_conn.consumers.get(&consumer_id) {
+                let consumer = consumer.clone();
+                drop(connections);
+
+                if let Err(e) = consumer.resume().await {
+                    tracing::error!(
+                        "Failed to resume consumer {} for player {}: {}",
+                        consumer_id,
+                        player_id,
+                        e
+                    );
+                } else {
+                    tracing::info!("Consumer {} resumed for player {}", consumer_id, player_id);
+                }
+            }
+        }
+    }
+}
+
+async fn handle_mic_toggle(
+    player_id: Uuid,
+    enabled: bool,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let mut connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get_mut(&room_id) {
+        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+            voice_conn.participant.mic_enabled = enabled;
+            let participant = voice_conn.participant.clone();
+            drop(connections);
+
+            if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
+                broadcast_voice_participant_update(
+                    room_id,
+                    participant,
+                    &room_players,
+                    chat_connections,
+                    redis,
+                )
+                .await;
+            }
+
+            tracing::info!(
+                "Player {} mic {}",
+                player_id,
+                if enabled { "enabled" } else { "disabled" }
+            );
+        }
+    }
+}
+
+async fn handle_mute_toggle(
+    player_id: Uuid,
+    muted: bool,
+    voice_connections: &VoiceConnections,
+    room_id: Uuid,
+    chat_connections: &ChatConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let mut connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get_mut(&room_id) {
+        if let Some(voice_conn) = room_connections.get_mut(&player_id) {
+            voice_conn.participant.is_muted = muted;
+            let participant = voice_conn.participant.clone();
+            drop(connections);
+
+            if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
+                broadcast_voice_participant_update(
+                    room_id,
+                    participant,
+                    &room_players,
+                    chat_connections,
+                    redis,
+                )
+                .await;
+            }
+
+            tracing::info!(
+                "Player {} {}",
+                player_id,
+                if muted { "muted" } else { "unmuted" }
+            );
         }
     }
 }

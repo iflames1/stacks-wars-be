@@ -4,16 +4,16 @@ use axum::{
     response::IntoResponse,
 };
 use futures::StreamExt;
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use crate::{
     db,
     models::{
-        chat::{ChatServerMessage, VoiceParticipant},
+        chat::ChatServerMessage,
         game::{GameState, Player, WsQueryParams},
     },
     state::{AppState, ChatHistories, RedisClient},
-    ws::handlers::chat::{message_handler, utils::*},
+    ws::handlers::chat::{message_handler, utils::*, voice::*},
 };
 use axum::extract::ws::{CloseFrame, Message};
 use uuid::Uuid;
@@ -31,8 +31,8 @@ pub async fn chat_handler(
     let redis = state.redis.clone();
     let chat_connections = state.chat_connections.clone();
     let chat_histories = state.chat_histories.clone();
-    let voice_participants = state.voice_participants.clone();
-    let voice_rooms = state.voice_rooms.clone();
+    let voice_connections = state.voice_connections.clone();
+    let worker_manager = state.worker_manager.clone();
 
     // Check if room exists and get room state
     let room_info = db::room::get_room_info(room_id, redis.clone())
@@ -81,8 +81,8 @@ pub async fn chat_handler(
             chat_connections,
             redis,
             chat_histories,
-            voice_participants,
-            voice_rooms,
+            voice_connections,
+            worker_manager,
         )
     }))
 }
@@ -94,8 +94,8 @@ async fn handle_chat_socket(
     chat_connections: crate::state::ChatConnectionInfoMap,
     redis: RedisClient,
     chat_histories: ChatHistories,
-    voice_participants: crate::state::VoiceParticipants,
-    voice_rooms: crate::state::VoiceRooms,
+    voice_connections: VoiceConnections,
+    worker_manager: Arc<mediasoup::worker_manager::WorkerManager>,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -116,14 +116,42 @@ async fn handle_chat_socket(
     };
     send_chat_message_to_player(player.id, &permit_msg, &chat_connections, &redis).await;
 
-    // Send voice permission (same as chat permission for now)
-    let voice_permit_msg = ChatServerMessage::VoicePermit {
-        allowed: is_room_member,
-    };
-    send_chat_message_to_player(player.id, &voice_permit_msg, &chat_connections, &redis).await;
-
-    // If player is a room member, send chat history and voice participants
+    // If player is a room member, set up voice chat and send chat history
     if is_room_member {
+        // Initialize voice connection
+        match VoiceConnection::new(player.clone(), &worker_manager).await {
+            Ok(voice_connection) => {
+                // Send voice initialization
+                send_voice_init(player.id, &voice_connection, &chat_connections, &redis).await;
+
+                // Store voice connection
+                {
+                    let mut connections = voice_connections.lock().await;
+                    let room_connections = connections.entry(room_id).or_insert_with(HashMap::new);
+                    room_connections.insert(player.id, voice_connection);
+                }
+
+                // Broadcast updated participants list
+                if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
+                    broadcast_voice_participants(
+                        room_id,
+                        &voice_connections,
+                        &room_players,
+                        &chat_connections,
+                        &redis,
+                    )
+                    .await;
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to create voice connection for player {}: {}",
+                    player.id,
+                    e
+                );
+            }
+        }
+
         let chat_history = {
             let mut histories = chat_histories.lock().await;
             let history = histories
@@ -138,55 +166,6 @@ async fn handle_chat_socket(
             };
             send_chat_message_to_player(player.id, &history_msg, &chat_connections, &redis).await;
         }
-
-        // Send current voice participants
-        let voice_participants_list = {
-            let participants = voice_participants.lock().await;
-            if let Some(room_participants) = participants.get(&room_id) {
-                room_participants.values().cloned().collect()
-            } else {
-                Vec::new()
-            }
-        };
-
-        let participants_msg = ChatServerMessage::VoiceParticipants {
-            participants: voice_participants_list,
-        };
-        send_chat_message_to_player(player.id, &participants_msg, &chat_connections, &redis).await;
-
-        // Initialize player as voice participant with defaults
-        {
-            let mut participants = voice_participants.lock().await;
-            let room_participants = participants
-                .entry(room_id)
-                .or_insert_with(std::collections::HashMap::new);
-
-            if !room_participants.contains_key(&player.id) {
-                let voice_participant = VoiceParticipant {
-                    player: player.clone(),
-                    mic_enabled: false, // Default mic off
-                    is_muted: false,    // Default not muted (can hear others)
-                    is_speaking: false,
-                };
-                room_participants.insert(player.id, voice_participant.clone());
-
-                // Notify all participants about the new participant
-                let update_msg = ChatServerMessage::VoiceParticipantUpdate {
-                    participant: voice_participant,
-                };
-
-                // Broadcast to all room participants
-                for participant in room_participants.values() {
-                    send_chat_message_to_player(
-                        participant.player.id,
-                        &update_msg,
-                        &chat_connections,
-                        &redis,
-                    )
-                    .await;
-                }
-            }
-        }
     }
 
     message_handler::handle_incoming_chat_messages(
@@ -196,10 +175,31 @@ async fn handle_chat_socket(
         &chat_connections,
         redis.clone(),
         chat_histories,
-        voice_participants,
-        voice_rooms,
+        voice_connections.clone(),
     )
     .await;
 
+    // Clean up connections
     remove_chat_connection(player.id, &chat_connections).await;
+
+    // Remove voice connection
+    {
+        let mut connections = voice_connections.lock().await;
+        if let Some(room_connections) = connections.get_mut(&room_id) {
+            room_connections.remove(&player.id);
+
+            // Broadcast updated participants list
+            if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
+                drop(connections);
+                broadcast_voice_participants(
+                    room_id,
+                    &voice_connections,
+                    &room_players,
+                    &chat_connections,
+                    &redis,
+                )
+                .await;
+            }
+        }
+    }
 }
