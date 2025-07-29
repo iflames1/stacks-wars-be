@@ -90,6 +90,10 @@ pub enum ChatServerMessage {
         producer_transport_options: TransportOptions,
         router_rtp_capabilities: mediasoup::rtp_parameters::RtpCapabilitiesFinalized,
     },
+    NewProducer {
+        producer_id: mediasoup::producer::ProducerId,
+        participant_id: Uuid,
+    },
     ConnectedProducerTransport,
     Produced {
         id: mediasoup::producer::ProducerId,
@@ -100,6 +104,7 @@ pub enum ChatServerMessage {
         producer_id: mediasoup::producer::ProducerId,
         kind: mediasoup::rtp_parameters::MediaKind,
         rtp_parameters: mediasoup::rtp_parameters::RtpParameters,
+        participant_id: Uuid,
     },
     VoiceParticipants {
         participants: Vec<VoiceParticipant>,
@@ -123,6 +128,7 @@ impl ChatServerMessage {
             ChatServerMessage::ChatHistory { .. } => true,
             ChatServerMessage::Error { .. } => true,
             ChatServerMessage::VoiceInit { .. } => true,
+            ChatServerMessage::NewProducer { .. } => true,
             ChatServerMessage::Produced { .. } => true,
             ChatServerMessage::Consumed { .. } => true,
             ChatServerMessage::VoiceParticipants { .. } => true,

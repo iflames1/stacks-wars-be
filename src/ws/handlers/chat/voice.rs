@@ -34,6 +34,7 @@ pub struct VoiceConnection {
     pub consumers: HashMap<ConsumerId, Consumer>,
     pub participant: VoiceParticipant,
     pub client_rtp_capabilities: Option<mediasoup::rtp_parameters::RtpCapabilities>,
+    pub producer_to_participant: HashMap<mediasoup::producer::ProducerId, Uuid>,
 }
 
 impl VoiceConnection {
@@ -94,7 +95,7 @@ impl VoiceConnection {
         let participant = VoiceParticipant {
             player,
             mic_enabled: false,
-            is_muted: true,
+            is_muted: false,
             is_speaking: false,
         };
 
@@ -106,6 +107,7 @@ impl VoiceConnection {
             consumers: HashMap::new(),
             participant,
             client_rtp_capabilities: None,
+            producer_to_participant: HashMap::new(),
         })
     }
 
@@ -129,6 +131,24 @@ impl VoiceConnection {
 }
 
 pub type VoiceConnections = Arc<Mutex<HashMap<Uuid, HashMap<Uuid, VoiceConnection>>>>;
+
+pub async fn get_room_producers(
+    room_id: Uuid,
+    voice_connections: &VoiceConnections,
+) -> Vec<(mediasoup::producer::ProducerId, Uuid)> {
+    let connections = voice_connections.lock().await;
+    if let Some(room_connections) = connections.get(&room_id) {
+        let mut producers = Vec::new();
+        for (participant_id, voice_conn) in room_connections {
+            for producer in &voice_conn.producers {
+                producers.push((producer.id(), *participant_id));
+            }
+        }
+        producers
+    } else {
+        Vec::new()
+    }
+}
 
 pub async fn send_voice_init(
     player_id: Uuid,
