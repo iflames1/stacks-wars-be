@@ -62,12 +62,14 @@ impl VoiceConnection {
             .create_router(RouterOptions::new(media_codecs()))
             .await?;
 
-        let listen_ip_str = if std::env::var("RAILWAY_PUBLIC_DOMAIN").is_ok() {
-            "0.0.0.0"
-        } else {
-            "127.0.0.1"
-        }
-        .to_string();
+        //let listen_ip_str = if std::env::var("RAILWAY_PUBLIC_DOMAIN").is_ok() {
+        //    "0.0.0.0"
+        //} else {
+        //    "127.0.0.1"
+        //}
+        //.to_string();
+
+        let listen_ip_str = "0.0.0.0".to_string();
 
         let addr = std::env::var("RAILWAY_PUBLIC_DOMAIN").ok();
 
