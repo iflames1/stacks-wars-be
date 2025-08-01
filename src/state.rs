@@ -9,14 +9,16 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub rooms: SharedRooms,
-    pub connections: ConnectionInfoMap, // For lobby and lexi-wars
-    pub chat_connections: ChatConnectionInfoMap, // For chat only
     pub redis: RedisClient,
-    pub lobby_join_requests: LobbyJoinRequests,
-    pub bot: Bot,
-    pub lobby_countdowns: LobbyCountdowns,
+    pub connections: ConnectionInfoMap,
+    pub chat_connections: ChatConnectionInfoMap,
     pub chat_histories: ChatHistories,
+    pub rooms: SharedRooms,
+    pub lobby_join_requests: LobbyJoinRequests,
+    pub lobby_countdowns: LobbyCountdowns,
+    pub telegram_bot: Bot,
+    pub voice_connections: crate::ws::handlers::chat::voice::VoiceConnections,
+    pub worker_manager: Arc<mediasoup::worker_manager::WorkerManager>,
 }
 
 use crate::models::{chat::ChatMessage, game::GameRoom, lobby::JoinRequest};
@@ -28,23 +30,27 @@ pub struct ConnectionInfo {
 
 #[derive(Debug)]
 pub struct ChatConnectionInfo {
-    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, // no need for room_id here, ChatConnectionInfoMap hashmap will track it
+    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CountdownState {
     pub current_time: u32,
+    pub is_running: bool,
 }
 
 impl Default for CountdownState {
     fn default() -> Self {
-        Self { current_time: 15 }
+        Self {
+            current_time: 15,
+            is_running: false,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ChatHistory {
-    pub messages: Vec<ChatMessage>,
+    messages: Vec<ChatMessage>,
 }
 
 impl ChatHistory {
@@ -75,10 +81,10 @@ pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 // Single chat connection per player, but track which room they're chatting in
 pub type ChatConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ChatConnectionInfo>>>>;
 
-pub type RedisClient = Pool<RedisConnectionManager>;
+pub type ChatHistories = Arc<Mutex<HashMap<Uuid, ChatHistory>>>;
 
 pub type LobbyJoinRequests = Arc<Mutex<HashMap<Uuid, Vec<JoinRequest>>>>;
 
 pub type LobbyCountdowns = Arc<Mutex<HashMap<Uuid, CountdownState>>>;
 
-pub type ChatHistories = Arc<Mutex<HashMap<Uuid, ChatHistory>>>; // TODO: move to ChatConnectionInfoMap
+pub type RedisClient = Pool<RedisConnectionManager>;
