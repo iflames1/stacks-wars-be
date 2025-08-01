@@ -95,3 +95,56 @@ pub async fn update_display_name(
 
     Ok(())
 }
+
+pub async fn increase_wars_point(
+    user_id: Uuid,
+    amount: u64,
+    redis: RedisClient,
+) -> Result<u64, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let user_key = format!("user:{}", user_id);
+    let new_total: i64 = conn
+        .hincr(&user_key, "wars_point", amount as i64)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(new_total.max(0) as u64)
+}
+
+pub async fn decrease_wars_point(
+    user_id: Uuid,
+    amount: u64,
+    redis: RedisClient,
+) -> Result<u64, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let user_key = format!("user:{}", user_id);
+    let current: i64 = conn
+        .hget::<_, _, Option<i64>>(&user_key, "wars_point")
+        .await
+        .map_err(AppError::RedisCommandError)?
+        .unwrap_or(0);
+
+    let new_total = if current <= 0 || current < amount as i64 {
+        let _: () = conn
+            .hset(&user_key, "wars_point", 0)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+        0
+    } else {
+        let result: i64 = conn
+            .hincr(&user_key, "wars_point", -(amount as i64))
+            .await
+            .map_err(AppError::RedisCommandError)?;
+        result.max(0) as u64
+    };
+
+    Ok(new_total)
+}
