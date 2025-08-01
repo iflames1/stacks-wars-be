@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::StreamExt;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 use crate::{
     db,
@@ -13,7 +13,7 @@ use crate::{
         game::{GameState, Player, WsQueryParams},
     },
     state::{AppState, ChatHistories, RedisClient},
-    ws::handlers::chat::{message_handler, utils::*, voice::*},
+    ws::handlers::chat::{message_handler, utils::*},
 };
 use axum::extract::ws::{CloseFrame, Message};
 use uuid::Uuid;
@@ -31,8 +31,6 @@ pub async fn chat_handler(
     let redis = state.redis.clone();
     let chat_connections = state.chat_connections.clone();
     let chat_histories = state.chat_histories.clone();
-    let voice_connections = state.voice_connections.clone();
-    let worker_manager = state.worker_manager.clone();
 
     // Check if room exists and get room state
     let room_info = db::room::get_room_info(room_id, redis.clone())
@@ -81,8 +79,6 @@ pub async fn chat_handler(
             chat_connections,
             redis,
             chat_histories,
-            voice_connections,
-            worker_manager,
         )
     }))
 }
@@ -94,8 +90,6 @@ async fn handle_chat_socket(
     chat_connections: crate::state::ChatConnectionInfoMap,
     redis: RedisClient,
     chat_histories: ChatHistories,
-    voice_connections: VoiceConnections,
-    worker_manager: Arc<mediasoup::worker_manager::WorkerManager>,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -116,42 +110,8 @@ async fn handle_chat_socket(
     };
     send_chat_message_to_player(player.id, &permit_msg, &chat_connections, &redis).await;
 
-    // If player is a room member, set up voice chat and send chat history
+    // If player is a room member, send chat history
     if is_room_member {
-        // Initialize voice connection
-        match VoiceConnection::new(player.clone(), &worker_manager).await {
-            Ok(voice_connection) => {
-                // Send voice initialization
-                send_voice_init(player.id, &voice_connection, &chat_connections, &redis).await;
-
-                // Store voice connection
-                {
-                    let mut connections = voice_connections.lock().await;
-                    let room_connections = connections.entry(room_id).or_insert_with(HashMap::new);
-                    room_connections.insert(player.id, voice_connection);
-                }
-
-                // Broadcast updated participants list
-                if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
-                    broadcast_voice_participants(
-                        room_id,
-                        &voice_connections,
-                        &room_players,
-                        &chat_connections,
-                        &redis,
-                    )
-                    .await;
-                }
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to create voice connection for player {}: {}",
-                    player.id,
-                    e
-                );
-            }
-        }
-
         let chat_history = {
             let mut histories = chat_histories.lock().await;
             let history = histories
@@ -175,31 +135,8 @@ async fn handle_chat_socket(
         &chat_connections,
         redis.clone(),
         chat_histories,
-        voice_connections.clone(),
     )
     .await;
 
-    // Clean up connections
     remove_chat_connection(player.id, &chat_connections).await;
-
-    // Remove voice connection
-    {
-        let mut connections = voice_connections.lock().await;
-        if let Some(room_connections) = connections.get_mut(&room_id) {
-            room_connections.remove(&player.id);
-
-            // Broadcast updated participants list
-            if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
-                drop(connections);
-                broadcast_voice_participants(
-                    room_id,
-                    &voice_connections,
-                    &room_players,
-                    &chat_connections,
-                    &redis,
-                )
-                .await;
-            }
-        }
-    }
 }
