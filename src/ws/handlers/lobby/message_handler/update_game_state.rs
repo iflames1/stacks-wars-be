@@ -154,13 +154,7 @@ async fn start_countdown(
     // Initialize countdown state
     {
         let mut countdowns_guard = countdowns.lock().await;
-        countdowns_guard.insert(
-            room_id,
-            CountdownState {
-                current_time: 15,
-                is_running: true,
-            },
-        );
+        countdowns_guard.insert(room_id, CountdownState { current_time: 15 });
     }
 
     for i in (0..=15).rev() {
