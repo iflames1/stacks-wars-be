@@ -1,4 +1,6 @@
 use crate::{errors::AppError, models::User, state::RedisClient};
+use redis::AsyncCommands;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub async fn get_user_by_id(id: Uuid, redis: RedisClient) -> Result<User, AppError> {
@@ -9,14 +11,28 @@ pub async fn get_user_by_id(id: Uuid, redis: RedisClient) -> Result<User, AppErr
 
     let key = format!("user:{}", id);
 
-    let user_json: String = redis::cmd("GET")
-        .arg(&key)
-        .query_async(&mut *conn)
+    let data: HashMap<String, String> = conn
+        .hgetall(&key)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let user =
-        serde_json::from_str(&user_json).map_err(|e| AppError::Deserialization(e.to_string()))?;
+    if data.is_empty() {
+        return Err(AppError::NotFound("User not found".into()));
+    }
+
+    let user = User {
+        id,
+        wallet_address: data
+            .get("wallet_address")
+            .cloned()
+            .unwrap_or_else(|| "".into()),
+        display_name: data.get("display_name").cloned(),
+        wars_point: data
+            .get("wars_point")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0),
+        username: data.get("username").cloned(),
+    };
 
     Ok(user)
 }
