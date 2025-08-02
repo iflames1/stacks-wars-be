@@ -62,14 +62,14 @@ pub async fn create_lobby(
 
         let pool_key = format!("lobby:{}:pool", lobby_id);
 
-        let pool_hash = vec![
-            ("entry_amount", pool_struct.entry_amount.to_string()),
-            ("contract_address", pool_struct.contract_address.clone()),
-            ("current_amount", pool_struct.current_amount.to_string()),
-        ];
+        let pool_hash = pool_struct.to_redis_hash();
+        let fields: Vec<(&str, &str)> = pool_hash
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
 
         let _: () = conn
-            .hset_multiple(&pool_key, &pool_hash)
+            .hset_multiple(&pool_key, &fields)
             .await
             .map_err(AppError::RedisCommandError)?;
     }

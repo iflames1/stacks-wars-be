@@ -44,7 +44,7 @@ pub struct GameRoom {
     pub rule_index: usize,
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
-    pub pool: Option<RoomPool>,
+    pub pool: Option<LobbyPool>,
     pub connected_players: Vec<Player>,
     pub connected_players_count: usize,
     pub game_started: bool,
@@ -178,13 +178,6 @@ impl Player {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoomPool {
-    pub entry_amount: f64,
-    pub contract_address: String,
-    pub current_amount: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LobbyPoolInput {
     pub entry_amount: f64,
     pub contract_address: String,
@@ -218,7 +211,7 @@ pub struct GameRoomInfo {
 pub struct RoomExtended {
     pub info: GameRoomInfo,
     pub players: Vec<Player>,
-    pub pool: Option<RoomPool>,
+    pub pool: Option<LobbyPool>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -341,6 +334,38 @@ pub struct LobbyPool {
     pub entry_amount: f64,
     pub contract_address: String,
     pub current_amount: f64,
+}
+
+impl LobbyPool {
+    pub fn to_redis_hash(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        map.insert("entry_amount".into(), self.entry_amount.to_string());
+        map.insert("contract_address".into(), self.contract_address.clone());
+        map.insert("current_amount".into(), self.current_amount.to_string());
+        map
+    }
+
+    pub fn from_redis_hash(map: &HashMap<String, String>) -> Result<Self, AppError> {
+        let entry_amount = map
+            .get("entry_amount")
+            .ok_or_else(|| AppError::Deserialization("Missing entry_amount".into()))?
+            .parse()
+            .map_err(|_| AppError::Deserialization("Invalid entry_amount".into()))?;
+        let contract_address = map
+            .get("contract_address")
+            .ok_or_else(|| AppError::Deserialization("Missing contract_address".into()))?
+            .clone();
+        let current_amount = map
+            .get("current_amount")
+            .ok_or_else(|| AppError::Deserialization("Missing current_amount".into()))?
+            .parse()
+            .map_err(|_| AppError::Deserialization("Invalid current_amount".into()))?;
+        Ok(Self {
+            entry_amount,
+            contract_address,
+            current_amount,
+        })
+    }
 }
 
 #[derive(Serialize)]
