@@ -11,15 +11,17 @@ use crate::{
     db::{
         create_room, join_room, leave_room,
         room::{
-            get::get_all_rooms_extended, get_all_rooms, get_room, get_room_extended, get_room_info,
-            get_room_players, get_rooms_by_game_id, update_claim_state,
+            get::get_all_rooms_extended, get_all_lobby_info, get_all_rooms, get_room,
+            get_room_extended, get_room_info, get_room_players, get_rooms_by_game_id,
+            update_claim_state,
         },
         update_game_state, update_player_state,
     },
     errors::AppError,
     models::{
         game::{
-            ClaimState, GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPoolInput,
+            ClaimState, GameRoomInfo, GameState, LobbyInfo, Player, PlayerState, RoomExtended,
+            RoomPoolInput,
         },
         lobby::RoomQuery,
     },
@@ -206,6 +208,28 @@ pub async fn get_all_rooms_handler(
 
     tracing::info!("Retrieved {} rooms", rooms.len());
     Ok(Json(rooms))
+}
+
+pub async fn get_all_lobby_info_handler(
+    Query(query): Query<RoomQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
+    let filter_states = parse_states(query.state);
+
+    let (page, limit) = match query.page {
+        Some(p) => (p.max(1), query.limit.unwrap_or(12).min(100)),
+        None => (1, u32::MAX),
+    };
+
+    let lobbies = get_all_lobby_info(filter_states, page, limit, state.redis.clone())
+        .await
+        .map_err(|e| {
+            tracing::error!("Error retrieving all lobbies: {}", e);
+            e.to_response()
+        })?;
+
+    tracing::info!("Retrieved {} lobbies", lobbies.len());
+    Ok(Json(lobbies))
 }
 
 pub async fn get_players_handler(

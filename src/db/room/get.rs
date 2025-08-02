@@ -5,7 +5,10 @@ use uuid::Uuid;
 use crate::{
     errors::AppError,
     models::{
-        game::{GameRoomInfo, GameState, LobbyInfo, Player, PlayerState, RoomExtended, RoomPool},
+        game::{
+            GameRoomInfo, GameState, LobbyInfo, LobbyState, Player, PlayerState, RoomExtended,
+            RoomPool,
+        },
         lobby::PaginationMeta,
     },
     state::RedisClient,
@@ -138,72 +141,89 @@ pub async fn get_connected_players(
     Ok(players)
 }
 
-pub async fn get_all_rooms(
-    filter_states: Option<Vec<GameState>>,
+pub async fn get_all_lobby_info(
+    filter_states: Option<Vec<LobbyState>>,
     page: u32,
     limit: u32,
     redis: RedisClient,
-) -> Result<Vec<GameRoomInfo>, AppError> {
+) -> Result<Vec<LobbyInfo>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis conn timed out".into()),
     })?;
 
-    let keys: Vec<String> = redis::cmd("KEYS")
-        .arg("room:*:info")
-        .query_async(&mut *conn)
-        .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+    let offset = ((page.saturating_sub(1)) as usize).saturating_mul(limit as usize);
 
-    let mut rooms = Vec::new();
-    for key in keys {
-        let value: String = redis::cmd("GET")
-            .arg(key)
+    // Determine which sorted set to query
+    let lobby_ids: Vec<String> = if let Some(states) = filter_states {
+        let keys: Vec<String> = states
+            .iter()
+            .map(|s| format!("lobbies:{}", format!("{:?}", s).to_lowercase()))
+            .collect();
+
+        let union_key = format!("temp:union:{}", uuid::Uuid::new_v4());
+
+        // Create temporary ZUNIONSTORE
+        let _: () = redis::cmd("ZUNIONSTORE")
+            .arg(&union_key)
+            .arg(keys.len())
+            .arg(keys.clone())
             .query_async(&mut *conn)
             .await
-            .map_err(|e| AppError::RedisCommandError(e.into()))?;
-        let room: GameRoomInfo = serde_json::from_str(&value)
-            .map_err(|_| AppError::Deserialization("Invalid room info".to_string()))?;
+            .map_err(AppError::RedisCommandError)?;
 
-        if let Some(ref state_filters) = filter_states {
-            if !state_filters.contains(&room.state) {
-                continue;
+        let _: Option<()> = redis::cmd("EXPIRE")
+            .arg(&union_key)
+            .arg(30)
+            .query_async(&mut *conn)
+            .await
+            .ok();
+
+        // Use ZREVRANGE on the temporary union key
+        let ids: Vec<String> = redis::cmd("ZREVRANGE")
+            .arg(&union_key)
+            .arg(offset)
+            .arg(offset + (limit as usize) - 1)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        // Cleanup
+        let _: Option<()> = redis::cmd("DEL")
+            .arg(&union_key)
+            .query_async(&mut *conn)
+            .await
+            .ok(); // Don't fail if DEL fails
+
+        ids
+    } else {
+        // No filters, just query from lobbies:all
+        redis::cmd("ZREVRANGE")
+            .arg("lobbies:all")
+            .arg(offset)
+            .arg(offset + (limit as usize) - 1)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?
+    };
+
+    // Fetch each lobby hash and reconstruct LobbyInfo
+    let mut out = Vec::new();
+    for id_str in lobby_ids {
+        if let Ok(uuid) = Uuid::parse_str(&id_str) {
+            let key = format!("lobby:{}", uuid);
+            let map: HashMap<String, String> = redis::cmd("HGETALL")
+                .arg(&key)
+                .query_async(&mut *conn)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+            if let Ok(info) = LobbyInfo::from_redis_hash(&map) {
+                out.push(info);
             }
         }
-
-        rooms.push(room);
     }
 
-    // Sort by created_at in descending order (latest first)
-    rooms.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
-    // Apply pagination
-    let total_count = rooms.len() as u32;
-    let total_pages = if total_count == 0 {
-        1
-    } else if limit == u32::MAX {
-        1
-    } else {
-        (total_count + limit - 1) / limit
-    };
-    let offset = (page - 1) * limit;
-
-    let paginated_rooms = rooms
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .collect();
-
-    let _pagination_meta = PaginationMeta {
-        page,
-        limit,
-        total_count,
-        total_pages,
-        has_next: page < total_pages,
-        has_previous: page > 1,
-    };
-
-    Ok(paginated_rooms)
+    Ok(out)
 }
 
 pub async fn get_room_players(room_id: Uuid, redis: RedisClient) -> Result<Vec<Player>, AppError> {

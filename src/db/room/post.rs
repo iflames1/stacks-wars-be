@@ -75,7 +75,7 @@ pub async fn create_lobby(
     }
 
     let lobby_key = format!("lobby:{}", lobby_id);
-    let player_key = format!("lobby:{}:players:{}", lobby_id, creator_user.id);
+    let player_key = format!("lobby:{}:player:{}", lobby_id, creator_user.id);
     let lobby_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address.clone(),
