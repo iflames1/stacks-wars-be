@@ -11,18 +11,15 @@ use crate::{
     db::{
         create_room, join_room, leave_room,
         room::{
-            get::get_all_rooms_extended, get_all_lobby_info, get_all_rooms, get_room,
-            get_room_extended, get_room_info, get_room_players, get_rooms_by_game_id,
+            get::{get_all_rooms_extended, get_lobbies_by_game_id},
+            get_all_lobby_info, get_lobby_info, get_room_extended, get_room_info, get_room_players,
             update_claim_state,
         },
         update_game_state, update_player_state,
     },
     errors::AppError,
     models::{
-        game::{
-            ClaimState, GameRoomInfo, GameState, LobbyInfo, Player, PlayerState, RoomExtended,
-            RoomPoolInput,
-        },
+        game::{ClaimState, GameState, LobbyInfo, LobbyState, Player, PlayerState, RoomExtended},
         lobby::RoomQuery,
     },
     state::AppState,
@@ -97,16 +94,16 @@ pub async fn get_room_extended_handler(
     Ok(Json(extended))
 }
 
-fn parse_states(state_param: Option<String>) -> Option<Vec<GameState>> {
+fn parse_states(state_param: Option<String>) -> Option<Vec<LobbyState>> {
     state_param
         .map(|s| {
             s.split(',')
                 .filter_map(|state_str| {
                     let trimmed = state_str.trim();
                     match trimmed.to_lowercase().as_str() {
-                        "waiting" => Some(GameState::Waiting),
-                        "inprogress" | "in_progress" => Some(GameState::InProgress),
-                        "finished" => Some(GameState::Finished),
+                        "waiting" => Some(LobbyState::Waiting),
+                        "inprogress" | "in_progress" => Some(LobbyState::InProgress),
+                        "finished" => Some(LobbyState::Finished),
                         _ => {
                             tracing::warn!("Invalid state filter: {}", trimmed);
                             None
@@ -115,47 +112,45 @@ fn parse_states(state_param: Option<String>) -> Option<Vec<GameState>> {
                 })
                 .collect()
         })
-        .filter(|states: &Vec<GameState>| !states.is_empty())
+        .filter(|states: &Vec<LobbyState>| !states.is_empty())
 }
 
-pub async fn get_rooms_by_game_id_handler(
+pub async fn get_lobbies_by_game_id_handler(
     Path(game_id): Path<Uuid>,
     Query(query): Query<RoomQuery>,
     State(state): State<AppState>,
-) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
+) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
     let filter_states = parse_states(query.state);
 
-    let (page, limit) = if let Some(p) = query.page {
-        let page = p.max(1);
-        let limit = query.limit.unwrap_or(12).min(100); // Default 12, max 100 per page
-        (page, limit)
-    } else {
-        // No pagination - return all items
-        (1, u32::MAX)
+    let (page, limit) = match query.page {
+        Some(p) => (p.max(1), query.limit.unwrap_or(12).min(100)),
+        None => (1, u32::MAX),
     };
 
-    let rooms = get_rooms_by_game_id(game_id, filter_states, page, limit, state.redis.clone())
+    let lobbies = get_lobbies_by_game_id(game_id, filter_states, page, limit, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving rooms by game ID: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Retrieved {} rooms for game ID: {}", rooms.len(), game_id);
-    Ok(Json(rooms))
+    tracing::info!("Retrieved {} rooms for game ID: {}", lobbies.len(), game_id);
+    Ok(Json(lobbies))
 }
 
-pub async fn get_room_handler(
+pub async fn get_lobby_handler(
     Path(room_id): Path<Uuid>,
     State(state): State<AppState>,
-) -> Result<Json<GameRoomInfo>, (StatusCode, String)> {
-    let room_info = get_room(room_id, state.redis.clone()).await.map_err(|e| {
-        tracing::error!("Error retrieving room info: {}", e);
-        e.to_response()
-    })?;
+) -> Result<Json<LobbyInfo>, (StatusCode, String)> {
+    let lobby_info = get_lobby_info(room_id, state.redis.clone())
+        .await
+        .map_err(|e| {
+            tracing::error!("Error retrieving room info: {}", e);
+            e.to_response()
+        })?;
 
     tracing::info!("Retrieved room info for room ID: {}", room_id);
-    Ok(Json(room_info))
+    Ok(Json(lobby_info))
 }
 
 pub async fn get_all_rooms_extended_handler(
@@ -184,32 +179,6 @@ pub async fn get_all_rooms_extended_handler(
     Ok(Json(rooms))
 }
 
-pub async fn get_all_rooms_handler(
-    Query(query): Query<RoomQuery>,
-    State(state): State<AppState>,
-) -> Result<Json<Vec<GameRoomInfo>>, (StatusCode, String)> {
-    let filter_states = parse_states(query.state);
-
-    let (page, limit) = if let Some(p) = query.page {
-        let page = p.max(1); // Ensure page is at least 1
-        let limit = query.limit.unwrap_or(12).min(100); // Default 12, max 100 per page
-        (page, limit)
-    } else {
-        // No pagination - return all items
-        (1, u32::MAX)
-    };
-
-    let rooms = get_all_rooms(filter_states, page, limit, state.redis.clone())
-        .await
-        .map_err(|e| {
-            tracing::error!("Error retrieving all rooms: {}", e);
-            e.to_response()
-        })?;
-
-    tracing::info!("Retrieved {} rooms", rooms.len());
-    Ok(Json(rooms))
-}
-
 pub async fn get_all_lobby_info_handler(
     Query(query): Query<RoomQuery>,
     State(state): State<AppState>,
@@ -224,7 +193,7 @@ pub async fn get_all_lobby_info_handler(
     let lobbies = get_all_lobby_info(filter_states, page, limit, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error retrieving all lobbies: {}", e);
+            tracing::error!("Error retrieving lobbies: {}", e);
             e.to_response()
         })?;
 
