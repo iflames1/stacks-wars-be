@@ -13,7 +13,7 @@ use crate::{
     state::RedisClient,
 };
 
-pub async fn create_room(
+pub async fn create_lobby(
     name: String,
     description: Option<String>,
     creator_id: Uuid,
@@ -75,10 +75,10 @@ pub async fn create_room(
             .map_err(AppError::RedisCommandError)?;
     }
 
-    let room_key = format!("lobby:{}", lobby_id);
+    let lobby_key = format!("lobby:{}", lobby_id);
     let players_key = format!("lobby:{}:players", lobby_id);
 
-    let room_player = Player {
+    let lobby_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address.clone(),
         display_name: creator_user.display_name.clone(),
@@ -93,7 +93,7 @@ pub async fn create_room(
     };
 
     let player_json =
-        serde_json::to_string(&room_player).map_err(|e| AppError::Serialization(e.to_string()))?;
+        serde_json::to_string(&lobby_player).map_err(|e| AppError::Serialization(e.to_string()))?;
 
     let lobby_info_json =
         serde_json::to_string(&lobby_info).map_err(|e| AppError::Serialization(e.to_string()))?;
@@ -102,7 +102,7 @@ pub async fn create_room(
 
     let _: () = redis::pipe()
         .cmd("HSET")
-        .arg(&room_key)
+        .arg(&lobby_key)
         .arg(lobby_info_json)
         .ignore()
         .cmd("ZADD")
@@ -121,7 +121,7 @@ pub async fn create_room(
         .arg(lobby_id.to_string())
         .ignore()
         .cmd("ZADD")
-        .arg(format!("game:{}:rooms", game_id))
+        .arg(format!("game:{}:lobbies", game_id))
         .arg(created_score)
         .arg(lobby_id.to_string())
         .query_async(&mut *conn)
