@@ -8,7 +8,7 @@ use crate::{
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::game::{
-        GameRoomInfo, GameState, GameType, Player, PlayerState, RoomPool, RoomPoolInput,
+        GameType, LobbyInfo, LobbyPool, LobbyPoolInput, LobbyState, Player, PlayerState,
     },
     state::RedisClient,
 };
@@ -19,22 +19,22 @@ pub async fn create_room(
     creator_id: Uuid,
     game_id: Uuid,
     game_name: String,
-    pool: Option<RoomPoolInput>,
+    pool: Option<LobbyPoolInput>,
     redis: RedisClient,
     bot: Bot,
 ) -> Result<Uuid, AppError> {
-    let room_id = Uuid::new_v4();
+    let lobby_id = Uuid::new_v4();
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let room_info = GameRoomInfo {
-        id: room_id,
+    let lobby_info = LobbyInfo {
+        id: lobby_id,
         name,
         description,
         creator_id,
-        state: GameState::Waiting,
+        state: LobbyState::Waiting,
         game_id,
         game_name,
         participants: 1,
@@ -45,6 +45,7 @@ pub async fn create_room(
 
     let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
 
+    // Store pool if it exists
     if let Some(pool_input) = &pool {
         validate_payment_tx(
             &pool_input.tx_id,
@@ -54,54 +55,69 @@ pub async fn create_room(
         )
         .await?;
 
-        let pool_struct = RoomPool {
-            entry_amount: pool_input.entry_amount.clone(),
+        let pool_struct = LobbyPool {
+            entry_amount: pool_input.entry_amount,
             contract_address: pool_input.contract_address.clone(),
             current_amount: pool_input.entry_amount,
         };
 
-        let pool_key = format!("room:{}:pool", room_id);
-        let pool_json = serde_json::to_string(&pool_struct)
-            .map_err(|e| AppError::Serialization(e.to_string()))?;
+        let pool_key = format!("lobby:{}:pool", lobby_id);
+
+        let pool_hash = vec![
+            ("entry_amount", pool_struct.entry_amount.to_string()),
+            ("contract_address", pool_struct.contract_address.clone()),
+            ("current_amount", pool_struct.current_amount.to_string()),
+        ];
 
         let _: () = conn
-            .set(pool_key, pool_json)
+            .hset_multiple(&pool_key, &pool_hash)
             .await
             .map_err(AppError::RedisCommandError)?;
     }
 
-    // Serialize room info
-    let room_info_json =
-        serde_json::to_string(&room_info).map_err(|e| AppError::Serialization(e.to_string()))?;
+    let room_key = format!("lobby:{}", lobby_id);
+    let players_key = format!("lobby:{}:players", lobby_id);
 
     let room_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address.clone(),
         display_name: creator_user.display_name.clone(),
+        username: creator_user.username.clone(),
         state: PlayerState::Ready,
-        used_words: Vec::new(),
+        used_words: None,
         rank: None,
         tx_id: pool.as_ref().map(|p| p.tx_id.to_owned()),
         claim: None,
         prize: None,
+        wars_point: creator_user.wars_point,
     };
 
-    let room_info_key = format!("room:{}:info", room_id);
-
-    let room_player_json =
+    let player_json =
         serde_json::to_string(&room_player).map_err(|e| AppError::Serialization(e.to_string()))?;
 
+    let lobby_info_json =
+        serde_json::to_string(&lobby_info).map_err(|e| AppError::Serialization(e.to_string()))?;
+
     let _: () = redis::pipe()
-        .cmd("SET")
-        .arg(&room_info_key)
-        .arg(room_info_json)
+        .cmd("HSET")
+        .arg(&room_key)
+        .arg(lobby_info_json)
         .ignore()
         .cmd("SADD")
-        .arg(format!("room:{}:players", room_id))
-        .arg(room_player_json)
+        .arg(&players_key)
+        .arg(player_json)
+        .ignore()
+        .cmd("SADD")
+        .arg("lobbies:all")
+        .arg(lobby_id.to_string())
+        .ignore()
+        .cmd("SADD")
+        .arg(format!("lobbies:{:?}", LobbyState::Waiting).to_lowercase())
+        .arg(lobby_id.to_string())
+        .ignore()
         .cmd("SADD")
         .arg(format!("game:{}:rooms", game_id))
-        .arg(room_id.to_string())
+        .arg(lobby_id.to_string())
         .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
@@ -130,15 +146,15 @@ pub async fn create_room(
             .unwrap_or_default();
 
         let payload = BotNewLobbyPayload {
-            room_id,
-            room_name: room_info.name.clone(),
-            description: room_info.description.clone(),
-            game_name: room_info.game_name.clone(),
+            lobby_id,
+            lobby_name: lobby_info.name.clone(),
+            description: lobby_info.description.clone(),
+            game_name: lobby_info.game_name.clone(),
             game_image,
             entry_amount: pool.as_ref().and_then(|p| Some(p.entry_amount)),
-            contract_address: room_info.contract_address.clone(),
-            creator_display_name: creator_user.display_name,
-            wallet_address: creator_user.wallet_address,
+            contract_address: lobby_info.contract_address.clone(),
+            creator_name: creator_user.display_name.or(creator_user.username),
+            wallet_address: creator_user.wallet_address.clone(),
         };
 
         let chat_id = std::env::var("TELEGRAM_CHAT_ID")
@@ -151,5 +167,5 @@ pub async fn create_room(
         }
     });
 
-    Ok(room_id)
+    Ok(lobby_id)
 }

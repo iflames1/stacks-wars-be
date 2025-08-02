@@ -57,13 +57,11 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
 
     let user_key = format!("user:{}", user.id);
 
-    let mut user_hash = vec![
+    let user_hash = vec![
         ("id", user.id.to_string()),
         ("wallet_address", user.wallet_address.clone()),
+        ("wars_point", user.wars_point.to_string()),
     ];
-    if let Some(name) = &user.display_name {
-        user_hash.push(("display_name", name.clone()));
-    }
 
     // Store user as Redis hash
     let _: () = conn
