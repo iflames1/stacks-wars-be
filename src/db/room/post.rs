@@ -40,7 +40,6 @@ pub async fn create_lobby(
         participants: 1,
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
         created_at: Utc::now(),
-        connected_players: Vec::new(),
     };
 
     let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
@@ -76,8 +75,7 @@ pub async fn create_lobby(
     }
 
     let lobby_key = format!("lobby:{}", lobby_id);
-    let players_key = format!("lobby:{}:players", lobby_id);
-
+    let player_key = format!("lobby:{}:players:{}", lobby_id, creator_user.id);
     let lobby_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address.clone(),
@@ -91,24 +89,30 @@ pub async fn create_lobby(
         prize: None,
         wars_point: creator_user.wars_point,
     };
+    let player_hash = lobby_player.to_redis_hash();
 
-    let player_json =
-        serde_json::to_string(&lobby_player).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    let lobby_info_json =
-        serde_json::to_string(&lobby_info).map_err(|e| AppError::Serialization(e.to_string()))?;
+    let lobby_fields = lobby_info.to_redis_hash();
 
     let created_score = lobby_info.created_at.timestamp();
 
     let _: () = redis::pipe()
         .cmd("HSET")
         .arg(&lobby_key)
-        .arg(lobby_info_json)
+        .arg(
+            lobby_fields
+                .iter()
+                .flat_map(|(k, v)| [k.as_ref(), v.as_str()])
+                .collect::<Vec<&str>>(),
+        )
         .ignore()
-        .cmd("ZADD")
-        .arg(&players_key)
-        .arg(created_score)
-        .arg(player_json)
+        .cmd("HSET")
+        .arg(&player_key)
+        .arg(
+            player_hash
+                .iter()
+                .flat_map(|(k, v)| [k.as_ref(), v.as_str()])
+                .collect::<Vec<&str>>(),
+        )
         .ignore()
         .cmd("ZADD")
         .arg("lobbies:all")

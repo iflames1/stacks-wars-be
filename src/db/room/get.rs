@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use uuid::Uuid;
 
 use crate::{
     errors::AppError,
     models::{
-        game::{GameRoomInfo, GameState, Player, PlayerState, RoomExtended, RoomPool},
+        game::{GameRoomInfo, GameState, LobbyInfo, Player, PlayerState, RoomExtended, RoomPool},
         lobby::PaginationMeta,
     },
     state::RedisClient,
@@ -83,22 +85,57 @@ pub async fn get_rooms_by_game_id(
     Ok(paginated_rooms)
 }
 
-pub async fn get_room(room_id: Uuid, redis: RedisClient) -> Result<GameRoomInfo, AppError> {
+pub async fn get_lobby_info(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyInfo, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+    let key = format!("lobby:{}", lobby_id);
+
+    // fetch base hash
+    let map: HashMap<String, String> = redis::cmd("HGETALL")
+        .arg(&key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+    if map.is_empty() {
+        return Err(AppError::NotFound(format!("Lobby {} not found", lobby_id)));
+    }
+
+    let info = LobbyInfo::from_redis_hash(&map)?;
+
+    Ok(info)
+}
+
+pub async fn get_connected_players(
+    lobby_id: Uuid,
+    redis: RedisClient,
+) -> Result<Vec<Player>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("room:{}:info", room_id);
-    let json: String = redis::cmd("GET")
-        .arg(key)
+    let pattern = format!("lobby:{}:connected_player:*", lobby_id);
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(&pattern)
         .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
-    let info: GameRoomInfo = serde_json::from_str(&json)
-        .map_err(|_| AppError::Deserialization("Invalid room info JSON".into()))?;
 
-    Ok(info)
+    let mut players = Vec::with_capacity(keys.len());
+    for key in keys {
+        let pmap: HashMap<String, String> = redis::cmd("HGETALL")
+            .arg(&key)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        let player = Player::from_redis_hash(&pmap)?;
+        players.push(player);
+    }
+
+    Ok(players)
 }
 
 pub async fn get_all_rooms(
