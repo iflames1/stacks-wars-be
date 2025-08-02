@@ -98,25 +98,31 @@ pub async fn create_room(
     let lobby_info_json =
         serde_json::to_string(&lobby_info).map_err(|e| AppError::Serialization(e.to_string()))?;
 
+    let created_score = lobby_info.created_at.timestamp();
+
     let _: () = redis::pipe()
         .cmd("HSET")
         .arg(&room_key)
         .arg(lobby_info_json)
         .ignore()
-        .cmd("SADD")
+        .cmd("ZADD")
         .arg(&players_key)
+        .arg(created_score)
         .arg(player_json)
         .ignore()
-        .cmd("SADD")
+        .cmd("ZADD")
         .arg("lobbies:all")
+        .arg(created_score)
         .arg(lobby_id.to_string())
         .ignore()
-        .cmd("SADD")
+        .cmd("ZADD")
         .arg(format!("lobbies:{:?}", LobbyState::Waiting).to_lowercase())
+        .arg(created_score)
         .arg(lobby_id.to_string())
         .ignore()
-        .cmd("SADD")
+        .cmd("ZADD")
         .arg(format!("game:{}:rooms", game_id))
+        .arg(created_score)
         .arg(lobby_id.to_string())
         .query_async(&mut *conn)
         .await
