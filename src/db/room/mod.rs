@@ -4,7 +4,7 @@ pub mod put;
 
 pub use get::{
     get_all_lobby_info, get_connected_players, get_lobby_info, get_ready_room_players,
-    get_room_extended, get_room_info, get_room_players, get_room_pool,
+    get_room_extended, get_room_info, get_room_pool,
 };
 pub use post::create_lobby;
 pub use put::{

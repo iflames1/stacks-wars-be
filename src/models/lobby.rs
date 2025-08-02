@@ -20,7 +20,7 @@ pub struct JoinRequest {
 }
 
 #[derive(Deserialize)]
-pub struct RoomQuery {
+pub struct LobbyQuery {
     pub state: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,

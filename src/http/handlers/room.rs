@@ -11,16 +11,20 @@ use crate::{
     db::{
         create_room, join_room, leave_room,
         room::{
-            get::{get_all_rooms_extended, get_lobbies_by_game_id},
-            get_all_lobby_info, get_lobby_info, get_room_extended, get_room_info, get_room_players,
+            create_lobby,
+            get::{get_all_rooms_extended, get_lobbies_by_game_id, get_lobby_players},
+            get_all_lobby_info, get_lobby_info, get_room_extended, get_room_info,
             update_claim_state,
         },
         update_game_state, update_player_state,
     },
     errors::AppError,
     models::{
-        game::{ClaimState, GameState, LobbyInfo, LobbyState, Player, PlayerState, RoomExtended},
-        lobby::RoomQuery,
+        game::{
+            ClaimState, GameState, LobbyInfo, LobbyPoolInput, LobbyState, Player, PlayerState,
+            RoomExtended,
+        },
+        lobby::LobbyQuery,
     },
     state::AppState,
 };
@@ -51,7 +55,7 @@ pub async fn create_room_handler(
         payload.contract_address.clone(),
         payload.tx_id.clone(),
     ) {
-        (Some(entry_amount), Some(contract_address), Some(tx_id)) => Some(RoomPoolInput {
+        (Some(entry_amount), Some(contract_address), Some(tx_id)) => Some(LobbyPoolInput {
             entry_amount,
             contract_address,
             tx_id,
@@ -59,7 +63,7 @@ pub async fn create_room_handler(
         _ => None,
     };
 
-    let room_id = create_room(
+    let room_id = create_lobby(
         payload.name,
         payload.description,
         user_id,
@@ -117,7 +121,7 @@ fn parse_states(state_param: Option<String>) -> Option<Vec<LobbyState>> {
 
 pub async fn get_lobbies_by_game_id_handler(
     Path(game_id): Path<Uuid>,
-    Query(query): Query<RoomQuery>,
+    Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
     let filter_states = parse_states(query.state);
@@ -154,7 +158,7 @@ pub async fn get_lobby_handler(
 }
 
 pub async fn get_all_rooms_extended_handler(
-    Query(query): Query<RoomQuery>,
+    Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<RoomExtended>>, (StatusCode, String)> {
     let filter_states = parse_states(query.state);
@@ -180,7 +184,7 @@ pub async fn get_all_rooms_extended_handler(
 }
 
 pub async fn get_all_lobby_info_handler(
-    Query(query): Query<RoomQuery>,
+    Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
     let filter_states = parse_states(query.state);
@@ -201,11 +205,30 @@ pub async fn get_all_lobby_info_handler(
     Ok(Json(lobbies))
 }
 
+#[derive(Deserialize)]
+pub struct PlayerQuery {
+    pub player_state: Option<String>,
+}
+
+fn parse_player_state(param: Option<String>) -> Option<PlayerState> {
+    param.and_then(|s| match s.to_lowercase().as_str() {
+        "ready" => Some(PlayerState::Ready),
+        "notready" | "not_ready" => Some(PlayerState::NotReady),
+        other => {
+            tracing::warn!("Invalid player_state filter: {}", other);
+            None
+        }
+    })
+}
+
 pub async fn get_players_handler(
     Path(room_id): Path<Uuid>,
+    Query(query): Query<PlayerQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Player>>, (StatusCode, String)> {
-    let players = get_room_players(room_id, state.redis.clone())
+    let filter_state = parse_player_state(query.player_state.clone());
+
+    let players = get_lobby_players(room_id, filter_state, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving players in {room_id}: {}", e);

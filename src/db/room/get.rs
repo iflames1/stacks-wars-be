@@ -274,23 +274,41 @@ pub async fn get_all_lobby_info(
     Ok(out)
 }
 
-pub async fn get_room_players(room_id: Uuid, redis: RedisClient) -> Result<Vec<Player>, AppError> {
+pub async fn get_lobby_players(
+    lobby_id: Uuid,
+    filter_state: Option<PlayerState>,
+    redis: RedisClient,
+) -> Result<Vec<Player>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("room:{}:players", room_id);
-    let raw_players: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(&key)
+    // find all player hashes for this lobby
+    let pattern = format!("lobby:{}:player:*", lobby_id);
+    let keys: Vec<String> = redis::cmd("KEYS")
+        .arg(&pattern)
         .query_async(&mut *conn)
         .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+        .map_err(AppError::RedisCommandError)?;
 
-    let mut players = Vec::new();
-    for p in raw_players {
-        let player: Player = serde_json::from_str(&p)
-            .map_err(|_| AppError::Deserialization("Invalid player JSON".into()))?;
+    let mut players = Vec::with_capacity(keys.len());
+    for key in keys {
+        let pmap: HashMap<String, String> = redis::cmd("HGETALL")
+            .arg(&key)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        let player = Player::from_redis_hash(&pmap)?;
+
+        // apply optional state filter
+        if let Some(ref state_filter) = filter_state {
+            if &player.state != state_filter {
+                continue;
+            }
+        }
+
         players.push(player);
     }
 
@@ -364,7 +382,7 @@ pub async fn get_room_extended(
     redis: RedisClient,
 ) -> Result<RoomExtended, AppError> {
     let info = get_room_info(room_id, redis.clone()).await?;
-    let players = get_room_players(room_id, redis.clone()).await?;
+    let players = get_lobby_players(room_id, None, redis.clone()).await?;
 
     let pool = if let Some(addr) = &info.contract_address {
         if !addr.is_empty() {
