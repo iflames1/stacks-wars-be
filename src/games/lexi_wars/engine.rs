@@ -6,7 +6,7 @@ use tokio::time::sleep;
 
 use crate::{
     db::{
-        room::{patch::update_connected_players, update_room_player_after_game},
+        lobby::{patch::update_connected_players, update_room_player_after_game},
         update_game_state,
     },
     games::lexi_wars::{

@@ -134,7 +134,7 @@ pub async fn lexi_wars_handler(
     let connections = state.connections.clone();
     let rooms = state.rooms.clone();
 
-    let room = db::room::get_room_info(room_id, redis.clone())
+    let room = db::lobby::get_room_info(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -153,7 +153,7 @@ pub async fn lexi_wars_handler(
                     .await;
 
                 // Get room data for final standing
-                if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+                if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
                     // Create final standing from players (they should have ranks)
                     let mut players_with_ranks: Vec<_> =
                         players.into_iter().filter(|p| p.rank.is_some()).collect();
@@ -215,7 +215,7 @@ pub async fn lexi_wars_handler(
         }
     }
 
-    let players = db::room::get_room_players(room_id, redis.clone())
+    let players = db::lobby::get_room_players(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -237,7 +237,7 @@ pub async fn lexi_wars_handler(
     let pool = if let Some(ref addr) = room.contract_address {
         if !addr.is_empty() {
             Some(
-                db::room::get_room_pool(room_id, redis.clone())
+                db::lobby::get_room_pool(room_id, redis.clone())
                     .await
                     .map_err(|e| e.to_response())?,
             )

@@ -41,7 +41,7 @@ pub async fn lobby_ws_handler(
     let join_requests = state.lobby_join_requests.clone();
     let countdowns = state.lobby_countdowns.clone();
 
-    let players = db::room::get_room_players(room_id, redis.clone())
+    let players = db::lobby::get_room_players(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -116,7 +116,7 @@ async fn handle_lobby_socket(
     let (mut sender, receiver) = socket.split();
 
     // Check room state immediately upon connection
-    match db::room::get_room_info(room_id, redis.clone()).await {
+    match db::lobby::get_room_info(room_id, redis.clone()).await {
         Ok(room_info) => {
             // Check if there's an active countdown
             let countdown_time = {
@@ -128,7 +128,7 @@ async fn handle_lobby_socket(
             };
 
             // Always broadcast the current game state
-            let ready_players = match db::room::get_ready_room_players(room_id, redis.clone()).await
+            let ready_players = match db::lobby::get_ready_room_players(room_id, redis.clone()).await
             {
                 Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                 Err(e) => {
@@ -200,7 +200,7 @@ async fn handle_lobby_socket(
 
     store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
-    if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+    if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(
             room_id,
@@ -226,7 +226,7 @@ async fn handle_lobby_socket(
 
     remove_connection(player.id, &connections).await;
 
-    if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+    if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(room_id, &msg, &connections, Some(&chat_connections), redis)
             .await;

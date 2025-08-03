@@ -44,7 +44,7 @@ pub async fn handle_incoming_chat_messages(
                                 .await;
                             }
                             ChatClientMessage::Chat { text } => {
-                                let room_players = match db::room::get_room_players(
+                                let room_players = match db::lobby::get_room_players(
                                     room_id,
                                     redis.clone(),
                                 )

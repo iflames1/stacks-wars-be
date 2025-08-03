@@ -40,7 +40,7 @@ pub async fn broadcast_to_lobby(
         }
     };
 
-    if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+    if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
         let connection_guard = connections.lock().await;
 
         for player in &players {
@@ -99,7 +99,7 @@ async fn notify_chat_about_room_changes(
     redis: &RedisClient,
 ) {
     // Get current room players
-    if let Ok(room_players) = db::room::get_room_players(room_id, redis.clone()).await {
+    if let Ok(room_players) = db::lobby::get_room_players(room_id, redis.clone()).await {
         let room_player_ids: std::collections::HashSet<Uuid> =
             room_players.iter().map(|p| p.id).collect();
 

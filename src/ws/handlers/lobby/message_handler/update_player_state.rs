@@ -18,11 +18,11 @@ pub async fn update_player_state(
     redis: &RedisClient,
 ) {
     if let Err(e) =
-        db::room::update_player_state(room_id, player.id, new_state.clone(), redis.clone()).await
+        db::lobby::update_player_state(room_id, player.id, new_state.clone(), redis.clone()).await
     {
         tracing::error!("Failed to update state: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+    } else if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
         tracing::info!(
             "Player {} updated state to {:?} in room {}",
             player.wallet_address,
@@ -40,10 +40,10 @@ pub async fn update_player_state(
         .await;
 
         if new_state == PlayerState::NotReady {
-            if let Ok(room_info) = db::room::get_room_info(room_id, redis.clone()).await {
+            if let Ok(room_info) = db::lobby::get_room_info(room_id, redis.clone()).await {
                 if room_info.state == GameState::InProgress {
                     // revert game state to Waiting
-                    let _ = db::room::update_game_state(room_id, GameState::Waiting, redis.clone())
+                    let _ = db::lobby::update_game_state(room_id, GameState::Waiting, redis.clone())
                         .await;
                     let msg = LobbyServerMessage::GameState {
                         state: GameState::Waiting,

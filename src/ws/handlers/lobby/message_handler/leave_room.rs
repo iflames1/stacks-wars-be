@@ -16,10 +16,10 @@ pub async fn leave_room(
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    if let Err(e) = db::room::leave_room(room_id, player.id, redis.clone()).await {
+    if let Err(e) = db::lobby::leave_room(room_id, player.id, redis.clone()).await {
         tracing::error!("Failed to leave room: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+    } else if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
         tracing::info!("Player {} left room {}", player.wallet_address, room_id);
         let msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::AuthClaims,
-    db::room::{
+    db::lobby::{
         get::{
             get_all_lobbies_extended, get_all_lobby_info, get_lobbies_by_game_id,
             get_lobby_extended, get_lobby_info, get_lobby_players,
