@@ -207,13 +207,6 @@ pub struct GameRoomInfo {
     pub connected_players: Vec<Player>,
 }
 
-#[derive(Serialize)]
-pub struct RoomExtended {
-    pub info: GameRoomInfo,
-    pub players: Vec<Player>,
-    pub pool: Option<LobbyPool>,
-}
-
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum LobbyState {
@@ -372,7 +365,5 @@ impl LobbyPool {
 pub struct LobbyExtended {
     pub info: LobbyInfo,
     pub players: Vec<Player>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub pool: Option<LobbyPool>,
 }

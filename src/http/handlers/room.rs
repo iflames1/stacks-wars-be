@@ -12,7 +12,10 @@ use crate::{
         create_room, join_room, leave_room,
         room::{
             create_lobby,
-            get::{get_all_rooms_extended, get_lobbies_by_game_id, get_lobby_players},
+            get::{
+                get_all_rooms_extended, get_lobbies_by_game_id, get_lobby_extended,
+                get_lobby_players,
+            },
             get_all_lobby_info, get_lobby_info, get_room_extended, get_room_info,
             update_claim_state,
         },
@@ -21,8 +24,8 @@ use crate::{
     errors::AppError,
     models::{
         game::{
-            ClaimState, GameState, LobbyInfo, LobbyPoolInput, LobbyState, Player, PlayerState,
-            RoomExtended,
+            ClaimState, GameState, LobbyExtended, LobbyInfo, LobbyPoolInput, LobbyState, Player,
+            PlayerState,
         },
         lobby::LobbyQuery,
     },
@@ -83,11 +86,13 @@ pub async fn create_room_handler(
     Ok(Json(room_id))
 }
 
-pub async fn get_room_extended_handler(
+pub async fn get_lobby_extended_handler(
     Path(room_id): Path<Uuid>,
+    Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
-) -> Result<Json<RoomExtended>, (StatusCode, String)> {
-    let extended = get_room_extended(room_id, state.redis.clone())
+) -> Result<Json<LobbyExtended>, (StatusCode, String)> {
+    let player_filter = parse_player_state(query.player_state);
+    let extended = get_lobby_extended(room_id, player_filter, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving extended room info: {}", e);
@@ -124,7 +129,7 @@ pub async fn get_lobbies_by_game_id_handler(
     Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
-    let filter_states = parse_states(query.state);
+    let filter_states = parse_states(query.lobby_state);
 
     let (page, limit) = match query.page {
         Some(p) => (p.max(1), query.limit.unwrap_or(12).min(100)),
@@ -160,8 +165,8 @@ pub async fn get_lobby_handler(
 pub async fn get_all_rooms_extended_handler(
     Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
-) -> Result<Json<Vec<RoomExtended>>, (StatusCode, String)> {
-    let filter_states = parse_states(query.state);
+) -> Result<Json<Vec<LobbyExtended>>, (StatusCode, String)> {
+    let filter_states = parse_states(query.lobby_state);
 
     let (page, limit) = if let Some(p) = query.page {
         let page = p.max(1); // Ensure page is at least 1

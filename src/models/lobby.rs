@@ -21,7 +21,8 @@ pub struct JoinRequest {
 
 #[derive(Deserialize)]
 pub struct LobbyQuery {
-    pub state: Option<String>,
+    pub lobby_state: Option<String>,
+    pub player_state: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,
 }
