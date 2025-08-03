@@ -1,140 +1,12 @@
 use chrono::Utc;
-use uuid::Uuid;
-
-use crate::{
-    db::{tx::validate_payment_tx, user::get_user_by_id},
-    errors::AppError,
-    models::game::{
-        ClaimState, GameRoomInfo, GameState, LobbyState, Player, PlayerState, RoomPool,
-    },
-    state::RedisClient,
-};
-
-pub async fn join_room(
-    room_id: Uuid,
-    user_id: Uuid,
-    tx_id: Option<String>,
-    redis: RedisClient,
-) -> Result<(), AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
-        bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
-    })?;
-
-    let room_key = format!("room:{}:info", room_id);
-    let room_json: String = redis::cmd("GET")
-        .arg(&room_key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|_| AppError::NotFound("Room not found".into()))?;
-
-    let mut room: GameRoomInfo =
-        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    let players_key = format!("room:{}:players", room_id);
-    let current_players: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(&players_key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
-
-    if current_players
-        .iter()
-        .any(|p| p.contains(&user_id.to_string()))
-    {
-        return Err(AppError::BadRequest("User already in room".into()));
-    }
-
-    let user = get_user_by_id(user_id, redis.clone()).await?;
-
-    // If the room has a pool, validate the payment
-    if let Some(contract_address) = &room.contract_address {
-        let tx_id = tx_id.clone().ok_or_else(|| {
-            AppError::BadRequest("Missing transaction ID for pool-based room".into())
-        })?;
-
-        // Fetch the pool info
-        let pool_key = format!("room:{}:pool", room_id);
-        let pool_json: String = redis::cmd("GET")
-            .arg(&pool_key)
-            .query_async(&mut *conn)
-            .await
-            .map_err(|_| AppError::NotFound("Room pool not found".into()))?;
-
-        let pool: RoomPool =
-            serde_json::from_str(&pool_json).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-        validate_payment_tx(
-            &tx_id,
-            &user.wallet_address,
-            contract_address,
-            pool.entry_amount,
-        )
-        .await?;
-
-        let updated_pool = RoomPool {
-            entry_amount: pool.entry_amount,
-            contract_address: contract_address.clone(),
-            current_amount: pool.current_amount + pool.entry_amount,
-        };
-
-        let new_pool_json = serde_json::to_string(&updated_pool)
-            .map_err(|e| AppError::Serialization(e.to_string()))?;
-
-        let _: () = redis::cmd("SET")
-            .arg(&pool_key)
-            .arg(new_pool_json)
-            .query_async(&mut *conn)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-    }
-
-    let room_player = Player {
-        id: user.id,
-        wallet_address: user.wallet_address,
-        display_name: user.display_name,
-        state: PlayerState::Ready,
-        used_words: Vec::new(),
-        rank: None,
-        tx_id,
-        claim: None,
-        prize: None,
-    };
-
-    let player_json = serde_json::to_string(&room_player)
-        .map_err(|_| AppError::Serialization("Failed to serialize player".into()))?;
-
-    let _: () = redis::cmd("SADD")
-        .arg(&players_key)
-        .arg(player_json)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
-
-    room.participants += 1;
-
-    let updated_json =
-        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    let _: () = redis::cmd("SET")
-        .arg(room_key)
-        .arg(updated_json)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
-
-    Ok(())
-}
-
 use redis::AsyncCommands;
 use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    db::tx::validate_payment_tx,
-    db::user::get_user_by_id,
+    db::{tx::validate_payment_tx, user::get_user_by_id},
     errors::AppError,
-    models::game::{LobbyInfo, LobbyPool, Player, PlayerState},
+    models::game::{ClaimState, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
     state::RedisClient,
 };
 
@@ -561,41 +433,6 @@ pub async fn update_lexi_wars_player(
         .hset_multiple(&player_key, &hset_args)
         .await
         .map_err(AppError::RedisCommandError)?;
-
-    Ok(())
-}
-
-pub async fn update_connected_players(
-    room_id: Uuid,
-    connected_players: Vec<Player>,
-    redis: RedisClient,
-) -> Result<(), AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
-        bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
-    })?;
-
-    let room_key = format!("room:{}:info", room_id);
-    let room_json: String = redis::cmd("GET")
-        .arg(&room_key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|_| AppError::NotFound("Room not found".into()))?;
-
-    let mut room: GameRoomInfo =
-        serde_json::from_str(&room_json).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    room.connected_players = connected_players;
-
-    let updated_json =
-        serde_json::to_string(&room).map_err(|e| AppError::Serialization(e.to_string()))?;
-
-    let _: () = redis::cmd("SET")
-        .arg(room_key)
-        .arg(updated_json)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
 
     Ok(())
 }
