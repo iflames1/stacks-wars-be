@@ -8,25 +8,20 @@ use uuid::Uuid;
 
 use crate::{
     auth::AuthClaims,
-    db::{
-        create_room, join_room, leave_room,
-        room::{
-            create_lobby,
-            get::{
-                get_all_lobbies_extended, get_lobbies_by_game_id, get_lobby_extended,
-                get_lobby_players,
-            },
-            get_all_lobby_info, get_lobby_info, update_claim_state,
+    db::room::{
+        get::{
+            get_all_lobbies_extended, get_all_lobby_info, get_lobbies_by_game_id,
+            get_lobby_extended, get_lobby_info, get_lobby_players,
         },
-        update_game_state, update_player_state,
+        patch::{
+            join_lobby, leave_lobby, update_claim_state, update_lobby_state, update_player_state,
+        },
+        post::create_lobby,
     },
     errors::AppError,
-    models::{
-        game::{
-            ClaimState, GameState, LobbyExtended, LobbyInfo, LobbyPoolInput, LobbyState, Player,
-            PlayerState,
-        },
-        lobby::LobbyQuery,
+    models::game::{
+        ClaimState, LobbyExtended, LobbyInfo, LobbyPoolInput, LobbyQuery, LobbyState, Player,
+        PlayerQuery, PlayerState, parse_lobby_states, parse_player_state,
     },
     state::AppState,
 };
@@ -100,27 +95,6 @@ pub async fn get_lobby_extended_handler(
 
     tracing::info!("Retrieved extended room info for room ID: {}", room_id);
     Ok(Json(extended))
-}
-
-fn parse_lobby_states(state_param: Option<String>) -> Option<Vec<LobbyState>> {
-    state_param
-        .map(|s| {
-            s.split(',')
-                .filter_map(|state_str| {
-                    let trimmed = state_str.trim();
-                    match trimmed.to_lowercase().as_str() {
-                        "waiting" => Some(LobbyState::Waiting),
-                        "inprogress" | "in_progress" => Some(LobbyState::InProgress),
-                        "finished" => Some(LobbyState::Finished),
-                        _ => {
-                            tracing::warn!("Invalid state filter: {}", trimmed);
-                            None
-                        }
-                    }
-                })
-                .collect()
-        })
-        .filter(|states: &Vec<LobbyState>| !states.is_empty())
 }
 
 pub async fn get_lobbies_by_game_id_handler(
@@ -212,22 +186,6 @@ pub async fn get_all_lobby_info_handler(
     Ok(Json(lobbies))
 }
 
-#[derive(Deserialize)]
-pub struct PlayerQuery {
-    pub player_state: Option<String>,
-}
-
-fn parse_player_state(param: Option<String>) -> Option<PlayerState> {
-    param.and_then(|s| match s.to_lowercase().as_str() {
-        "ready" => Some(PlayerState::Ready),
-        "notready" | "not_ready" => Some(PlayerState::NotReady),
-        other => {
-            tracing::warn!("Invalid player_state filter: {}", other);
-            None
-        }
-    })
-}
-
 pub async fn get_players_handler(
     Path(lobby_id): Path<Uuid>,
     Query(query): Query<PlayerQuery>,
@@ -251,8 +209,8 @@ pub struct JoinRoomPayload {
     pub tx_id: Option<String>,
 }
 
-pub async fn join_room_handler(
-    Path(room_id): Path<Uuid>,
+pub async fn join_lobby_handler(
+    Path(lobby_id): Path<Uuid>,
     AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
     Json(payload): Json<JoinRoomPayload>,
@@ -262,19 +220,19 @@ pub async fn join_room_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
 
-    join_room(room_id, user_id, payload.tx_id, state.redis.clone())
+    join_lobby(lobby_id, user_id, payload.tx_id, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error joining room {room_id}: {}", e);
+            tracing::error!("Error joining room {lobby_id}: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Success joining room {room_id}");
+    tracing::info!("Success joining room {lobby_id}");
     Ok(Json("success"))
 }
 
-pub async fn leave_room_handler(
-    Path(room_id): Path<Uuid>,
+pub async fn leave_lobby_handler(
+    Path(lobby_id): Path<Uuid>,
     AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
@@ -283,14 +241,14 @@ pub async fn leave_room_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
 
-    leave_room(room_id, user_id, state.redis.clone())
+    leave_lobby(lobby_id, user_id, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error leaving room {room_id}: {}", e);
+            tracing::error!("Error leaving room {lobby_id}: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Success leaving room {room_id}");
+    tracing::info!("Success leaving room {lobby_id}");
     Ok(Json("success"))
 }
 
@@ -302,7 +260,7 @@ pub struct KickPlayerPayload {
 pub async fn kick_player_handler(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     Json(payload): Json<KickPlayerPayload>,
 ) -> Result<Json<String>, (StatusCode, String)> {
     let caller_id = Uuid::parse_str(&claims.sub).map_err(|_| {
@@ -310,21 +268,21 @@ pub async fn kick_player_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
 
-    let room_info = get_room_info(room_id, state.redis.clone())
+    let lobby_info = get_lobby_info(lobby_id, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error getting room info: {}", e);
             e.to_response()
         })?;
 
-    if room_info.creator_id != caller_id {
+    if lobby_info.creator_id != caller_id {
         return Err({
             tracing::error!("Only the creator can kick players");
             AppError::Unauthorized("Only the creator can kick players".into()).to_response()
         });
     }
 
-    if room_info.state != GameState::Waiting {
+    if lobby_info.state != LobbyState::Waiting {
         return Err({
             tracing::error!("Cannot kick players when game is in progress or has ended");
             AppError::BadRequest("Cannot kick players when game is in progress or has ended".into())
@@ -332,7 +290,7 @@ pub async fn kick_player_handler(
         });
     }
 
-    leave_room(room_id, payload.player_id, state.redis.clone())
+    leave_lobby(lobby_id, payload.player_id, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error kicking player: {}", e);
@@ -345,15 +303,15 @@ pub async fn kick_player_handler(
 
 #[derive(Deserialize)]
 pub struct UpdateGameStatePayload {
-    pub new_state: GameState,
+    pub new_state: LobbyState,
 }
 
 pub async fn update_game_state_handler(
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     State(state): State<AppState>,
     Json(payload): Json<UpdateGameStatePayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
-    update_game_state(room_id, payload.new_state.clone(), state.redis.clone())
+    update_lobby_state(lobby_id, payload.new_state.clone(), state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error updating game state: {}", e);
@@ -370,7 +328,7 @@ pub struct UpdatePlayerStatePayload {
 }
 
 pub async fn update_player_state_handler(
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
     Json(payload): Json<UpdatePlayerStatePayload>,
@@ -381,7 +339,7 @@ pub async fn update_player_state_handler(
     })?;
 
     update_player_state(
-        room_id,
+        lobby_id,
         user_id,
         payload.new_state.clone(),
         state.redis.clone(),
@@ -400,8 +358,9 @@ pub async fn update_player_state_handler(
 pub struct UpdateClaimStatePayload {
     pub claim: ClaimState,
 }
+
 pub async fn update_claim_state_handler(
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
     Json(payload): Json<UpdateClaimStatePayload>,
@@ -411,13 +370,13 @@ pub async fn update_claim_state_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
 
-    update_claim_state(room_id, user_id, payload.claim, state.redis.clone())
+    update_claim_state(lobby_id, user_id, payload.claim, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error updating game state: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Claim state updated for room {room_id}");
+    tracing::info!("Claim state updated for room {lobby_id}");
     Ok(Json("success"))
 }
