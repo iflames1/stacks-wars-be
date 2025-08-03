@@ -76,7 +76,7 @@ impl FromStr for PlayerState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "status", content = "data")]
 pub enum ClaimState {
     Claimed { tx_id: String },
