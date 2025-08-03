@@ -323,55 +323,47 @@ pub async fn update_claim_state(
     Ok(())
 }
 
-pub async fn _update_prize(
-    room_id: Uuid,
+pub async fn update_player_prize(
+    lobby_id: Uuid,
     player_id: Uuid,
     prize: f64,
     redis: RedisClient,
 ) -> Result<(), AppError> {
-    let key = format!("room:{}:players", room_id);
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    // Get all players
-    let players_json: Vec<String> = redis::cmd("SMEMBERS")
-        .arg(&key)
-        .query_async(&mut *conn)
+    let player_key = format!("lobby:{}:player:{}", lobby_id, player_id);
+
+    let map: HashMap<String, String> = conn
+        .hgetall(&player_key)
         .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
-
-    let mut players: Vec<Player> = players_json
-        .into_iter()
-        .filter_map(|p| serde_json::from_str(&p).ok())
-        .collect();
-
-    let Some(player) = players.iter_mut().find(|p| p.id == player_id) else {
-        return Err(AppError::BadRequest("Player not found".into()));
-    };
-
-    player.prize = Some(prize);
-    player.claim = Some(ClaimState::NotClaimed);
-
-    // Delete existing set and re-insert all players
-    let _: () = redis::cmd("DEL")
-        .arg(&key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
-
-    for p in players {
-        let player_json = serde_json::to_string(&p)
-            .map_err(|_| AppError::Serialization("Failed to serialize player".into()))?;
-
-        let _: () = redis::cmd("SADD")
-            .arg(&key)
-            .arg(player_json)
-            .query_async(&mut *conn)
-            .await
-            .map_err(|e| AppError::RedisCommandError(e.into()))?;
+        .map_err(AppError::RedisCommandError)?;
+    if map.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "Player {} not found in lobby {}",
+            player_id, lobby_id
+        )));
     }
+
+    let player = Player::from_redis_hash(&map)?;
+
+    if player.prize == Some(prize) {
+        return Ok(());
+    }
+
+    let claim_json = serde_json::to_string(&ClaimState::NotClaimed)
+        .map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let updates = vec![("prize", prize.to_string()), ("claim", claim_json)];
+
+    let hset_args: Vec<(&str, &str)> = updates.iter().map(|(k, v)| (*k, v.as_str())).collect();
+
+    let _: () = conn
+        .hset_multiple(&player_key, &hset_args)
+        .await
+        .map_err(AppError::RedisCommandError)?;
 
     Ok(())
 }
