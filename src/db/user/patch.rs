@@ -1,4 +1,4 @@
-use crate::{errors::AppError, state::RedisClient};
+use crate::{errors::AppError, models::redis::RedisKey, state::RedisClient};
 use redis::AsyncCommands;
 use uuid::Uuid;
 
@@ -26,7 +26,7 @@ pub async fn update_username(
     if !is_valid_username(&normalized) {
         return Err(AppError::BadRequest("Invalid username".into()));
     }
-    let new_username_key = format!("username:{}", normalized);
+    let new_username_key = RedisKey::username(&normalized);
     let existing_user_id: Option<String> = conn
         .get(&new_username_key)
         .await
@@ -39,7 +39,7 @@ pub async fn update_username(
     }
 
     // Get the user's current username, if any
-    let user_key = format!("user:{}", user_id);
+    let user_key = RedisKey::user(user_id);
     let current_username: Option<String> = conn
         .hget(&user_key, "username")
         .await
@@ -48,7 +48,7 @@ pub async fn update_username(
     // Delete the old username key if it exists
     if let Some(old_username) = current_username {
         if old_username != new_username {
-            let old_username_key = format!("username:{}", old_username);
+            let old_username_key = RedisKey::username(&old_username);
             let _: () = conn
                 .del(&old_username_key)
                 .await
@@ -86,7 +86,7 @@ pub async fn update_display_name(
         return Err(AppError::BadRequest("Invalid display name".into()));
     }
 
-    let user_key = format!("user:{}", user_id);
+    let user_key = RedisKey::user(user_id);
 
     let _: () = conn
         .hset(&user_key, "display_name", trimmed)
@@ -106,7 +106,7 @@ pub async fn increase_wars_point(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let user_key = format!("user:{}", user_id);
+    let user_key = RedisKey::user(user_id);
     let new_total: i64 = conn
         .hincr(&user_key, "wars_point", amount as i64)
         .await
@@ -125,7 +125,7 @@ pub async fn decrease_wars_point(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let user_key = format!("user:{}", user_id);
+    let user_key = RedisKey::user(user_id);
     let current: i64 = conn
         .hget::<_, _, Option<i64>>(&user_key, "wars_point")
         .await

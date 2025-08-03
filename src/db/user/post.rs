@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 
-use crate::{auth::generate_jwt, errors::AppError, models::User, state::RedisClient};
+use crate::{
+    auth::generate_jwt,
+    errors::AppError,
+    models::{User, redis::RedisKey},
+    state::RedisClient,
+};
 use redis::AsyncCommands;
 use uuid::Uuid;
 
@@ -10,7 +15,7 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let wallet_key = format!("user_wallet:{}", wallet_address);
+    let wallet_key = RedisKey::wallet(&wallet_address);
 
     // Check if wallet is already registered
     if let Some(existing_id) = conn
@@ -18,7 +23,10 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         .await
         .map_err(AppError::RedisCommandError)?
     {
-        let user_key = format!("user:{}", existing_id);
+        let user_id: Uuid = existing_id
+            .parse()
+            .map_err(|_| AppError::BadRequest("Invalid UUID".into()))?;
+        let user_key = RedisKey::user(user_id);
         let user_data: HashMap<String, String> = conn
             .hgetall(&user_key)
             .await
@@ -55,7 +63,7 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         wars_point: 0, // Initialize with 0 wars points
     };
 
-    let user_key = format!("user:{}", user.id);
+    let user_key = RedisKey::user(user.id);
 
     let user_hash = vec![
         ("id", user.id.to_string()),
