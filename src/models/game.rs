@@ -246,22 +246,22 @@ pub struct LobbyInfo {
 }
 
 impl LobbyInfo {
-    pub fn to_redis_hash(&self) -> Vec<(&str, String)> {
+    pub fn to_redis_hash(&self) -> Vec<(String, String)> {
         let mut fields = vec![
-            ("id", self.id.to_string()),
-            ("name", self.name.clone()),
-            ("creator_id", self.creator_id.to_string()),
-            ("state", format!("{:?}", self.state)),
-            ("game_id", self.game_id.to_string()),
-            ("game_name", self.game_name.clone()),
-            ("participants", self.participants.to_string()),
-            ("created_at", self.created_at.to_rfc3339()),
+            ("id".into(), self.id.to_string()),
+            ("name".into(), self.name.clone()),
+            ("creator_id".into(), self.creator_id.to_string()),
+            ("state".into(), format!("{:?}", self.state)),
+            ("game_id".into(), self.game_id.to_string()),
+            ("game_name".into(), self.game_name.clone()),
+            ("participants".into(), self.participants.to_string()),
+            ("created_at".into(), self.created_at.to_rfc3339()),
         ];
         if let Some(desc) = &self.description {
-            fields.push(("description", desc.clone()));
+            fields.push(("description".into(), desc.clone()));
         }
         if let Some(addr) = &self.contract_address {
-            fields.push(("contract_address", addr.clone()));
+            fields.push(("contract_address".into(), addr.clone()));
         }
         fields
     }
