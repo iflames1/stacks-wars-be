@@ -17,10 +17,7 @@ pub struct WsQueryParams {
 
 #[derive(Debug)]
 pub enum GameData {
-    LexiWar {
-        word_list: Arc<HashSet<String>>,
-        // maybe future: round state, scores, difficulty, etc.
-    },
+    LexiWar { word_list: Arc<HashSet<String>> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +28,56 @@ pub struct GameType {
     pub image_url: String,
     pub tags: Option<Vec<String>>,
     pub min_players: u8,
+}
+
+impl GameType {
+    pub fn to_redis_hash(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        map.insert("id".into(), self.id.to_string());
+        map.insert("name".into(), self.name.clone());
+        map.insert("description".into(), self.description.clone());
+        map.insert("image_url".into(), self.image_url.clone());
+        map.insert("min_players".into(), self.min_players.to_string());
+        if let Some(ref tags) = self.tags {
+            map.insert("tags".into(), serde_json::to_string(tags).unwrap());
+        }
+        map
+    }
+
+    pub fn from_redis_hash(map: &HashMap<String, String>) -> Result<Self, AppError> {
+        Ok(Self {
+            id: map
+                .get("id")
+                .ok_or_else(|| AppError::Deserialization("Missing id".into()))?
+                .parse()
+                .map_err(|_| AppError::Deserialization("Invalid UUID for id".into()))?,
+
+            name: map
+                .get("name")
+                .ok_or_else(|| AppError::Deserialization("Missing name".into()))?
+                .clone(),
+
+            description: map
+                .get("description")
+                .ok_or_else(|| AppError::Deserialization("Missing description".into()))?
+                .clone(),
+
+            image_url: map
+                .get("image_url")
+                .ok_or_else(|| AppError::Deserialization("Missing image_url".into()))?
+                .clone(),
+
+            min_players: map
+                .get("min_players")
+                .ok_or_else(|| AppError::Deserialization("Missing min_players".into()))?
+                .parse()
+                .map_err(|_| AppError::Deserialization("Invalid min_players".into()))?,
+
+            tags: map
+                .get("tags")
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok()),
+        })
+    }
 }
 
 #[derive(Debug)]

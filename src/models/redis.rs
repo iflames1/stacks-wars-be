@@ -18,6 +18,10 @@ impl RedisKey {
         format!("username:{username}")
     }
 
+    pub fn game(game_id: KeyPart) -> String {
+        format!("game:{game_id}")
+    }
+
     pub fn game_lobbies(game_id: KeyPart) -> String {
         format!("game:{game_id}:lobbies")
     }
