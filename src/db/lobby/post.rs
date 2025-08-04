@@ -4,7 +4,7 @@ use teloxide::Bot;
 use uuid::Uuid;
 
 use crate::{
-    db::{tx::validate_payment_tx, user::get_user_by_id},
+    db::{tx::validate_payment_tx, user::get::get_user_by_id},
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::{

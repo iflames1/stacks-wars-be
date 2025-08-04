@@ -7,7 +7,10 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    db::game::{add_game, get_all_games, get_game},
+    db::game::{
+        get::{get_all_games, get_game},
+        post::add_game,
+    },
     models::game::GameType,
     state::AppState,
 };
@@ -24,17 +27,16 @@ pub async fn add_game_handler(
     State(state): State<AppState>,
     Json(payload): Json<AddGamePayload>,
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
-    let id = Uuid::new_v4();
-    let game = GameType {
-        id,
-        name: payload.name,
-        description: payload.description,
-        image_url: payload.image_url,
-        tags: payload.tags,
-        min_players: payload.min_players,
-    };
-
-    let id = add_game(game, state.redis.clone()).await.map_err(|e| {
+    let id = add_game(
+        payload.name,
+        payload.description,
+        payload.image_url,
+        payload.tags,
+        payload.min_players,
+        state.redis.clone(),
+    )
+    .await
+    .map_err(|e| {
         tracing::error!("Error adding new game: {}", e);
         e.to_response()
     })?;

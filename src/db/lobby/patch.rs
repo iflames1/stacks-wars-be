@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    db::{tx::validate_payment_tx, user::get_user_by_id},
+    db::{tx::validate_payment_tx, user::get::get_user_by_id},
     errors::AppError,
     models::{
         game::{ClaimState, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},

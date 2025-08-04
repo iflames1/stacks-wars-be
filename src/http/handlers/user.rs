@@ -7,7 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    db::user::{create_user, get_user_by_id},
+    db::user::{get::get_user_by_id, post::create_user},
     models::User,
     state::AppState,
 };
