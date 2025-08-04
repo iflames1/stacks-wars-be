@@ -1,7 +1,14 @@
 use redis::AsyncCommands;
 use uuid::Uuid;
 
-use crate::{errors::AppError, models::game::Player, state::RedisClient};
+use crate::{
+    errors::AppError,
+    models::{
+        game::Player,
+        redis::{KeyPart, RedisKey},
+    },
+    state::RedisClient,
+};
 
 pub async fn update_connected_players(
     lobby_id: Uuid,
@@ -14,7 +21,8 @@ pub async fn update_connected_players(
     })?;
 
     for player in connected_players {
-        let player_key = format!("lobby:{}:connected_player:{}", lobby_id, player.id);
+        let player_key =
+            RedisKey::lobby_connected_player(KeyPart::Id(lobby_id), KeyPart::Id(player.id));
         let hash = player.to_redis_hash();
         let fields: Vec<(&str, &str)> =
             hash.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();

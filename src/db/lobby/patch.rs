@@ -6,7 +6,10 @@ use uuid::Uuid;
 use crate::{
     db::{tx::validate_payment_tx, user::get_user_by_id},
     errors::AppError,
-    models::game::{ClaimState, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+    models::{
+        game::{ClaimState, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+        redis::{KeyPart, RedisKey},
+    },
     state::RedisClient,
 };
 
@@ -21,7 +24,7 @@ pub async fn join_lobby(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let lobby_key = format!("lobby:{}", lobby_id);
+    let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
     let lobby_map: HashMap<String, String> = conn
         .hgetall(&lobby_key)
         .await
@@ -31,7 +34,7 @@ pub async fn join_lobby(
     }
     let lobby = LobbyInfo::from_redis_hash(&lobby_map)?;
 
-    let player_key = format!("lobby:{}:player:{}", lobby_id, user_id);
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
     if conn
         .exists(&player_key)
         .await
@@ -46,7 +49,7 @@ pub async fn join_lobby(
             .clone()
             .ok_or_else(|| AppError::BadRequest("Missing transaction ID for pool".into()))?;
 
-        let pool_key = format!("lobby:{}:pool", lobby_id);
+        let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
         let pool_map: HashMap<String, String> = conn
             .hgetall(&pool_key)
             .await
@@ -109,7 +112,7 @@ pub async fn leave_lobby(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let lobby_key = format!("lobby:{}", lobby_id);
+    let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
     let m: HashMap<String, String> = conn
         .hgetall(&lobby_key)
         .await
@@ -121,14 +124,14 @@ pub async fn leave_lobby(
 
     if info.creator_id == user_id {
         // delete lobby hash
-        let pattern = format!("lobby:{}:player:*", lobby_id);
+        let pattern = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Wildcard);
         let keys: Vec<String> = redis::cmd("KEYS")
             .arg(&pattern)
             .query_async(&mut *conn)
             .await
             .map_err(AppError::RedisCommandError)?;
         if keys.len() == 1 {
-            let pool_key = format!("lobby:{}:pool", lobby_id);
+            let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
             let _: () = conn
                 .del(&lobby_key)
                 .await
@@ -152,7 +155,7 @@ pub async fn leave_lobby(
         return Ok(());
     }
 
-    let player_key = format!("lobby:{}:player:{}", lobby_id, user_id);
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
     if !conn
         .exists(&player_key)
         .await
@@ -177,7 +180,7 @@ pub async fn leave_lobby(
 
     if let Some(_addr) = &info.contract_address {
         if player.tx_id.is_some() {
-            let pool_key = format!("lobby:{}:pool", lobby_id);
+            let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
             let ph: HashMap<String, String> = conn
                 .hgetall(&pool_key)
                 .await
@@ -205,7 +208,7 @@ pub async fn update_lobby_state(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let lobby_key = format!("lobby:{}", lobby_id);
+    let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
 
     // Read the existing state
     let old_state_str: String = conn
@@ -228,8 +231,8 @@ pub async fn update_lobby_state(
 
     // Move the lobby ID between the old & new state ZSETs
     let score = Utc::now().timestamp();
-    let old_z = format!("lobbies:{}", format!("{:?}", old_state).to_lowercase());
-    let new_z = format!("lobbies:{}", format!("{:?}", new_state).to_lowercase());
+    let old_z = RedisKey::lobbies_state(&old_state);
+    let new_z = RedisKey::lobbies_state(&new_state);
 
     let _: () = conn
         .zrem(&old_z, lobby_id.to_string())
@@ -255,7 +258,7 @@ pub async fn update_player_state(
     })?;
 
     // Build the player hash key
-    let player_key = format!("lobby:{}:player:{}", lobby_id, user_id);
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
 
     // Fetch the existing hash
     let map: HashMap<String, String> = conn
@@ -296,7 +299,7 @@ pub async fn update_claim_state(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let player_key = format!("lobby:{}:player:{}", lobby_id, user_id);
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
     let map: HashMap<String, String> = conn
         .hgetall(&player_key)
         .await
@@ -334,7 +337,7 @@ pub async fn update_player_prize(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let player_key = format!("lobby:{}:player:{}", lobby_id, player_id);
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
 
     let map: HashMap<String, String> = conn
         .hgetall(&player_key)
@@ -381,7 +384,7 @@ pub async fn update_lexi_wars_player(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let player_key = format!("lobby:{}:player:{}", lobby_id, player_id);
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
     let map: HashMap<String, String> = conn
         .hgetall(&player_key)
         .await
