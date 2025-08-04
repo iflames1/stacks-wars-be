@@ -70,7 +70,7 @@ pub async fn permit_join(
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    let room_info = match db::room::get_room_info(room_id, redis.clone()).await {
+    let room_info = match db::lobby::get_room_info(room_id, redis.clone()).await {
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to fetch room info: {}", e);

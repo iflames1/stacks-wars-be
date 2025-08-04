@@ -1,7 +1,15 @@
 use redis::AsyncCommands;
+use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::{errors::AppError, models::game::GameType, state::RedisClient};
+use crate::{
+    errors::AppError,
+    models::{
+        game::GameType,
+        redis::{KeyPart, RedisKey},
+    },
+    state::RedisClient,
+};
 
 pub async fn get_game(game_id: Uuid, redis: RedisClient) -> Result<GameType, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -9,20 +17,20 @@ pub async fn get_game(game_id: Uuid, redis: RedisClient) -> Result<GameType, App
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("game:{}:data", game_id);
-    let value: Option<String> = conn
-        .get(key)
+    let key = RedisKey::game(KeyPart::Id(game_id));
+    let map: HashMap<String, String> = conn
+        .hgetall(&key)
         .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+        .map_err(AppError::RedisCommandError)?;
 
-    match value {
-        Some(data) => serde_json::from_str(&data)
-            .map_err(|_| AppError::Deserialization("Failed to deserialize game".to_string())),
-        None => Err(AppError::NotFound(format!(
+    if map.is_empty() {
+        return Err(AppError::NotFound(format!(
             "Game with ID {} not found",
             game_id
-        ))),
+        )));
     }
+
+    GameType::from_redis_hash(&map)
 }
 
 pub async fn get_all_games(redis: RedisClient) -> Result<Vec<GameType>, AppError> {
@@ -32,21 +40,21 @@ pub async fn get_all_games(redis: RedisClient) -> Result<Vec<GameType>, AppError
     })?;
 
     let keys: Vec<String> = conn
-        .keys("game:*:data")
+        .keys(RedisKey::game(KeyPart::Wildcard))
         .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+        .map_err(AppError::RedisCommandError)?;
 
     let mut games = Vec::new();
     for key in keys {
-        let value: String = conn
-            .get(key)
+        let map: HashMap<String, String> = conn
+            .hgetall(&key)
             .await
-            .map_err(|e| AppError::RedisCommandError(e.into()))?;
+            .map_err(AppError::RedisCommandError)?;
 
-        let game: GameType = serde_json::from_str(&value)
-            .map_err(|_| AppError::Deserialization("Failed to deserialize game".to_string()))?;
-
-        games.push(game);
+        if !map.is_empty() {
+            let game = GameType::from_redis_hash(&map)?;
+            games.push(game);
+        }
     }
 
     Ok(games)

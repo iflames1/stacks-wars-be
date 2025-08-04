@@ -5,9 +5,9 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    db::{
-        room::{put::update_connected_players, update_room_player_after_game},
-        update_game_state,
+    db::lobby::{
+        patch::{update_lexi_wars_player, update_lobby_state},
+        put::update_connected_players,
     },
     games::lexi_wars::{
         rules::get_rule_by_index,
@@ -17,7 +17,7 @@ use crate::{
         },
     },
     models::{
-        game::{GameData, GameRoom, GameState, Player},
+        game::{GameData, GameRoom, GameState, LobbyState, Player},
         lexi_wars::{LexiWarsClientMessage, LexiWarsServerMessage, PlayerStanding},
     },
     state::{ConnectionInfoMap, RedisClient, SharedRooms},
@@ -239,7 +239,8 @@ pub fn start_auto_start_timer(
                 room.game_started = false;
                 room.connected_players.clear();
 
-                if let Err(e) = update_game_state(room_id, GameState::Waiting, redis.clone()).await
+                if let Err(e) =
+                    update_lobby_state(room_id, LobbyState::Waiting, redis.clone()).await
                 {
                     tracing::error!("Error updating game state to Waiting: {}", e);
                 }
@@ -306,7 +307,7 @@ fn start_turn_timer(
 
                     let prize = get_prize(room, position);
 
-                    if let Err(e) = update_room_player_after_game(
+                    if let Err(e) = update_lexi_wars_player(
                         room_id,
                         player_id,
                         position,
@@ -344,7 +345,7 @@ fn start_turn_timer(
 
                     let prize = get_prize(room, 1);
 
-                    if let Err(e) = update_room_player_after_game(
+                    if let Err(e) = update_lexi_wars_player(
                         room_id,
                         winner.id,
                         1,
@@ -387,7 +388,7 @@ fn start_turn_timer(
                     broadcast_to_room(&final_standing_msg, &room, &connections, &redis).await;
 
                     if let Err(e) =
-                        update_game_state(room_id, GameState::Finished, redis.clone()).await
+                        update_lobby_state(room_id, LobbyState::Finished, redis.clone()).await
                     {
                         tracing::error!("Error updating game state in Redis: {}", e);
                     }

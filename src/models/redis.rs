@@ -1,0 +1,92 @@
+use uuid::Uuid;
+
+use crate::models::game::LobbyState;
+
+pub struct RedisKey;
+
+impl RedisKey {
+    pub fn user(user_id: KeyPart) -> String {
+        format!("user:{user_id}")
+    }
+
+    pub fn wallet(wallet_address: KeyPart) -> String {
+        format!("user_wallet:{wallet_address}")
+    }
+
+    pub fn username(username: KeyPart) -> String {
+        let username = username.to_string().to_lowercase();
+        format!("username:{username}")
+    }
+
+    pub fn game(game_id: KeyPart) -> String {
+        format!("game:{game_id}")
+    }
+
+    pub fn game_lobbies(game_id: KeyPart) -> String {
+        format!("game:{game_id}:lobbies")
+    }
+
+    pub fn lobby(lobby_id: KeyPart) -> String {
+        format!("lobby:{lobby_id}")
+    }
+
+    pub fn lobby_pool(lobby_id: KeyPart) -> String {
+        format!("lobby:{lobby_id}:pool")
+    }
+
+    pub fn lobby_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
+        format!("lobby:{lobby_id}:player:{player_id}")
+    }
+
+    pub fn lobby_connected_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
+        format!("lobby:{}:connected_player:{}", lobby_id, player_id)
+    }
+
+    pub fn lobbies_state(state: &LobbyState) -> String {
+        format!("lobbies:{}", format!("{state:?}").to_lowercase())
+    }
+
+    // temp keys
+    pub fn temp_union() -> String {
+        let id = Uuid::new_v4();
+        format!("temp:union:{id}")
+    }
+
+    pub fn temp_inter() -> String {
+        let id = Uuid::new_v4();
+        format!("temp:inter:{id}")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum KeyPart {
+    Id(Uuid),
+    Str(String),
+    Wildcard,
+}
+
+impl From<Uuid> for KeyPart {
+    fn from(id: Uuid) -> Self {
+        KeyPart::Id(id)
+    }
+}
+
+impl From<&str> for KeyPart {
+    fn from(s: &str) -> Self {
+        if s == "*" {
+            KeyPart::Wildcard
+        } else {
+            KeyPart::Str(s.to_string())
+        }
+    }
+}
+
+impl std::fmt::Display for KeyPart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyPart::Id(id) => write!(f, "{}", id),
+            KeyPart::Str(s) => write!(f, "{}", s),
+            KeyPart::Wildcard => write!(f, "*"),
+        }
+    }
+}

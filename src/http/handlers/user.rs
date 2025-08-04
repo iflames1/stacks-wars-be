@@ -7,7 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
-    db::user::{create_user, get_user_by_id},
+    db::user::{get::get_user_by_id, post::create_user},
     models::User,
     state::AppState,
 };
@@ -15,20 +15,13 @@ use crate::{
 #[derive(Deserialize)]
 pub struct CreateUserPayload {
     pub wallet_address: String,
-    pub display_name: Option<String>,
 }
 
 pub async fn create_user_handler(
     State(state): State<AppState>,
     Json(payload): Json<CreateUserPayload>,
 ) -> Result<Json<String>, (StatusCode, String)> {
-    match create_user(
-        payload.wallet_address.clone(),
-        payload.display_name,
-        state.redis.clone(),
-    )
-    .await
-    {
+    match create_user(payload.wallet_address.clone(), state.redis.clone()).await {
         Ok(token) => {
             tracing::info!(
                 "User created with wallet address: {}",

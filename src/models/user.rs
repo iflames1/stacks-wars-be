@@ -7,7 +7,14 @@ use crate::models::game::Player;
 pub struct User {
     pub id: Uuid,
     pub wallet_address: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+
+    pub wars_point: u64,
 }
 
 impl From<Player> for User {
@@ -16,6 +23,8 @@ impl From<Player> for User {
             id: player.id,
             wallet_address: player.wallet_address,
             display_name: player.display_name,
+            username: player.username,
+            wars_point: player.wars_point,
         }
     }
 }

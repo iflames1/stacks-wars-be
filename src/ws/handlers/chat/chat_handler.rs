@@ -33,7 +33,7 @@ pub async fn chat_handler(
     let chat_histories = state.chat_histories.clone();
 
     // Check if room exists and get room state
-    let room_info = db::room::get_room_info(room_id, redis.clone())
+    let room_info = db::lobby::get_room_info(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -97,7 +97,7 @@ async fn handle_chat_socket(
         .await;
 
     // Check if player is in the room and send permission status
-    let is_room_member = match db::room::get_room_players(room_id, redis.clone()).await {
+    let is_room_member = match db::lobby::get_room_players(room_id, redis.clone()).await {
         Ok(players) => players.iter().any(|p| p.id == player.id),
         Err(e) => {
             tracing::error!("Failed to check room membership: {}", e);

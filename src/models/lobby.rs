@@ -19,13 +19,6 @@ pub struct JoinRequest {
     pub state: JoinState,
 }
 
-#[derive(Deserialize)]
-pub struct RoomQuery {
-    pub state: Option<String>,
-    pub page: Option<u32>,
-    pub limit: Option<u32>,
-}
-
 #[derive(Serialize)]
 pub struct PaginatedResponse<T> {
     pub data: Vec<T>,
