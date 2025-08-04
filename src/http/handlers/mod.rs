@@ -1,3 +1,3 @@
 pub mod game;
-pub mod room;
+pub mod lobby;
 pub mod user;

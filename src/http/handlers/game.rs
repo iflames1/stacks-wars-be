@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     db::game::{
         get::{get_all_games, get_game},
-        post::add_game,
+        post::create_game,
     },
     models::game::GameType,
     state::AppState,
@@ -23,11 +23,11 @@ pub struct AddGamePayload {
     pub tags: Option<Vec<String>>,
     pub min_players: u8,
 }
-pub async fn add_game_handler(
+pub async fn create_game_handler(
     State(state): State<AppState>,
     Json(payload): Json<AddGamePayload>,
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
-    let id = add_game(
+    let id = create_game(
         payload.name,
         payload.description,
         payload.image_url,

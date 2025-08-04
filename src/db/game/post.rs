@@ -10,7 +10,7 @@ use crate::{
     state::RedisClient,
 };
 
-pub async fn add_game(
+pub async fn create_game(
     name: String,
     description: String,
     image_url: String,

@@ -10,7 +10,7 @@ use crate::{
     auth::AuthClaims,
     db::lobby::{
         get::{
-            get_all_lobbies_extended, get_all_lobby_info, get_lobbies_by_game_id,
+            get_all_lobbies_extended, get_all_lobbies_info, get_lobbies_by_game_id,
             get_lobby_extended, get_lobby_info, get_lobby_players,
         },
         patch::{
@@ -27,7 +27,7 @@ use crate::{
 };
 
 #[derive(Deserialize)]
-pub struct CreateRoomPayload {
+pub struct CreateLobbyPayload {
     pub name: String,
     pub description: Option<String>,
     pub entry_amount: Option<f64>,
@@ -40,7 +40,7 @@ pub struct CreateRoomPayload {
 pub async fn create_lobby_handler(
     State(state): State<AppState>,
     AuthClaims(claims): AuthClaims,
-    Json(payload): Json<CreateRoomPayload>,
+    Json(payload): Json<CreateLobbyPayload>,
 ) -> Result<Json<Uuid>, (StatusCode, String)> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
         tracing::error!("Unauthorized access attempt");
@@ -60,7 +60,7 @@ pub async fn create_lobby_handler(
         _ => None,
     };
 
-    let room_id = create_lobby(
+    let lobby_id = create_lobby(
         payload.name,
         payload.description,
         user_id,
@@ -72,28 +72,28 @@ pub async fn create_lobby_handler(
     )
     .await
     .map_err(|err| {
-        tracing::error!("Error creating room: {}", err);
+        tracing::error!("Error creating lobby: {}", err);
         err.to_response()
     })?;
 
-    tracing::info!("Room created with ID: {}", room_id);
-    Ok(Json(room_id))
+    tracing::info!("Lobby created with ID: {}", lobby_id);
+    Ok(Json(lobby_id))
 }
 
 pub async fn get_lobby_extended_handler(
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<LobbyExtended>, (StatusCode, String)> {
     let player_filter = parse_player_state(query.player_state);
-    let extended = get_lobby_extended(room_id, player_filter, state.redis.clone())
+    let extended = get_lobby_extended(lobby_id, player_filter, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error retrieving extended room info: {}", e);
+            tracing::error!("Error retrieving extended lobby info: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Retrieved extended room info for room ID: {}", room_id);
+    tracing::info!("Retrieved extended lobby info for lobby ID: {}", lobby_id);
     Ok(Json(extended))
 }
 
@@ -112,26 +112,30 @@ pub async fn get_lobbies_by_game_id_handler(
     let lobbies = get_lobbies_by_game_id(game_id, lobby_filters, page, limit, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error retrieving rooms by game ID: {}", e);
+            tracing::error!("Error retrieving lobbies by game ID: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Retrieved {} rooms for game ID: {}", lobbies.len(), game_id);
+    tracing::info!(
+        "Retrieved {} lobbies for game ID: {}",
+        lobbies.len(),
+        game_id
+    );
     Ok(Json(lobbies))
 }
 
 pub async fn get_lobby_info_handler(
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     State(state): State<AppState>,
 ) -> Result<Json<LobbyInfo>, (StatusCode, String)> {
-    let lobby_info = get_lobby_info(room_id, state.redis.clone())
+    let lobby_info = get_lobby_info(lobby_id, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error retrieving room info: {}", e);
+            tracing::error!("Error retrieving lobby info: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Retrieved room info for room ID: {}", room_id);
+    tracing::info!("Retrieved lobby info for {}", lobby_id);
     Ok(Json(lobby_info))
 }
 
@@ -156,15 +160,15 @@ pub async fn get_all_lobbies_extended_handler(
     )
     .await
     .map_err(|e| {
-        tracing::error!("Error retrieving all rooms extended: {}", e);
+        tracing::error!("Error retrieving all lobbies extended: {}", e);
         e.to_response()
     })?;
 
-    tracing::info!("Retrieved {} extended rooms", lobbies.len());
+    tracing::info!("Retrieved {} extended lobbies", lobbies.len());
     Ok(Json(lobbies))
 }
 
-pub async fn get_all_lobby_info_handler(
+pub async fn get_all_lobbies_info_handler(
     Query(query): Query<LobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
@@ -175,7 +179,7 @@ pub async fn get_all_lobby_info_handler(
         None => (1, u32::MAX),
     };
 
-    let lobbies = get_all_lobby_info(lobby_filters, page, limit, state.redis.clone())
+    let lobbies = get_all_lobbies_info(lobby_filters, page, limit, state.redis.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error retrieving lobbies: {}", e);
@@ -205,7 +209,7 @@ pub async fn get_players_handler(
 }
 
 #[derive(Deserialize)]
-pub struct JoinRoomPayload {
+pub struct JoinLobbyPayload {
     pub tx_id: Option<String>,
 }
 
@@ -213,7 +217,7 @@ pub async fn join_lobby_handler(
     Path(lobby_id): Path<Uuid>,
     AuthClaims(claims): AuthClaims,
     State(state): State<AppState>,
-    Json(payload): Json<JoinRoomPayload>,
+    Json(payload): Json<JoinLobbyPayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
         tracing::error!("Unauthorized access attempt");
@@ -223,11 +227,11 @@ pub async fn join_lobby_handler(
     join_lobby(lobby_id, user_id, payload.tx_id, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error joining room {lobby_id}: {}", e);
+            tracing::error!("Error joining lobby {lobby_id}: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Success joining room {lobby_id}");
+    tracing::info!("Success joining lobby {lobby_id}");
     Ok(Json("success"))
 }
 
@@ -244,11 +248,11 @@ pub async fn leave_lobby_handler(
     leave_lobby(lobby_id, user_id, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error leaving room {lobby_id}: {}", e);
+            tracing::error!("Error leaving lobby {lobby_id}: {}", e);
             e.to_response()
         })?;
 
-    tracing::info!("Success leaving room {lobby_id}");
+    tracing::info!("Success leaving lobby {lobby_id}");
     Ok(Json("success"))
 }
 
@@ -271,7 +275,7 @@ pub async fn kick_player_handler(
     let lobby_info = get_lobby_info(lobby_id, state.redis.clone())
         .await
         .map_err(|e| {
-            tracing::error!("Error getting room info: {}", e);
+            tracing::error!("Error getting lobby info: {}", e);
             e.to_response()
         })?;
 
@@ -306,7 +310,7 @@ pub struct UpdateGameStatePayload {
     pub new_state: LobbyState,
 }
 
-pub async fn update_game_state_handler(
+pub async fn update_lobby_state_handler(
     Path(lobby_id): Path<Uuid>,
     State(state): State<AppState>,
     Json(payload): Json<UpdateGameStatePayload>,
@@ -377,6 +381,6 @@ pub async fn update_claim_state_handler(
             e.to_response()
         })?;
 
-    tracing::info!("Claim state updated for room {lobby_id}");
+    tracing::info!("Claim state updated for lobby {lobby_id}");
     Ok(Json("success"))
 }

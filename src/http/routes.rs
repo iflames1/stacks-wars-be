@@ -1,19 +1,18 @@
 use axum::{
     Router,
-    routing::{get, post, put},
+    routing::{get, patch, post},
 };
 
 use crate::{
-    http::{
-        create_room_handler,
-        handlers::{
-            add_game_handler, create_user_handler, get_all_games_handler, get_all_rooms_handler,
-            get_game_handler, get_players_handler, get_room_extended_handler, get_room_handler,
-            get_rooms_by_game_id_handler, get_user_handler, kick_player_handler,
-            room::get_all_rooms_extended_handler, update_claim_state_handler,
-            update_game_state_handler, update_player_state_handler,
+    http::handlers::{
+        game::{create_game_handler, get_all_games_handler, get_game_handler},
+        lobby::{
+            create_lobby_handler, get_all_lobbies_extended_handler, get_all_lobbies_info_handler,
+            get_lobbies_by_game_id_handler, get_lobby_extended_handler, get_lobby_info_handler,
+            get_players_handler, join_lobby_handler, kick_player_handler, leave_lobby_handler,
+            update_claim_state_handler, update_lobby_state_handler, update_player_state_handler,
         },
-        join_room_handler, leave_room_handler,
+        user::{create_user_handler, get_user_handler},
     },
     state::AppState,
 };
@@ -21,28 +20,31 @@ use crate::{
 pub fn create_http_routes(state: AppState) -> Router {
     Router::new()
         .route("/user", post(create_user_handler))
+        .route("/game", post(create_game_handler))
+        .route("/lobby", post(create_lobby_handler))
         .route("/user/{user_id}", get(get_user_handler))
-        .route("/room", post(create_room_handler))
-        .route("/room/{room_id}/extended", get(get_room_extended_handler))
-        .route("/rooms/{game_id}", get(get_rooms_by_game_id_handler))
-        .route("/room/{room_id}/join", put(join_room_handler))
-        .route("/room/{room_id}/leave", put(leave_room_handler))
-        .route("/room/{room_id}/kick", put(kick_player_handler))
-        .route("/room/{room_id}/state", put(update_game_state_handler))
         .route(
-            "/room/{room_id}/player-state",
-            put(update_player_state_handler),
+            "/lobby/{lobby_id}/extended",
+            get(get_lobby_extended_handler),
         )
-        .route(
-            "/room/{room_id}/claim-state",
-            put(update_claim_state_handler),
-        )
-        .route("/game", post(add_game_handler))
         .route("/games", get(get_all_games_handler))
         .route("/game/{game_id}", get(get_game_handler))
-        .route("/room/{room_id}", get(get_room_handler))
-        .route("/rooms", get(get_all_rooms_handler))
-        .route("/rooms/extended", get(get_all_rooms_extended_handler))
-        .route("/room/{room_id}/players", get(get_players_handler))
+        .route("/lobbies/{game_id}", get(get_lobbies_by_game_id_handler))
+        .route("/lobby/{lobby_id}", get(get_lobby_info_handler))
+        .route("/lobbies", get(get_all_lobbies_info_handler))
+        .route("/lobbies/extended", get(get_all_lobbies_extended_handler))
+        .route("/lobby/{lobby_id}/players", get(get_players_handler))
+        .route("/lobby/{lobby_id}/join", patch(join_lobby_handler))
+        .route("/lobby/{lobby_id}/leave", patch(leave_lobby_handler))
+        .route("/lobby/{lobby_id}/kick", patch(kick_player_handler))
+        .route("/lobby/{lobby_id}/state", patch(update_lobby_state_handler))
+        .route(
+            "/lobby/{lobby_id}/player-state",
+            patch(update_player_state_handler),
+        )
+        .route(
+            "/lobby/{lobby_id}/claim-state",
+            patch(update_claim_state_handler),
+        )
         .with_state(state)
 }

@@ -1,5 +1,5 @@
 use crate::{
-    db::game::{get::get_all_games, post::add_game},
+    db::game::{get::get_all_games, post::create_game},
     errors::AppError,
     state::RedisClient,
 };
@@ -30,7 +30,7 @@ pub async fn initialize_games(redis: RedisClient) -> Result<(), AppError> {
 }
 
 async fn add_default_games(redis: RedisClient) -> Result<(), AppError> {
-    let game_id = add_game(
+    let game_id = create_game(
         "Lexi Wars".to_string(),
         "A word battle game where players compete with words.".to_string(),
         "https://res.cloudinary.com/dapbvli1v/image/upload/Lexi_Wars2_yuuoam.png".to_string(),

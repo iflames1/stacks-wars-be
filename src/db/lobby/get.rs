@@ -180,7 +180,7 @@ pub async fn get_connected_players(
     Ok(players)
 }
 
-pub async fn get_all_lobby_info(
+pub async fn get_all_lobbies_info(
     lobby_filters: Option<Vec<LobbyState>>,
     page: u32,
     limit: u32,
