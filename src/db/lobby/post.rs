@@ -7,8 +7,9 @@ use crate::{
     db::{tx::validate_payment_tx, user::get_user_by_id},
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
-    models::game::{
-        GameType, LobbyInfo, LobbyPool, LobbyPoolInput, LobbyState, Player, PlayerState,
+    models::{
+        game::{GameType, LobbyInfo, LobbyPool, LobbyPoolInput, LobbyState, Player, PlayerState},
+        redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
 };
@@ -60,7 +61,7 @@ pub async fn create_lobby(
             current_amount: pool_input.entry_amount,
         };
 
-        let pool_key = format!("lobby:{}:pool", lobby_id);
+        let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
 
         let pool_hash = pool_struct.to_redis_hash();
         let fields: Vec<(&str, &str)> = pool_hash
@@ -74,8 +75,8 @@ pub async fn create_lobby(
             .map_err(AppError::RedisCommandError)?;
     }
 
-    let lobby_key = format!("lobby:{}", lobby_id);
-    let player_key = format!("lobby:{}:player:{}", lobby_id, creator_user.id);
+    let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(creator_user.id));
     let lobby_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address.clone(),
@@ -120,12 +121,12 @@ pub async fn create_lobby(
         .arg(lobby_id.to_string())
         .ignore()
         .cmd("ZADD")
-        .arg(format!("lobbies:{:?}", LobbyState::Waiting).to_lowercase())
+        .arg(RedisKey::lobbies_state(&LobbyState::Waiting))
         .arg(created_score)
         .arg(lobby_id.to_string())
         .ignore()
         .cmd("ZADD")
-        .arg(format!("game:{}:lobbies", game_id))
+        .arg(RedisKey::game_lobbies(KeyPart::Id(game_id)))
         .arg(created_score)
         .arg(lobby_id.to_string())
         .query_async(&mut *conn)

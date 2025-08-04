@@ -1,6 +1,9 @@
 use crate::{
     errors::AppError,
-    models::{User, redis::RedisKey},
+    models::{
+        User,
+        redis::{KeyPart, RedisKey},
+    },
     state::RedisClient,
 };
 use redis::AsyncCommands;
@@ -13,7 +16,7 @@ pub async fn get_user_by_id(user_id: Uuid, redis: RedisClient) -> Result<User, A
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = RedisKey::user(user_id);
+    let key = RedisKey::user(KeyPart::Id(user_id));
 
     let data: HashMap<String, String> = conn
         .hgetall(&key)
@@ -41,21 +44,21 @@ pub async fn get_user_by_id(user_id: Uuid, redis: RedisClient) -> Result<User, A
     Ok(user)
 }
 
-pub async fn get_user_id(identifier: &str, redis: RedisClient) -> Result<Uuid, AppError> {
+pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
     // Try wallet lookup first
-    let wallet_key = RedisKey::wallet(identifier);
+    let wallet_key = RedisKey::wallet(KeyPart::Str(identifier.clone()));
     if let Ok(Some(user_id_str)) = conn.get::<_, Option<String>>(&wallet_key).await {
         return Uuid::parse_str(&user_id_str)
             .map_err(|e| AppError::Deserialization(format!("Invalid UUID: {}", e)));
     }
 
     // Fallback to username
-    let username_key = RedisKey::username(identifier);
+    let username_key = RedisKey::username(KeyPart::Str(identifier));
     let user_id_str: String = conn
         .get(&username_key)
         .await

@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use crate::{
     errors::AppError,
-    models::game::{LobbyExtended, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+    models::{
+        game::{LobbyExtended, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+        redis::{KeyPart, RedisKey},
+    },
     state::RedisClient,
 };
 
@@ -29,9 +32,9 @@ pub async fn get_lobbies_by_game_id(
         // Union all the per‐state sorted sets
         let state_keys: Vec<String> = states
             .iter()
-            .map(|s| format!("lobbies:{}", format!("{:?}", s).to_lowercase()))
+            .map(|state| RedisKey::lobbies_state(state))
             .collect();
-        let union_key = format!("temp:union:{}", Uuid::new_v4());
+        let union_key = RedisKey::temp_union();
         let _: () = redis::cmd("ZUNIONSTORE")
             .arg(&union_key)
             .arg(state_keys.len())
@@ -47,8 +50,8 @@ pub async fn get_lobbies_by_game_id(
             .ok();
 
         // Now intersect with the game‐specific set
-        let game_key = format!("game:{}:lobbies", game_id);
-        let inter_key = format!("temp:inter:{}", Uuid::new_v4());
+        let game_key = RedisKey::game_lobbies(KeyPart::Id(game_id));
+        let inter_key = RedisKey::temp_inter();
         let _: () = redis::cmd("ZINTERSTORE")
             .arg(&inter_key)
             .arg(2)
@@ -88,7 +91,7 @@ pub async fn get_lobbies_by_game_id(
     } else {
         // No state filter → page straight out of game:{game_id}:lobbies
         redis::cmd("ZREVRANGE")
-            .arg(format!("game:{}:lobbies", game_id))
+            .arg(RedisKey::game_lobbies(KeyPart::Id(game_id)))
             .arg(offset)
             .arg(end)
             .query_async(&mut *conn)
@@ -104,8 +107,8 @@ pub async fn get_lobbies_by_game_id(
 
     // Batch all HGETALLs using a Redis pipeline
     let mut pipe = redis::pipe();
-    for uuid in &valid_ids {
-        let key = format!("lobby:{}", uuid);
+    for lobby_id in &valid_ids {
+        let key = RedisKey::lobby(KeyPart::Id(*lobby_id));
         pipe.cmd("HGETALL").arg(key);
     }
 
@@ -129,7 +132,7 @@ pub async fn get_lobby_info(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyI
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
-    let key = format!("lobby:{}", lobby_id);
+    let key = RedisKey::lobby(KeyPart::Id(lobby_id));
 
     // fetch base hash
     let map: HashMap<String, String> = redis::cmd("HGETALL")
@@ -155,7 +158,7 @@ pub async fn get_connected_players(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let pattern = format!("lobby:{}:connected_player:*", lobby_id);
+    let pattern = RedisKey::lobby_connected_player(KeyPart::Id(lobby_id), KeyPart::Wildcard);
     let keys: Vec<String> = redis::cmd("KEYS")
         .arg(&pattern)
         .query_async(&mut *conn)
@@ -197,7 +200,7 @@ pub async fn get_all_lobby_info(
     // Batch all HGETALLs using a Redis pipeline
     let mut pipe = redis::pipe();
     for uuid in &uuids {
-        let key = format!("lobby:{}", uuid);
+        let key = RedisKey::lobby(KeyPart::Id(*uuid));
         pipe.cmd("HGETALL").arg(key);
     }
 
@@ -227,7 +230,7 @@ pub async fn get_lobby_players(
     })?;
 
     // find all player hashes for this lobby
-    let pattern = format!("lobby:{}:player:*", lobby_id);
+    let pattern = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Wildcard);
     let keys: Vec<String> = redis::cmd("KEYS")
         .arg(&pattern)
         .query_async(&mut *conn)
@@ -263,7 +266,7 @@ pub async fn get_lobby_pool(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyP
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("lobby:{}:pool", lobby_id);
+    let key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
     let map: HashMap<String, String> = redis::cmd("HGETALL")
         .arg(&key)
         .query_async(&mut *conn)
@@ -349,9 +352,9 @@ async fn fetch_lobby_uuids(
     let ids: Vec<String> = if let Some(states) = lobby_filters {
         let keys: Vec<String> = states
             .iter()
-            .map(|s| format!("lobbies:{}", format!("{:?}", s).to_lowercase()))
+            .map(|state| RedisKey::lobbies_state(state))
             .collect();
-        let union = format!("temp:union:{}", Uuid::new_v4());
+        let union = RedisKey::temp_union();
         let _: () = redis::cmd("ZUNIONSTORE")
             .arg(&union)
             .arg(keys.len())
