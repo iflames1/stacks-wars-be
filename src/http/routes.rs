@@ -23,17 +23,20 @@ pub fn create_http_routes(state: AppState) -> Router {
         .route("/game", post(create_game_handler))
         .route("/lobby", post(create_lobby_handler))
         .route("/user/{user_id}", get(get_user_handler))
+        .route("/game", get(get_all_games_handler))
+        .route("/game/{game_id}", get(get_game_handler))
         .route(
-            "/lobby/{lobby_id}/extended",
+            "/game/lobbies/{game_id}",
+            get(get_lobbies_by_game_id_handler),
+        )
+        .route("/lobby", get(get_all_lobbies_info_handler))
+        .route("/lobby/{lobby_id}", get(get_lobby_info_handler))
+        .route("/lobby/extended", get(get_all_lobbies_extended_handler))
+        .route(
+            "/lobby/extended/{lobby_id}",
             get(get_lobby_extended_handler),
         )
-        .route("/games", get(get_all_games_handler))
-        .route("/game/{game_id}", get(get_game_handler))
-        .route("/lobbies/{game_id}", get(get_lobbies_by_game_id_handler))
-        .route("/lobby/{lobby_id}", get(get_lobby_info_handler))
-        .route("/lobbies", get(get_all_lobbies_info_handler))
-        .route("/lobbies/extended", get(get_all_lobbies_extended_handler))
-        .route("/lobby/{lobby_id}/players", get(get_players_handler))
+        .route("/lobby/players/{lobby_id}", get(get_players_handler))
         .route("/lobby/{lobby_id}/join", patch(join_lobby_handler))
         .route("/lobby/{lobby_id}/leave", patch(leave_lobby_handler))
         .route("/lobby/{lobby_id}/kick", patch(kick_player_handler))
