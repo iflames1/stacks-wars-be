@@ -6,7 +6,7 @@ use crate::{
 use redis::AsyncCommands;
 use uuid::Uuid;
 
-pub fn is_valid_username(username: &str) -> bool {
+fn _is_valid_username(username: &str) -> bool {
     let len_ok = (3..=20).contains(&username.len());
     let valid_chars = username
         .chars()
@@ -15,7 +15,7 @@ pub fn is_valid_username(username: &str) -> bool {
     len_ok && valid_chars
 }
 
-pub async fn update_username(
+pub async fn _update_username(
     user_id: Uuid,
     new_username: String,
     redis: RedisClient,

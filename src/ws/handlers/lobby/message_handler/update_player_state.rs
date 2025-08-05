@@ -1,7 +1,10 @@
 use crate::{
-    db,
+    db::lobby::{
+        get::{get_lobby_info, get_lobby_players},
+        patch::{self, update_lobby_state},
+    },
     models::{
-        game::{GameState, Player, PlayerState},
+        game::{LobbyState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
@@ -18,11 +21,11 @@ pub async fn update_player_state(
     redis: &RedisClient,
 ) {
     if let Err(e) =
-        db::lobby::update_player_state(room_id, player.id, new_state.clone(), redis.clone()).await
+        patch::update_player_state(room_id, player.id, new_state.clone(), redis.clone()).await
     {
         tracing::error!("Failed to update state: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+    } else if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
         tracing::info!(
             "Player {} updated state to {:?} in room {}",
             player.wallet_address,
@@ -40,13 +43,12 @@ pub async fn update_player_state(
         .await;
 
         if new_state == PlayerState::NotReady {
-            if let Ok(room_info) = db::lobby::get_room_info(room_id, redis.clone()).await {
-                if room_info.state == GameState::InProgress {
+            if let Ok(room_info) = get_lobby_info(room_id, redis.clone()).await {
+                if room_info.state == LobbyState::InProgress {
                     // revert game state to Waiting
-                    let _ = db::lobby::update_game_state(room_id, GameState::Waiting, redis.clone())
-                        .await;
+                    let _ = update_lobby_state(room_id, LobbyState::Waiting, redis.clone()).await;
                     let msg = LobbyServerMessage::GameState {
-                        state: GameState::Waiting,
+                        state: LobbyState::Waiting,
                         ready_players: None,
                     };
                     broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;

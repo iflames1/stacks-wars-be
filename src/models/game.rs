@@ -81,11 +81,11 @@ impl GameType {
 }
 
 #[derive(Debug)]
-pub struct GameRoom {
-    pub info: GameRoomInfo,
+pub struct LexiWars {
+    pub info: LobbyInfo,
     pub players: Vec<Player>,
     pub data: GameData,
-    pub used_words_global: HashSet<String>,
+    pub used_words_in_lobby: HashSet<String>,
     pub used_words: HashMap<Uuid, Vec<String>>,
     pub rule_context: RuleContext,
     pub rule_index: usize,

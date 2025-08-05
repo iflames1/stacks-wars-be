@@ -1,5 +1,5 @@
 use crate::models::{
-    game::{GameState, Player, PlayerState},
+    game::{LobbyState, Player, PlayerState},
     user::User,
 };
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ pub enum LobbyClientMessage {
         new_state: PlayerState,
     },
     UpdateGameState {
-        new_state: GameState,
+        new_state: LobbyState,
     },
     LeaveRoom,
     KickPlayer {
@@ -85,7 +85,7 @@ pub enum LobbyServerMessage {
         time: u32,
     },
     GameState {
-        state: GameState,
+        state: LobbyState,
         ready_players: Option<Vec<Uuid>>,
     },
     PendingPlayers {

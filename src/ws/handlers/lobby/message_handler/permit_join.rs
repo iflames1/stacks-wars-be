@@ -1,5 +1,5 @@
 use crate::{
-    db,
+    db::lobby::get::get_lobby_info,
     errors::AppError,
     models::{
         game::Player,
@@ -70,7 +70,7 @@ pub async fn permit_join(
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    let room_info = match db::lobby::get_room_info(room_id, redis.clone()).await {
+    let room_info = match get_lobby_info(room_id, redis.clone()).await {
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to fetch room info: {}", e);

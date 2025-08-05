@@ -1,5 +1,5 @@
 use crate::{
-    db,
+    db::lobby::{get::get_lobby_players, patch},
     models::{
         game::Player,
         lobby::{JoinState, LobbyServerMessage},
@@ -24,10 +24,10 @@ pub async fn join_lobby(
     let join_map = get_join_requests(room_id, &join_requests).await;
     if let Some(req) = join_map.iter().find(|r| r.user.id == player.id) {
         if req.state == JoinState::Allowed {
-            if let Err(e) = db::lobby::join_room(room_id, player.id, tx_id, redis.clone()).await {
+            if let Err(e) = patch::join_lobby(room_id, player.id, tx_id, redis.clone()).await {
                 tracing::error!("Failed to join room: {}", e);
                 send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-            } else if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+            } else if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
                 tracing::info!(
                     "{} joined room {} successfully",
                     player.wallet_address,

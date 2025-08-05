@@ -4,7 +4,7 @@ use futures::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 use crate::{
-    db,
+    db::lobby::get::get_lobby_players,
     models::{
         chat::{ChatClientMessage, ChatMessage, ChatServerMessage},
         game::Player,
@@ -44,29 +44,26 @@ pub async fn handle_incoming_chat_messages(
                                 .await;
                             }
                             ChatClientMessage::Chat { text } => {
-                                let room_players = match db::lobby::get_room_players(
-                                    room_id,
-                                    redis.clone(),
-                                )
-                                .await
-                                {
-                                    Ok(players) => players,
-                                    Err(e) => {
-                                        tracing::error!("Failed to get room players: {}", e);
-                                        // Send error to user and continue
-                                        let error_msg = ChatServerMessage::Error {
-                                            message: "Failed to verify room membership".to_string(),
-                                        };
-                                        send_chat_message_to_player(
-                                            player.id,
-                                            &error_msg,
-                                            chat_connections,
-                                            &redis,
-                                        )
-                                        .await;
-                                        continue;
-                                    }
-                                };
+                                let room_players =
+                                    match get_lobby_players(room_id, None, redis.clone()).await {
+                                        Ok(players) => players,
+                                        Err(e) => {
+                                            tracing::error!("Failed to get room players: {}", e);
+                                            // Send error to user and continue
+                                            let error_msg = ChatServerMessage::Error {
+                                                message: "Failed to verify room membership"
+                                                    .to_string(),
+                                            };
+                                            send_chat_message_to_player(
+                                                player.id,
+                                                &error_msg,
+                                                chat_connections,
+                                                &redis,
+                                            )
+                                            .await;
+                                            continue;
+                                        }
+                                    };
 
                                 let is_room_member = room_players.iter().any(|p| p.id == player.id);
 
