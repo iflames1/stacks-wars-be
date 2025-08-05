@@ -4,7 +4,9 @@ use teloxide::Bot;
 use uuid::Uuid;
 
 use crate::{
-    db::{tx::validate_payment_tx, user::get::get_user_by_id},
+    db::{
+        game::patch::update_game_active_lobby, tx::validate_payment_tx, user::get::get_user_by_id,
+    },
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::{
@@ -132,6 +134,8 @@ pub async fn create_lobby(
         .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
+
+    update_game_active_lobby(game_id, true, redis.clone()).await?;
 
     let redis_clone = redis.clone();
     tokio::spawn(async move {
