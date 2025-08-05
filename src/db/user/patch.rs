@@ -6,7 +6,7 @@ use crate::{
 use redis::AsyncCommands;
 use uuid::Uuid;
 
-fn _is_valid_username(username: &str) -> bool {
+fn is_valid_username(username: &str) -> bool {
     let len_ok = (3..=20).contains(&username.len());
     let valid_chars = username
         .chars()
@@ -15,11 +15,11 @@ fn _is_valid_username(username: &str) -> bool {
     len_ok && valid_chars
 }
 
-pub async fn _update_username(
+pub async fn update_username(
     user_id: Uuid,
     new_username: String,
     redis: RedisClient,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -27,7 +27,7 @@ pub async fn _update_username(
 
     // Check if new username is taken by someone else
     let normalized = new_username.trim().to_lowercase();
-    if !_is_valid_username(&normalized) {
+    if !is_valid_username(&normalized) {
         return Err(AppError::BadRequest("Invalid username".into()));
     }
     let new_username_key = RedisKey::username(KeyPart::Str(normalized));
@@ -72,10 +72,10 @@ pub async fn _update_username(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    Ok(())
+    Ok(new_username)
 }
 
-pub async fn _update_display_name(
+pub async fn update_display_name(
     user_id: Uuid,
     new_display_name: String,
     redis: RedisClient,

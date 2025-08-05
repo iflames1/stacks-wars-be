@@ -12,7 +12,10 @@ use crate::{
             get_players_handler, join_lobby_handler, kick_player_handler, leave_lobby_handler,
             update_claim_state_handler, update_lobby_state_handler, update_player_state_handler,
         },
-        user::{create_user_handler, get_user_handler},
+        user::{
+            create_user_handler, get_user_handler, update_display_name_handler,
+            update_username_handler,
+        },
     },
     state::AppState,
 };
@@ -37,6 +40,8 @@ pub fn create_http_routes(state: AppState) -> Router {
             get(get_lobby_extended_handler),
         )
         .route("/lobby/players/{lobby_id}", get(get_players_handler))
+        .route("/user/username", patch(update_username_handler))
+        .route("/user/display_name", patch(update_display_name_handler))
         .route("/lobby/{lobby_id}/join", patch(join_lobby_handler))
         .route("/lobby/{lobby_id}/leave", patch(leave_lobby_handler))
         .route("/lobby/{lobby_id}/kick", patch(kick_player_handler))
