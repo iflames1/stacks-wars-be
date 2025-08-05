@@ -18,9 +18,9 @@ pub fn generate_random_letter() -> char {
     (b'a' + letter as u8) as char
 }
 
-pub fn get_next_player_and_wrap(room: &mut LexiWars, current_id: Uuid) -> Option<Uuid> {
+pub fn get_next_player_and_wrap(lobby: &mut LexiWars, current_id: Uuid) -> Option<Uuid> {
     // Use connected_players instead of all players
-    let connected_players = &room.connected_players;
+    let connected_players = &lobby.connected_players;
 
     connected_players
         .iter()
@@ -31,15 +31,15 @@ pub fn get_next_player_and_wrap(room: &mut LexiWars, current_id: Uuid) -> Option
             let wrapped = next_index == 0;
 
             if wrapped {
-                let next_rule_index = (room.rule_index + 1) % get_rules(&room.rule_context).len();
+                let next_rule_index = (lobby.rule_index + 1) % get_rules(&lobby.rule_context).len();
 
                 // If we wrapped to first rule again, increase difficulty
                 if next_rule_index == 0 {
-                    room.rule_context.min_word_length += 2;
+                    lobby.rule_context.min_word_length += 2;
                 }
 
-                room.rule_index = next_rule_index;
-                room.rule_context.random_letter = generate_random_letter();
+                lobby.rule_index = next_rule_index;
+                lobby.rule_context.random_letter = generate_random_letter();
             }
 
             next_id
@@ -98,9 +98,9 @@ pub async fn broadcast_to_player(
     }
 }
 
-pub async fn broadcast_to_room(
+pub async fn broadcast_to_lobby(
     message: &LexiWarsServerMessage,
-    room: &LexiWars,
+    lobby: &LexiWars,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
@@ -115,10 +115,10 @@ pub async fn broadcast_to_room(
     let connection_guard = connections.lock().await;
 
     // Use connected_players instead of all players
-    for player in room
+    for player in lobby
         .connected_players
         .iter()
-        .chain(room.eliminated_players.iter())
+        .chain(lobby.eliminated_players.iter())
     {
         if let Some(conn_info) = connection_guard.get(&player.id) {
             let mut sender = conn_info.sender.lock().await;
@@ -159,7 +159,7 @@ pub async fn broadcast_to_room(
 pub async fn broadcast_word_entry_from_player(
     sender_player: &Player,
     word: &str,
-    room: &LexiWars,
+    lobby: &LexiWars,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
@@ -168,7 +168,7 @@ pub async fn broadcast_word_entry_from_player(
         sender: sender_player.clone(),
     };
 
-    broadcast_to_room(&message, room, connections, redis).await;
+    broadcast_to_lobby(&message, lobby, connections, redis).await;
 }
 
 pub async fn close_connections_for_players(player_ids: &[Uuid], connections: &ConnectionInfoMap) {

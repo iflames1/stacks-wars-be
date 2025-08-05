@@ -85,31 +85,31 @@ pub async fn broadcast_to_lobby(
         }
     }
 
-    // Notify chat connections about room changes
+    // Notify chat connections about lobby changes
     if matches!(msg, LobbyServerMessage::PlayerUpdated { .. }) {
         if let Some(chat_conns) = chat_connections {
-            notify_chat_about_room_changes(lobby_id, chat_conns, &redis).await;
+            notify_chat_about_lobby_changes(lobby_id, chat_conns, &redis).await;
         }
     }
 }
 
-async fn notify_chat_about_room_changes(
+async fn notify_chat_about_lobby_changes(
     lobby_id: Uuid,
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    // Get current room players
-    if let Ok(room_players) = get_lobby_players(lobby_id, None, redis.clone()).await {
-        let room_player_ids: std::collections::HashSet<Uuid> =
-            room_players.iter().map(|p| p.id).collect();
+    // Get current lobby players
+    if let Ok(lobby_players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+        let lobby_player_ids: std::collections::HashSet<Uuid> =
+            lobby_players.iter().map(|p| p.id).collect();
 
         let connection_guard = chat_connections.lock().await;
 
-        // Check all chat connections and update permissions for players in this room
+        // Check all chat connections and update permissions for players in this lobby
         for (&player_id, _) in connection_guard.iter() {
-            let is_room_member = room_player_ids.contains(&player_id);
+            let is_lobby_member = lobby_player_ids.contains(&player_id);
             let permit_msg = ChatServerMessage::PermitChat {
-                allowed: is_room_member,
+                allowed: is_lobby_member,
             };
 
             drop(connection_guard);
@@ -191,14 +191,14 @@ pub async fn get_join_requests(
 }
 
 pub async fn request_to_join(
-    room_id: Uuid,
+    lobby_id: Uuid,
     user: User,
     join_requests: &LobbyJoinRequests,
 ) -> Result<(), AppError> {
     let mut map = join_requests.lock().await;
-    let room_requests = map.entry(room_id).or_default();
+    let lobby_requests = map.entry(lobby_id).or_default();
 
-    if let Some(existing) = room_requests.iter_mut().find(|r| r.user.id == user.id) {
+    if let Some(existing) = lobby_requests.iter_mut().find(|r| r.user.id == user.id) {
         if existing.state == JoinState::Pending {
             return Ok(());
         }
@@ -207,7 +207,7 @@ pub async fn request_to_join(
         return Ok(());
     }
 
-    room_requests.push(JoinRequest {
+    lobby_requests.push(JoinRequest {
         user,
         state: JoinState::Pending,
     });
@@ -216,14 +216,14 @@ pub async fn request_to_join(
 }
 
 pub async fn accept_join_request(
-    room_id: Uuid,
+    lobby_id: Uuid,
     user_id: Uuid,
     join_requests: &LobbyJoinRequests,
 ) -> Result<(), AppError> {
     let mut map = join_requests.lock().await;
 
-    if let Some(requests) = map.get_mut(&room_id) {
-        tracing::info!("Join requests for room {}: {:?}", room_id, requests);
+    if let Some(requests) = map.get_mut(&lobby_id) {
+        tracing::info!("Join requests for lobby {}: {:?}", lobby_id, requests);
 
         if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
             tracing::info!("Found join request for user {}", user_id);
@@ -233,21 +233,21 @@ pub async fn accept_join_request(
             tracing::warn!("User {} not found in join requests", user_id);
         }
     } else {
-        tracing::warn!("No join requests found for room {}", room_id);
+        tracing::warn!("No join requests found for lobby {}", lobby_id);
     }
 
     Err(AppError::NotFound("User not found in join requests".into()))
 }
 
 pub async fn reject_join_request(
-    room_id: Uuid,
+    lobby_id: Uuid,
     user_id: Uuid,
     join_requests: &LobbyJoinRequests,
 ) -> Result<(), AppError> {
     let mut map = join_requests.lock().await;
 
-    if let Some(requests) = map.get_mut(&room_id) {
-        tracing::info!("Join requests for room {}: {:?}", room_id, requests);
+    if let Some(requests) = map.get_mut(&lobby_id) {
+        tracing::info!("Join requests for lobby {}: {:?}", lobby_id, requests);
 
         if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
             tracing::info!("Found join request for user {}", user_id);
@@ -257,17 +257,17 @@ pub async fn reject_join_request(
             tracing::warn!("User {} not found in join requests", user_id);
         }
     } else {
-        tracing::warn!("No join requests found for room {}", room_id);
+        tracing::warn!("No join requests found for lobby {}", lobby_id);
     }
 
     Err(AppError::NotFound("User not found in join requests".into()))
 }
 
 pub async fn get_pending_players(
-    room_id: Uuid,
+    lobby_id: Uuid,
     join_requests: &LobbyJoinRequests,
 ) -> Result<Vec<PendingJoin>, AppError> {
-    let map = get_join_requests(room_id, join_requests).await;
+    let map = get_join_requests(lobby_id, join_requests).await;
     let pending_players = map
         .into_iter()
         .filter(|req| req.state == JoinState::Pending)
@@ -282,7 +282,7 @@ pub async fn get_pending_players(
 
 pub async fn handle_incoming_messages(
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
@@ -302,7 +302,7 @@ pub async fn handle_incoming_messages(
                             LobbyClientMessage::JoinLobby { tx_id } => {
                                 join_lobby(
                                     tx_id,
-                                    room_id,
+                                    lobby_id,
                                     &join_requests,
                                     player,
                                     connections,
@@ -312,7 +312,7 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::RequestJoin => {
-                                request_join(player, room_id, &join_requests, connections, &redis)
+                                request_join(player, lobby_id, &join_requests, connections, &redis)
                                     .await
                             }
                             LobbyClientMessage::PermitJoin { user_id, allow } => {
@@ -321,7 +321,7 @@ pub async fn handle_incoming_messages(
                                     user_id,
                                     &join_requests,
                                     player.clone(),
-                                    room_id,
+                                    lobby_id,
                                     connections,
                                     &redis,
                                 )
@@ -330,7 +330,7 @@ pub async fn handle_incoming_messages(
                             LobbyClientMessage::UpdatePlayerState { new_state } => {
                                 update_player_state(
                                     new_state,
-                                    room_id,
+                                    lobby_id,
                                     player,
                                     connections,
                                     chat_connections,
@@ -339,7 +339,7 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::LeaveRoom => {
-                                leave_lobby(room_id, player, connections, chat_connections, &redis)
+                                leave_lobby(lobby_id, player, connections, chat_connections, &redis)
                                     .await
                             }
                             LobbyClientMessage::KickPlayer {
@@ -351,7 +351,7 @@ pub async fn handle_incoming_messages(
                                     player_id,
                                     wallet_address,
                                     display_name,
-                                    room_id,
+                                    lobby_id,
                                     player,
                                     connections,
                                     chat_connections,
@@ -359,10 +359,10 @@ pub async fn handle_incoming_messages(
                                 )
                                 .await
                             }
-                            LobbyClientMessage::UpdateGameState { new_state } => {
+                            LobbyClientMessage::UpdateLobbyState { new_state } => {
                                 update_game_state(
                                     new_state,
-                                    room_id,
+                                    lobby_id,
                                     player,
                                     connections,
                                     &redis,

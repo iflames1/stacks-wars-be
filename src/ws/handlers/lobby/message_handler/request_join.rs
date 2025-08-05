@@ -10,14 +10,14 @@ use uuid::Uuid;
 
 pub async fn request_join(
     player: &Player,
-    room_id: Uuid,
+    lobby_id: Uuid,
     join_requests: &LobbyJoinRequests,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    match request_to_join(room_id, player.clone().into(), &join_requests).await {
+    match request_to_join(lobby_id, player.clone().into(), &join_requests).await {
         Ok(_) => {
-            if let Ok(pending_players) = get_pending_players(room_id, &join_requests).await {
+            if let Ok(pending_players) = get_pending_players(lobby_id, &join_requests).await {
                 tracing::info!(
                     "Success Adding {} to pending players",
                     player.wallet_address
@@ -26,7 +26,7 @@ pub async fn request_join(
                 send_to_player(player.id, &connections, &msg, &redis).await;
 
                 let msg = LobbyServerMessage::PendingPlayers { pending_players };
-                broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
+                broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
             }
         }
         Err(e) => {

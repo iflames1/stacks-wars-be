@@ -24,7 +24,7 @@ use uuid::Uuid;
 pub async fn chat_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQueryParams>,
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -35,13 +35,13 @@ pub async fn chat_handler(
     let chat_connections = state.chat_connections.clone();
     let chat_histories = state.chat_histories.clone();
 
-    // Check if room exists and get room state
-    let room_info = get_lobby_info(room_id, redis.clone())
+    // Check if lobby exists and get lobby state
+    let lobby_info = get_lobby_info(lobby_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
     // If game is finished, close connection immediately
-    if room_info.state == LobbyState::Finished {
+    if lobby_info.state == LobbyState::Finished {
         tracing::info!(
             "Player {} trying to connect to chat while game is finished",
             player_id
@@ -79,7 +79,7 @@ pub async fn chat_handler(
     Ok(ws.on_upgrade(move |socket| {
         handle_chat_socket(
             socket,
-            room_id,
+            lobby_id,
             player,
             chat_connections,
             redis,
@@ -90,7 +90,7 @@ pub async fn chat_handler(
 
 async fn handle_chat_socket(
     socket: WebSocket,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: Player,
     chat_connections: crate::state::ChatConnectionInfoMap,
     redis: RedisClient,
@@ -101,26 +101,26 @@ async fn handle_chat_socket(
     store_chat_connection_and_send_queued_messages(player.id, sender, &chat_connections, &redis)
         .await;
 
-    // Check if player is in the room and send permission status
-    let is_room_member = match get_lobby_players(room_id, None, redis.clone()).await {
+    // Check if player is in the lobby and send permission status
+    let is_lobby_member = match get_lobby_players(lobby_id, None, redis.clone()).await {
         Ok(players) => players.iter().any(|p| p.id == player.id),
         Err(e) => {
-            tracing::error!("Failed to check room membership: {}", e);
+            tracing::error!("Failed to check lobby membership: {}", e);
             false
         }
     };
 
     let permit_msg = ChatServerMessage::PermitChat {
-        allowed: is_room_member,
+        allowed: is_lobby_member,
     };
     send_chat_message_to_player(player.id, &permit_msg, &chat_connections, &redis).await;
 
-    // If player is a room member, send chat history
-    if is_room_member {
+    // If player is a lobby member, send chat history
+    if is_lobby_member {
         let chat_history = {
             let mut histories = chat_histories.lock().await;
             let history = histories
-                .entry(room_id)
+                .entry(lobby_id)
                 .or_insert_with(|| crate::state::ChatHistory::new());
             history.get_messages()
         };
@@ -135,7 +135,7 @@ async fn handle_chat_socket(
 
     message_handler::handle_incoming_chat_messages(
         receiver,
-        room_id,
+        lobby_id,
         &player,
         &chat_connections,
         redis.clone(),

@@ -232,29 +232,6 @@ pub struct LobbyPoolInput {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum GameState {
-    Waiting,
-    InProgress,
-    Finished,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct GameRoomInfo {
-    pub id: Uuid,
-    pub name: String,
-    pub description: Option<String>,
-    pub creator_id: Uuid,
-    pub state: GameState,
-    pub game_id: Uuid,
-    pub game_name: String,
-    pub participants: usize,
-    pub contract_address: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub connected_players: Vec<Player>,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum LobbyState {
     Waiting,

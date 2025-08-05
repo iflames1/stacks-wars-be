@@ -31,7 +31,7 @@ use uuid::Uuid;
 pub async fn lobby_ws_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQueryParams>,
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (axum::http::StatusCode, String)> {
@@ -44,7 +44,7 @@ pub async fn lobby_ws_handler(
     let join_requests = state.lobby_join_requests.clone();
     let countdowns = state.lobby_countdowns.clone();
 
-    let players = get_lobby_players(room_id, None, redis.clone())
+    let players = get_lobby_players(lobby_id, None, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -52,7 +52,7 @@ pub async fn lobby_ws_handler(
         return Ok(ws.on_upgrade(move |socket| {
             handle_lobby_socket(
                 socket,
-                room_id,
+                lobby_id,
                 matched_player.into(),
                 connections,
                 chat_connections,
@@ -69,11 +69,11 @@ pub async fn lobby_ws_handler(
 
     {
         let mut guard = join_requests.lock().await;
-        let room_requests = guard.entry(room_id).or_default();
+        let lobby_requests = guard.entry(lobby_id).or_default();
 
-        let already_requested = room_requests.iter().any(|req| req.user.id == user.id);
+        let already_requested = lobby_requests.iter().any(|req| req.user.id == user.id);
         if !already_requested {
-            room_requests.push(JoinRequest {
+            lobby_requests.push(JoinRequest {
                 user: user.clone(),
                 state: JoinState::Idle,
             });
@@ -97,7 +97,7 @@ pub async fn lobby_ws_handler(
     Ok(ws.on_upgrade(move |socket| {
         handle_lobby_socket(
             socket,
-            room_id,
+            lobby_id,
             idle_player,
             connections,
             chat_connections,
@@ -110,7 +110,7 @@ pub async fn lobby_ws_handler(
 
 async fn handle_lobby_socket(
     socket: WebSocket,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: Player,
     connections: ConnectionInfoMap,
     chat_connections: ChatConnectionInfoMap,
@@ -120,21 +120,21 @@ async fn handle_lobby_socket(
 ) {
     let (mut sender, receiver) = socket.split();
 
-    // Check room state immediately upon connection
-    match get_lobby_info(room_id, redis.clone()).await {
-        Ok(room_info) => {
+    // Check lobby state immediately upon connection
+    match get_lobby_info(lobby_id, redis.clone()).await {
+        Ok(lobby_info) => {
             // Check if there's an active countdown
             let countdown_time = {
                 let countdowns_guard = countdowns.lock().await;
                 countdowns_guard
-                    .get(&room_id)
+                    .get(&lobby_id)
                     .map(|state| state.current_time)
                     .unwrap_or(15)
             };
 
             // Always broadcast the current game state
             let ready_players =
-                match get_lobby_players(room_id, Some(PlayerState::Ready), redis.clone()).await {
+                match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                     Err(e) => {
                         tracing::error!("❌ Failed to get ready players: {}", e);
@@ -142,15 +142,15 @@ async fn handle_lobby_socket(
                         vec![]
                     }
                 };
-            let game_state_msg = LobbyServerMessage::GameState {
-                state: room_info.state.clone(),
+            let game_state_msg = LobbyServerMessage::LobbyState {
+                state: lobby_info.state.clone(),
                 ready_players: Some(ready_players),
             };
 
             let serialized = match serde_json::to_string(&game_state_msg) {
                 Ok(json) => json,
                 Err(e) => {
-                    tracing::error!("Failed to serialize GameState message: {}", e);
+                    tracing::error!("Failed to serialize LobbyState message: {}", e);
                     return;
                 }
             };
@@ -177,7 +177,7 @@ async fn handle_lobby_socket(
             }
 
             // If game is in progress and countdown is 0, close the connection immediately
-            if room_info.state == LobbyState::InProgress && countdown_time == 0 {
+            if lobby_info.state == LobbyState::InProgress && countdown_time == 0 {
                 tracing::info!(
                     "Player {} trying to connect to lobby while game is in progress (countdown finished) - closing connection",
                     player.wallet_address
@@ -193,10 +193,10 @@ async fn handle_lobby_socket(
             }
         }
         Err(e) => {
-            tracing::error!("Failed to get room info for {}: {}", room_id, e);
+            tracing::error!("Failed to get lobby info for {}: {}", lobby_id, e);
             let close_frame = CloseFrame {
                 code: axum::extract::ws::close_code::ABNORMAL,
-                reason: "Failed to get room information".into(),
+                reason: "Failed to get lobby information".into(),
             };
             let _ = sender.send(Message::Close(Some(close_frame))).await;
             return;
@@ -205,10 +205,10 @@ async fn handle_lobby_socket(
 
     store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
-    if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
+    if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(
-            room_id,
+            lobby_id,
             &join_msg,
             &connections,
             Some(&chat_connections),
@@ -219,7 +219,7 @@ async fn handle_lobby_socket(
 
     handler::handle_incoming_messages(
         receiver,
-        room_id,
+        lobby_id,
         &player,
         &connections,
         &chat_connections,
@@ -231,9 +231,9 @@ async fn handle_lobby_socket(
 
     remove_connection(player.id, &connections).await;
 
-    if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
+    if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerUpdated { players };
-        handler::broadcast_to_lobby(room_id, &msg, &connections, Some(&chat_connections), redis)
+        handler::broadcast_to_lobby(lobby_id, &msg, &connections, Some(&chat_connections), redis)
             .await;
     }
 }

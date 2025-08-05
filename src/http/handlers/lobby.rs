@@ -306,14 +306,14 @@ pub async fn kick_player_handler(
 }
 
 #[derive(Deserialize)]
-pub struct UpdateGameStatePayload {
+pub struct UpdateLobbyStatePayload {
     pub new_state: LobbyState,
 }
 
 pub async fn update_lobby_state_handler(
     Path(lobby_id): Path<Uuid>,
     State(state): State<AppState>,
-    Json(payload): Json<UpdateGameStatePayload>,
+    Json(payload): Json<UpdateLobbyStatePayload>,
 ) -> Result<Json<&'static str>, (StatusCode, String)> {
     update_lobby_state(lobby_id, payload.new_state.clone(), state.redis.clone())
         .await

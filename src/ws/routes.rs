@@ -7,8 +7,8 @@ use crate::{
 
 pub fn create_ws_routes(state: AppState) -> Router {
     Router::new()
-        .route("/ws/lexiwars/{room_id}", get(lexi_wars_handler))
-        .route("/ws/room/{room_id}", get(lobby_ws_handler))
-        .route("/ws/chat/{room_id}", get(chat_handler))
+        .route("/ws/lexiwars/{lobby_id}", get(lexi_wars_handler))
+        .route("/ws/lobby/{lobby_id}", get(lobby_ws_handler))
+        .route("/ws/chat/{lobby_id}", get(chat_handler))
         .with_state(state)
 }

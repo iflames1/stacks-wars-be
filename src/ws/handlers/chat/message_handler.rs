@@ -15,7 +15,7 @@ use crate::{
 
 pub async fn handle_incoming_chat_messages(
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: &Player,
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
@@ -44,14 +44,14 @@ pub async fn handle_incoming_chat_messages(
                                 .await;
                             }
                             ChatClientMessage::Chat { text } => {
-                                let room_players =
-                                    match get_lobby_players(room_id, None, redis.clone()).await {
+                                let lobby_players =
+                                    match get_lobby_players(lobby_id, None, redis.clone()).await {
                                         Ok(players) => players,
                                         Err(e) => {
-                                            tracing::error!("Failed to get room players: {}", e);
+                                            tracing::error!("Failed to get lobby players: {}", e);
                                             // Send error to user and continue
                                             let error_msg = ChatServerMessage::Error {
-                                                message: "Failed to verify room membership"
+                                                message: "Failed to verify lobby membership"
                                                     .to_string(),
                                             };
                                             send_chat_message_to_player(
@@ -65,11 +65,12 @@ pub async fn handle_incoming_chat_messages(
                                         }
                                     };
 
-                                let is_room_member = room_players.iter().any(|p| p.id == player.id);
+                                let is_lobby_member =
+                                    lobby_players.iter().any(|p| p.id == player.id);
 
-                                if !is_room_member {
+                                if !is_lobby_member {
                                     let error_msg = ChatServerMessage::Error {
-                                        message: "You are not a member of this room".to_string(),
+                                        message: "You are not a member of this lobby".to_string(),
                                     };
                                     send_chat_message_to_player(
                                         player.id,
@@ -107,14 +108,14 @@ pub async fn handle_incoming_chat_messages(
                                 {
                                     let mut histories = chat_histories.lock().await;
                                     let history = histories
-                                        .entry(room_id)
+                                        .entry(lobby_id)
                                         .or_insert_with(|| crate::state::ChatHistory::new());
                                     history.add_message(chat_message.clone());
                                 }
 
-                                broadcast_chat_to_room(
+                                broadcast_chat_to_lobby(
                                     &chat_message,
-                                    &room_players,
+                                    &lobby_players,
                                     chat_connections,
                                     &redis,
                                 )
@@ -169,9 +170,9 @@ pub async fn handle_incoming_chat_messages(
     }
 }
 
-async fn broadcast_chat_to_room(
+async fn broadcast_chat_to_lobby(
     chat_message: &ChatMessage,
-    room_players: &[Player],
+    lobby_players: &[Player],
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
@@ -188,7 +189,7 @@ async fn broadcast_chat_to_room(
 
     let connection_guard = chat_connections.lock().await;
 
-    for player in room_players {
+    for player in lobby_players {
         if let Some(conn_info) = connection_guard.get(&player.id) {
             let mut sender = conn_info.sender.lock().await;
             if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {

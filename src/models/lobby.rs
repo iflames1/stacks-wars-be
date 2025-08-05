@@ -41,7 +41,7 @@ pub enum LobbyClientMessage {
     UpdatePlayerState {
         new_state: PlayerState,
     },
-    UpdateGameState {
+    UpdateLobbyState {
         new_state: LobbyState,
     },
     LeaveRoom,
@@ -84,7 +84,7 @@ pub enum LobbyServerMessage {
     Countdown {
         time: u32,
     },
-    GameState {
+    LobbyState {
         state: LobbyState,
         ready_players: Option<Vec<Uuid>>,
     },
@@ -118,7 +118,7 @@ impl LobbyServerMessage {
             // Important messages that SHOULD be queued
             LobbyServerMessage::Error { .. } => true,
             LobbyServerMessage::Allowed { .. } => true,
-            LobbyServerMessage::GameState { .. } => true,
+            LobbyServerMessage::LobbyState { .. } => true,
             LobbyServerMessage::PlayersNotReady { .. } => true,
             LobbyServerMessage::PlayerKicked { .. } => true,
             LobbyServerMessage::Rejected { .. } => true,

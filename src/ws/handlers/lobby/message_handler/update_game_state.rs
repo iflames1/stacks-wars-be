@@ -22,22 +22,22 @@ use uuid::Uuid;
 
 pub async fn update_game_state(
     new_state: LobbyState,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
     countdowns: &LobbyCountdowns,
 ) {
-    let room_info = match get_lobby_info(room_id, redis.clone()).await {
+    let lobby_info = match get_lobby_info(lobby_id, redis.clone()).await {
         Ok(info) => info,
         Err(e) => {
-            tracing::error!("Failed to fetch room info: {}", e);
+            tracing::error!("Failed to fetch lobby info: {}", e);
             send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
             return;
         }
     };
 
-    if room_info.creator_id != player.id {
+    if lobby_info.creator_id != player.id {
         tracing::warn!(
             "Unauthorized game state update attempt by {}",
             player.wallet_address
@@ -52,12 +52,12 @@ pub async fn update_game_state(
         return;
     }
 
-    if let Err(e) = update_lobby_state(room_id, new_state.clone(), redis.clone()).await {
+    if let Err(e) = update_lobby_state(lobby_id, new_state.clone(), redis.clone()).await {
         tracing::error!("Failed to update game state: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
     } else {
         if new_state == LobbyState::InProgress {
-            let players = get_lobby_players(room_id, None, redis.clone())
+            let players = get_lobby_players(lobby_id, None, redis.clone())
                 .await
                 .unwrap_or_default();
             let not_ready: Vec<_> = players
@@ -69,11 +69,11 @@ pub async fn update_game_state(
                 let msg = LobbyServerMessage::PlayersNotReady { players: not_ready };
                 send_to_player(player.id, &connections, &msg, &redis).await;
 
-                let game_starting = LobbyServerMessage::GameState {
+                let game_starting = LobbyServerMessage::LobbyState {
                     state: new_state,
                     ready_players: None,
                 };
-                broadcast_to_lobby(room_id, &game_starting, &connections, None, redis.clone())
+                broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone())
                     .await;
                 return; // don't start the game
             }
@@ -84,7 +84,7 @@ pub async fn update_game_state(
             let player_clone = player.clone();
             tokio::spawn(async move {
                 start_countdown(
-                    room_id,
+                    lobby_id,
                     player_clone,
                     redis_clone,
                     conns_clone,
@@ -93,17 +93,17 @@ pub async fn update_game_state(
                 .await;
             });
 
-            if let Ok(info) = get_lobby_info(room_id, redis.clone()).await {
+            if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
                 if info.state == LobbyState::InProgress {
-                    let game_starting = LobbyServerMessage::GameState {
+                    let game_starting = LobbyServerMessage::LobbyState {
                         state: new_state,
                         ready_players: None,
                     };
-                    broadcast_to_lobby(room_id, &game_starting, &connections, None, redis.clone())
+                    broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone())
                         .await;
                 } else {
                     tracing::info!(
-                        "Game state was reverted before start, skipping GameState message"
+                        "Game state was reverted before start, skipping LobbyState message"
                     );
                 }
             }
@@ -111,7 +111,7 @@ pub async fn update_game_state(
             // If game state is not InProgress, clear any existing countdown
             {
                 let mut countdowns_guard = countdowns.lock().await;
-                countdowns_guard.remove(&room_id);
+                countdowns_guard.remove(&lobby_id);
             }
         }
     }
@@ -148,7 +148,7 @@ async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionIn
 }
 
 async fn start_countdown(
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: Player,
     redis: RedisClient,
     connections: ConnectionInfoMap,
@@ -157,19 +157,19 @@ async fn start_countdown(
     // Initialize countdown state
     {
         let mut countdowns_guard = countdowns.lock().await;
-        countdowns_guard.insert(room_id, CountdownState { current_time: 15 });
+        countdowns_guard.insert(lobby_id, CountdownState { current_time: 15 });
     }
 
     for i in (0..=15).rev() {
         // Update countdown state
         {
             let mut countdowns_guard = countdowns.lock().await;
-            if let Some(countdown_state) = countdowns_guard.get_mut(&room_id) {
+            if let Some(countdown_state) = countdowns_guard.get_mut(&lobby_id) {
                 countdown_state.current_time = i;
             }
         }
 
-        match get_lobby_info(room_id, redis.clone()).await {
+        match get_lobby_info(lobby_id, redis.clone()).await {
             Ok(info) => {
                 if info.state != LobbyState::InProgress {
                     tracing::info!("Countdown interrupted by state change");
@@ -177,14 +177,14 @@ async fn start_countdown(
                     // Clear countdown state
                     {
                         let mut countdowns_guard = countdowns.lock().await;
-                        countdowns_guard.remove(&room_id);
+                        countdowns_guard.remove(&lobby_id);
                     }
 
-                    let msg = LobbyServerMessage::GameState {
+                    let msg = LobbyServerMessage::LobbyState {
                         state: info.state,
                         ready_players: None,
                     };
-                    broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
+                    broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
 
                     break;
                 }
@@ -196,22 +196,22 @@ async fn start_countdown(
                 // Clear countdown state on error
                 {
                     let mut countdowns_guard = countdowns.lock().await;
-                    countdowns_guard.remove(&room_id);
+                    countdowns_guard.remove(&lobby_id);
                 }
                 break;
             }
         }
 
         let countdown_msg = LobbyServerMessage::Countdown { time: i };
-        broadcast_to_lobby(room_id, &countdown_msg, &connections, None, redis.clone()).await;
+        broadcast_to_lobby(lobby_id, &countdown_msg, &connections, None, redis.clone()).await;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     // Final state confirmation
-    if let Ok(info) = get_lobby_info(room_id, redis.clone()).await {
+    if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
         if info.state == LobbyState::InProgress {
             let ready_players =
-                match get_lobby_players(room_id, Some(PlayerState::Ready), redis.clone()).await {
+                match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                     Err(e) => {
                         tracing::error!("❌ Failed to get ready players: {}", e);
@@ -220,10 +220,10 @@ async fn start_countdown(
                     }
                 };
 
-            let players = match get_lobby_players(room_id, None, redis.clone()).await {
+            let players = match get_lobby_players(lobby_id, None, redis.clone()).await {
                 Ok(players) => players,
                 Err(e) => {
-                    tracing::error!("❌ Failed to get room players: {}", e);
+                    tracing::error!("❌ Failed to get lobby players: {}", e);
                     send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
                     vec![]
                 }
@@ -231,20 +231,20 @@ async fn start_countdown(
 
             tracing::info!("Game started with {} ready players", ready_players.len());
 
-            let msg = LobbyServerMessage::GameState {
+            let msg = LobbyServerMessage::LobbyState {
                 state: LobbyState::InProgress,
                 ready_players: Some(ready_players.clone()),
             };
-            broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
+            broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
 
             // Clear countdown state since game has officially started
             {
                 let mut countdowns_guard = countdowns.lock().await;
-                countdowns_guard.remove(&room_id);
+                countdowns_guard.remove(&lobby_id);
             }
 
             if ready_players.len() > 1 {
-                // Get all player IDs from the room for disconnection
+                // Get all player IDs from the lobby for disconnection
                 let all_player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
                 // Remove connections from state

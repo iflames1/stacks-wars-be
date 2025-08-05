@@ -72,7 +72,7 @@ pub type LexiWarsLobbies = Arc<Mutex<HashMap<Uuid, LexiWars>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 
-// Single chat connection per player, but track which room they're chatting in
+// Single chat connection per player, but track which lobby they're chatting in
 pub type ChatConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ChatConnectionInfo>>>>;
 
 pub type RedisClient = Pool<RedisConnectionManager>;

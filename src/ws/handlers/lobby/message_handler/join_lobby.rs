@@ -14,28 +14,28 @@ use uuid::Uuid;
 
 pub async fn join_lobby(
     tx_id: Option<String>,
-    room_id: Uuid,
+    lobby_id: Uuid,
     join_requests: &LobbyJoinRequests,
     player: &Player,
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    let join_map = get_join_requests(room_id, &join_requests).await;
+    let join_map = get_join_requests(lobby_id, &join_requests).await;
     if let Some(req) = join_map.iter().find(|r| r.user.id == player.id) {
         if req.state == JoinState::Allowed {
-            if let Err(e) = patch::join_lobby(room_id, player.id, tx_id, redis.clone()).await {
-                tracing::error!("Failed to join room: {}", e);
+            if let Err(e) = patch::join_lobby(lobby_id, player.id, tx_id, redis.clone()).await {
+                tracing::error!("Failed to join lobby: {}", e);
                 send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-            } else if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
+            } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
                 tracing::info!(
-                    "{} joined room {} successfully",
+                    "{} joined lobby {} successfully",
                     player.wallet_address,
-                    room_id
+                    lobby_id
                 );
                 let msg = LobbyServerMessage::PlayerUpdated { players };
                 broadcast_to_lobby(
-                    room_id,
+                    lobby_id,
                     &msg,
                     &connections,
                     Some(&chat_connections),
