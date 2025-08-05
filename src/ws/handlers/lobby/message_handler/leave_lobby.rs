@@ -1,5 +1,5 @@
 use crate::{
-    db,
+    db::lobby::{get::get_lobby_players, patch},
     models::{game::Player, lobby::LobbyServerMessage},
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::{
@@ -9,17 +9,17 @@ use crate::{
 };
 use uuid::Uuid;
 
-pub async fn leave_room(
+pub async fn leave_lobby(
     room_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    if let Err(e) = db::lobby::leave_room(room_id, player.id, redis.clone()).await {
+    if let Err(e) = patch::leave_lobby(room_id, player.id, redis.clone()).await {
         tracing::error!("Failed to leave room: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+    } else if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
         tracing::info!("Player {} left room {}", player.wallet_address, room_id);
         let msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(

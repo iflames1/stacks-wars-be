@@ -17,14 +17,14 @@ use crate::{
         },
     },
     models::{
-        game::{GameData, GameRoom, GameState, LobbyState, Player},
+        game::{GameData, LexiWars, LobbyState, Player},
         lexi_wars::{LexiWarsClientMessage, LexiWarsServerMessage, PlayerStanding},
     },
-    state::{ConnectionInfoMap, RedisClient, SharedRooms},
+    state::{ConnectionInfoMap, LexiWarsLobbies, RedisClient},
 };
 use uuid::Uuid;
 
-fn get_prize(room: &GameRoom, position: usize) -> Option<f64> {
+fn get_prize(room: &LexiWars, position: usize) -> Option<f64> {
     let prize = room.pool.as_ref().map(|pool| {
         // Use the fixed connected_players_count instead of current connected_players.len()
         let total_pool = pool.entry_amount * room.connected_players_count as f64;
@@ -47,7 +47,7 @@ fn get_prize(room: &GameRoom, position: usize) -> Option<f64> {
 
 pub fn start_auto_start_timer(
     room_id: Uuid,
-    rooms: SharedRooms,
+    rooms: LexiWarsLobbies,
     connections: ConnectionInfoMap,
     redis: RedisClient,
 ) {
@@ -252,7 +252,7 @@ pub fn start_auto_start_timer(
 fn start_turn_timer(
     player_id: Uuid,
     room_id: Uuid,
-    rooms: SharedRooms,
+    rooms: LexiWarsLobbies,
     connections: ConnectionInfoMap,
     words: Arc<HashSet<String>>,
     redis: RedisClient,
@@ -329,7 +329,7 @@ fn start_turn_timer(
                 // check game over
                 if room.connected_players.len() == 1 {
                     // Check if game is already finished to prevent double execution
-                    if room.info.state == GameState::Finished {
+                    if room.info.state == LobbyState::Finished {
                         tracing::warn!("Game already finished for room {}", room_id);
                         return;
                     }
@@ -367,7 +367,7 @@ fn start_turn_timer(
                     room.eliminated_players.push(winner.clone());
 
                     // Update game state first to prevent race conditions
-                    room.info.state = GameState::Finished;
+                    room.info.state = LobbyState::Finished;
 
                     // Send game over messages
                     let gameover_msg = LexiWarsServerMessage::GameOver;
@@ -443,7 +443,7 @@ pub async fn handle_incoming_messages(
     player: &Player,
     room_id: Uuid,
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
-    rooms: SharedRooms,
+    rooms: LexiWarsLobbies,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
 ) {
@@ -502,7 +502,7 @@ pub async fn handle_incoming_messages(
                                 }
 
                                 // check if word is used
-                                if room.used_words_global.contains(&cleaned_word) {
+                                if room.used_words_in_lobby.contains(&cleaned_word) {
                                     tracing::info!("This word have been used: {}", cleaned_word);
                                     let used_word_msg = LexiWarsServerMessage::UsedWord {
                                         word: cleaned_word.clone(),
@@ -588,7 +588,7 @@ pub async fn handle_incoming_messages(
                                 }
 
                                 // add to used words
-                                room.used_words_global.insert(cleaned_word.clone());
+                                room.used_words_in_lobby.insert(cleaned_word.clone());
                                 room.used_words
                                     .entry(player.id)
                                     .or_default()

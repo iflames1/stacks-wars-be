@@ -326,7 +326,7 @@ pub async fn update_claim_state(
     Ok(())
 }
 
-pub async fn update_player_prize(
+pub async fn _update_player_prize(
     lobby_id: Uuid,
     player_id: Uuid,
     prize: f64,

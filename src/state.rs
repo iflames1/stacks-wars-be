@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub rooms: SharedRooms,
-    pub connections: ConnectionInfoMap, // For lobby and lexi-wars
-    pub chat_connections: ChatConnectionInfoMap, // For chat only
+    pub lexi_wars_lobbies: LexiWarsLobbies,
+    pub connections: ConnectionInfoMap,
+    pub chat_connections: ChatConnectionInfoMap,
     pub redis: RedisClient,
     pub lobby_join_requests: LobbyJoinRequests,
     pub bot: Bot,
@@ -19,7 +19,7 @@ pub struct AppState {
     pub chat_histories: ChatHistories,
 }
 
-use crate::models::{chat::ChatMessage, game::GameRoom, lobby::JoinRequest};
+use crate::models::{chat::ChatMessage, game::LexiWars, lobby::JoinRequest};
 
 #[derive(Debug)]
 pub struct ConnectionInfo {
@@ -28,7 +28,7 @@ pub struct ConnectionInfo {
 
 #[derive(Debug)]
 pub struct ChatConnectionInfo {
-    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>, // no need for room_id here, ChatConnectionInfoMap hashmap will track it
+    pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +68,7 @@ impl ChatHistory {
     }
 }
 
-pub type SharedRooms = Arc<Mutex<HashMap<Uuid, GameRoom>>>;
+pub type LexiWarsLobbies = Arc<Mutex<HashMap<Uuid, LexiWars>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 

@@ -10,14 +10,14 @@ use std::{
 };
 
 use crate::{
-    db,
+    db::lobby::get::{get_connected_players, get_lobby_info, get_lobby_players, get_lobby_pool},
     games::lexi_wars::{
         engine::start_auto_start_timer,
         utils::{broadcast_to_player, generate_random_letter},
     },
     models::{
         game::{
-            ClaimState, GameData, GameRoom, GameRoomInfo, GameState, Player, PlayerState, RoomPool,
+            ClaimState, GameData, LexiWars, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState,
             WsQueryParams,
         },
         lexi_wars::{LexiWarsServerMessage, PlayerStanding},
@@ -29,90 +29,189 @@ use crate::{
 use crate::{errors::AppError, games::lexi_wars};
 use crate::{
     games::lexi_wars::rules::RuleContext,
-    state::{ConnectionInfoMap, SharedRooms},
+    state::{ConnectionInfoMap, LexiWarsLobbies},
 };
 use uuid::Uuid;
 
-async fn setup_player_and_room(
+async fn _setup_player_and_lobby(
     player: &Player,
-    room_info: GameRoomInfo,
+    lobby_info: LobbyInfo,
     players: Vec<Player>,
-    pool: Option<RoomPool>,
-    rooms: &SharedRooms,
+    pool: Option<LobbyPool>,
+    lobbies: &LexiWarsLobbies,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
-) {
-    let mut locked_rooms = rooms.lock().await;
+) -> Result<(), AppError> {
+    let mut locked_lobbies = lobbies.lock().await;
 
-    // Check if this room is already active in memory
-    let room = locked_rooms.entry(room_info.id).or_insert_with(|| {
-        tracing::info!("Initializing new in-memory GameRoom for {}", room_info.id);
+    if let std::collections::hash_map::Entry::Vacant(entry) = locked_lobbies.entry(lobby_info.id) {
+        tracing::info!("Initializing new in-memory LexiWars for {}", lobby_info.id);
+
         let word_list = WORD_LIST.clone();
 
-        GameRoom {
-            info: room_info.clone(),
+        let connected_players = match get_connected_players(lobby_info.id, redis.clone()).await {
+            Ok(players) => players,
+            Err(e) => {
+                tracing::error!("Failed to get connected players: {e}");
+                return Err(AppError::BadRequest(
+                    "Failed to get connected players".to_string(),
+                ));
+            }
+        };
+
+        let new_lobby = LexiWars {
+            info: lobby_info.clone(),
             players: players.clone(),
             data: GameData::LexiWar { word_list },
             eliminated_players: vec![],
-            current_turn_id: room_info.creator_id,
+            current_turn_id: lobby_info.creator_id,
             used_words: HashMap::new(),
-            used_words_global: HashSet::new(),
+            used_words_in_lobby: HashSet::new(),
             rule_context: RuleContext {
                 min_word_length: 4,
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
             pool,
-            connected_players: room_info.connected_players.clone(),
-            connected_players_count: room_info.connected_players.len(),
+            connected_players: connected_players.clone(),
+            connected_players_count: connected_players.len(),
+            game_started: false,
+            current_rule: None,
+        };
+
+        entry.insert(new_lobby);
+    }
+
+    let lobby = locked_lobbies.get_mut(&lobby_info.id).unwrap();
+
+    let already_exists = lobby.players.iter().any(|p| p.id == player.id);
+
+    if !already_exists {
+        tracing::info!(
+            "Adding player {} ({}) to lobby {}",
+            player.wallet_address,
+            player.id,
+            lobby.info.id
+        );
+        lobby.players.push(player.clone());
+    } else {
+        tracing::info!(
+            "Player {} already exists in lobby {}, skipping re-add",
+            player.wallet_address,
+            lobby.info.id
+        );
+    }
+
+    let already_connected = lobby.connected_players.iter().any(|p| p.id == player.id);
+    let was_empty = lobby.connected_players.is_empty();
+
+    if !already_connected {
+        lobby.connected_players.push(player.clone());
+    }
+
+    tracing::info!(
+        "Player {} connected to lobby {}. Connected: {}/{}",
+        player.wallet_address,
+        lobby.info.id,
+        lobby.connected_players.len(),
+        lobby.players.len()
+    );
+
+    Ok(if was_empty && !lobby.game_started {
+        tracing::info!(
+            "First player connected, starting auto-start timer for lobby {}",
+            lobby.info.id
+        );
+        start_auto_start_timer(
+            lobby.info.id,
+            lobbies.clone(),
+            connections.clone(),
+            redis.clone(),
+        );
+    })
+}
+
+async fn setup_player_and_lobby(
+    player: &Player,
+    lobby_info: LobbyInfo,
+    players: Vec<Player>,
+    connected_players: Vec<Player>,
+    pool: Option<LobbyPool>,
+    lobbies: &LexiWarsLobbies,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let mut locked_lobbies = lobbies.lock().await;
+
+    // Check if this lobby is already active in memory
+    let lobby = locked_lobbies.entry(lobby_info.id).or_insert_with(|| {
+        tracing::info!("Initializing new in-memory LexiWars for {}", lobby_info.id);
+        let word_list = WORD_LIST.clone();
+
+        LexiWars {
+            info: lobby_info.clone(),
+            players: players.clone(),
+            data: GameData::LexiWar { word_list },
+            eliminated_players: vec![],
+            current_turn_id: lobby_info.creator_id,
+            used_words: HashMap::new(),
+            used_words_in_lobby: HashSet::new(),
+            rule_context: RuleContext {
+                min_word_length: 4,
+                random_letter: generate_random_letter(),
+            },
+            rule_index: 0,
+            pool,
+            connected_players: connected_players.clone(),
+            connected_players_count: connected_players.len(),
             game_started: false,
             current_rule: None,
         }
     });
 
-    let already_exists = room.players.iter().any(|p| p.id == player.id);
+    let already_exists = lobby.players.iter().any(|p| p.id == player.id);
 
     if !already_exists {
         tracing::info!(
-            "Adding player {} ({}) to room {}",
+            "Adding player {} ({}) to lobby {}",
             player.wallet_address,
             player.id,
-            room.info.id
+            lobby.info.id
         );
-        room.players.push(player.clone());
+        lobby.players.push(player.clone());
     } else {
         tracing::info!(
-            "Player {} already exists in room {}, skipping re-add",
+            "Player {} already exists in lobby {}, skipping re-add",
             player.wallet_address,
-            room.info.id
+            lobby.info.id
         );
     }
 
     // Track connected player - add to connected_players if not already there
-    let already_connected = room.connected_players.iter().any(|p| p.id == player.id);
-    let was_empty = room.connected_players.is_empty();
+    let already_connected = lobby.connected_players.iter().any(|p| p.id == player.id);
+    let was_empty = lobby.connected_players.is_empty();
 
     if !already_connected {
-        room.connected_players.push(player.clone());
+        lobby.connected_players.push(player.clone());
     }
 
     tracing::info!(
-        "Player {} connected to room {}. Connected: {}/{}",
+        "Player {} connected to lobby {}. Connected: {}/{}",
         player.wallet_address,
-        room.info.id,
-        room.connected_players.len(),
-        room.players.len()
+        lobby.info.id,
+        lobby.connected_players.len(),
+        lobby.players.len()
     );
 
     // Start auto-start timer when first player connects
-    if was_empty && !room.game_started {
+    if was_empty && !lobby.game_started {
         tracing::info!(
-            "First player connected, starting auto-start timer for room {}",
-            room.info.id
+            "First player connected, starting auto-start timer for lobby {}",
+            lobby.info.id
         );
         start_auto_start_timer(
-            room.info.id,
-            rooms.clone(),
+            lobby.info.id,
+            lobbies.clone(),
             connections.clone(),
             redis.clone(),
         );
@@ -122,7 +221,7 @@ async fn setup_player_and_room(
 pub async fn lexi_wars_handler(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQueryParams>,
-    Path(room_id): Path<Uuid>,
+    Path(lobby_id): Path<Uuid>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -132,15 +231,15 @@ pub async fn lexi_wars_handler(
 
     let redis = state.redis.clone();
     let connections = state.connections.clone();
-    let rooms = state.rooms.clone();
+    let lexi_wars_lobbies = state.lexi_wars_lobbies.clone();
 
-    let room = db::lobby::get_room_info(room_id, redis.clone())
+    let lobby = get_lobby_info(lobby_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
-    // Check room state
-    if room.state != GameState::InProgress {
-        if room.state == GameState::Finished {
+    // Check lobby state
+    if lobby.state != LobbyState::InProgress {
+        if lobby.state == LobbyState::Finished {
             tracing::info!("Player {} trying to connect to finished game", player_id);
 
             // Send game over info and close connection
@@ -152,8 +251,8 @@ pub async fn lexi_wars_handler(
                     .send(axum::extract::ws::Message::Text(serialized.into()))
                     .await;
 
-                // Get room data for final standing
-                if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+                // Get lobby data for final standing
+                if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
                     // Create final standing from players (they should have ranks)
                     let mut players_with_ranks: Vec<_> =
                         players.into_iter().filter(|p| p.rank.is_some()).collect();
@@ -210,12 +309,12 @@ pub async fn lexi_wars_handler(
                 let _ = socket.close().await;
             }));
         } else {
-            tracing::error!("Room {} is still in waiting", room_id);
-            return Err(AppError::BadRequest("Room is still in waiting".into()).to_response());
+            tracing::error!("lobby {} is still in waiting", lobby_id);
+            return Err(AppError::BadRequest("lobby is still in waiting".into()).to_response());
         }
     }
 
-    let players = db::lobby::get_room_players(room_id, redis.clone())
+    let players = get_lobby_players(lobby_id, None, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -225,19 +324,19 @@ pub async fn lexi_wars_handler(
         .into_iter()
         .find(|p| p.id == player_id && p.state == PlayerState::Ready)
         .ok_or_else(|| {
-            AppError::Unauthorized("Player not found or not ready in room".into()).to_response()
+            AppError::Unauthorized("Player not found or not ready in lobby".into()).to_response()
         })?;
 
     tracing::info!(
-        "Player {} allowed to join room {}",
+        "Player {} allowed to join lobby {}",
         matched_player.wallet_address,
-        room_id
+        lobby_id
     );
 
-    let pool = if let Some(ref addr) = room.contract_address {
+    let pool = if let Some(ref addr) = lobby.contract_address {
         if !addr.is_empty() {
             Some(
-                db::lobby::get_room_pool(room_id, redis.clone())
+                get_lobby_pool(lobby_id, redis.clone())
                     .await
                     .map_err(|e| e.to_response())?,
             )
@@ -249,16 +348,20 @@ pub async fn lexi_wars_handler(
     };
 
     let is_game_started = {
-        let rooms_guard = rooms.lock().await;
-        if let Some(game_room) = rooms_guard.get(&room_id) {
-            game_room.game_started
+        let lobbies_guard = lexi_wars_lobbies.lock().await;
+        if let Some(game_lobby) = lobbies_guard.get(&lobby_id) {
+            game_lobby.game_started
         } else {
             false // If not in memory, game hasn't started yet
         }
     };
 
+    let connected_players = get_connected_players(lobby_id, redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
+
     if is_game_started {
-        let is_reconnecting = room.connected_players.iter().any(|p| p.id == player_id);
+        let is_reconnecting = connected_players.iter().any(|p| p.id == player_id);
 
         if !is_reconnecting {
             tracing::info!(
@@ -281,16 +384,17 @@ pub async fn lexi_wars_handler(
     }
 
     Ok(ws.on_upgrade(move |socket| {
-        let room_info = room.clone();
+        let lobby_info = lobby.clone();
         handle_lexi_wars_socket(
             socket,
-            room_id,
+            lobby_id,
             matched_player,
             players_clone,
+            connected_players,
             pool,
-            rooms,
+            lexi_wars_lobbies,
             connections,
-            room_info,
+            lobby_info,
             redis,
             is_game_started,
         )
@@ -299,13 +403,14 @@ pub async fn lexi_wars_handler(
 
 async fn handle_lexi_wars_socket(
     socket: WebSocket,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: Player,
     players: Vec<Player>,
-    pool: Option<RoomPool>,
-    rooms: SharedRooms,
+    connected_players: Vec<Player>,
+    pool: Option<LobbyPool>,
+    lexi_wars_lobbies: LexiWarsLobbies,
     connections: ConnectionInfoMap,
-    room_info: GameRoomInfo,
+    lobby_info: LobbyInfo,
     redis: RedisClient,
     is_reconnecting_to_started_game: bool,
 ) {
@@ -313,12 +418,13 @@ async fn handle_lexi_wars_socket(
 
     store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
 
-    setup_player_and_room(
+    setup_player_and_lobby(
         &player,
-        room_info,
+        lobby_info,
         players,
+        connected_players,
         pool,
-        &rooms,
+        &lexi_wars_lobbies,
         &connections,
         &redis,
     )
@@ -326,10 +432,11 @@ async fn handle_lexi_wars_socket(
 
     // Send reconnection state if joining an already started game
     if is_reconnecting_to_started_game {
-        let rooms_guard = rooms.lock().await;
-        if let Some(room) = rooms_guard.get(&room_id) {
+        let lobbies_guard = lexi_wars_lobbies.lock().await;
+        if let Some(lobby) = lobbies_guard.get(&lobby_id) {
             // Send current turn
-            if let Some(current_player) = room.players.iter().find(|p| p.id == room.current_turn_id)
+            if let Some(current_player) =
+                lobby.players.iter().find(|p| p.id == lobby.current_turn_id)
             {
                 let turn_msg = LexiWarsServerMessage::Turn {
                     current_turn: current_player.clone(),
@@ -338,7 +445,7 @@ async fn handle_lexi_wars_socket(
             }
 
             // Send current rule
-            if let Some(current_rule) = &room.current_rule {
+            if let Some(current_rule) = &lobby.current_rule {
                 let rule_msg = LexiWarsServerMessage::Rule {
                     rule: current_rule.clone(),
                 };
@@ -354,9 +461,9 @@ async fn handle_lexi_wars_socket(
 
     lexi_wars::engine::handle_incoming_messages(
         &player,
-        room_id,
+        lobby_id,
         receiver,
-        rooms.clone(),
+        lexi_wars_lobbies.clone(),
         &connections,
         redis,
     )
@@ -364,37 +471,37 @@ async fn handle_lexi_wars_socket(
 
     // Handle player disconnection
     {
-        let mut rooms_guard = rooms.lock().await;
-        if let Some(room) = rooms_guard.get_mut(&room_id) {
-            if let Some(pos) = room
+        let mut lobbies_guard = lexi_wars_lobbies.lock().await;
+        if let Some(lobby) = lobbies_guard.get_mut(&lobby_id) {
+            if let Some(pos) = lobby
                 .connected_players
                 .iter()
                 .position(|p| p.id == player.id)
             {
                 // Only remove from connected_players if game hasn't started
-                if !room.game_started {
-                    room.connected_players.remove(pos);
+                if !lobby.game_started {
+                    lobby.connected_players.remove(pos);
                     tracing::info!(
-                        "Player {} disconnected from room {} (pre-game). Connected: {}/{}",
+                        "Player {} disconnected from lobby {} (pre-game). Connected: {}/{}",
                         player.wallet_address,
-                        room_id,
-                        room.connected_players.len(),
-                        room.players.len()
+                        lobby_id,
+                        lobby.connected_players.len(),
+                        lobby.players.len()
                     );
 
                     // If the disconnected player was the current turn, assign to next connected player
-                    if room.current_turn_id == player.id && !room.connected_players.is_empty() {
-                        room.current_turn_id = room.connected_players[0].id;
+                    if lobby.current_turn_id == player.id && !lobby.connected_players.is_empty() {
+                        lobby.current_turn_id = lobby.connected_players[0].id;
                         tracing::info!(
                             "Reassigned current turn to player {}",
-                            room.current_turn_id
+                            lobby.current_turn_id
                         );
                     }
                 } else {
                     tracing::info!(
-                        "Player {} disconnected from room {} (during game). Keeping in connected_players for game continuity.",
+                        "Player {} disconnected from lobby {} (during game). Keeping in connected_players for game continuity.",
                         player.wallet_address,
-                        room_id
+                        lobby_id
                     );
                 }
             }

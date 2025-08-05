@@ -5,7 +5,7 @@ use rand::{Rng, rng};
 use crate::{
     games::lexi_wars::rules::get_rules,
     models::{
-        game::{GameRoom, Player},
+        game::{LexiWars, Player},
         lexi_wars::LexiWarsServerMessage,
     },
     state::{ConnectionInfoMap, RedisClient},
@@ -18,7 +18,7 @@ pub fn generate_random_letter() -> char {
     (b'a' + letter as u8) as char
 }
 
-pub fn get_next_player_and_wrap(room: &mut GameRoom, current_id: Uuid) -> Option<Uuid> {
+pub fn get_next_player_and_wrap(room: &mut LexiWars, current_id: Uuid) -> Option<Uuid> {
     // Use connected_players instead of all players
     let connected_players = &room.connected_players;
 
@@ -100,7 +100,7 @@ pub async fn broadcast_to_player(
 
 pub async fn broadcast_to_room(
     message: &LexiWarsServerMessage,
-    room: &GameRoom,
+    room: &LexiWars,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
@@ -159,7 +159,7 @@ pub async fn broadcast_to_room(
 pub async fn broadcast_word_entry_from_player(
     sender_player: &Player,
     word: &str,
-    room: &GameRoom,
+    room: &LexiWars,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {

@@ -1,7 +1,10 @@
 use crate::{
-    db,
+    db::lobby::{
+        get::{get_lobby_info, get_lobby_players},
+        patch::leave_lobby,
+    },
     models::{
-        game::{GameState, Player},
+        game::{LobbyState, Player},
         lobby::LobbyServerMessage,
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
@@ -25,7 +28,7 @@ pub async fn kick_player(
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    let room_info = match db::lobby::get_room_info(room_id, redis.clone()).await {
+    let room_info = match get_lobby_info(room_id, redis.clone()).await {
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to fetch room info: {}", e);
@@ -46,7 +49,7 @@ pub async fn kick_player(
         return;
     }
 
-    if room_info.state != GameState::Waiting {
+    if room_info.state != LobbyState::Waiting {
         tracing::error!("Cannot kick players when game is not waiting");
         send_error_to_player(
             player.id,
@@ -59,10 +62,10 @@ pub async fn kick_player(
     }
 
     // Remove player
-    if let Err(e) = db::lobby::leave_room(room_id, player_id, redis.clone()).await {
+    if let Err(e) = leave_lobby(room_id, player_id, redis.clone()).await {
         tracing::error!("Failed to kick player: {}", e);
         send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+    } else if let Ok(players) = get_lobby_players(room_id, None, redis.clone()).await {
         let msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(
             room_id,

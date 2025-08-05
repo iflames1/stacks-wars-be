@@ -4,7 +4,7 @@ use futures::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 use crate::{
-    db,
+    db::lobby::get::get_lobby_players,
     errors::AppError,
     models::{
         User,
@@ -18,7 +18,7 @@ use crate::{
     ws::handlers::{
         chat::utils::send_chat_message_to_player,
         lobby::message_handler::{
-            join_lobby::join_lobby, kick_player, leave_room, permit_join, ping, request_join,
+            join_lobby::join_lobby, kick_player, leave_lobby, permit_join, ping, request_join,
             update_game_state, update_player_state,
         },
         utils::queue_message_for_player,
@@ -26,7 +26,7 @@ use crate::{
 };
 
 pub async fn broadcast_to_lobby(
-    room_id: Uuid,
+    lobby_id: Uuid,
     msg: &LobbyServerMessage,
     connections: &ConnectionInfoMap,
     chat_connections: Option<&ChatConnectionInfoMap>,
@@ -40,7 +40,7 @@ pub async fn broadcast_to_lobby(
         }
     };
 
-    if let Ok(players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+    if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         let connection_guard = connections.lock().await;
 
         for player in &players {
@@ -88,18 +88,18 @@ pub async fn broadcast_to_lobby(
     // Notify chat connections about room changes
     if matches!(msg, LobbyServerMessage::PlayerUpdated { .. }) {
         if let Some(chat_conns) = chat_connections {
-            notify_chat_about_room_changes(room_id, chat_conns, &redis).await;
+            notify_chat_about_room_changes(lobby_id, chat_conns, &redis).await;
         }
     }
 }
 
 async fn notify_chat_about_room_changes(
-    room_id: Uuid,
+    lobby_id: Uuid,
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
     // Get current room players
-    if let Ok(room_players) = db::lobby::get_room_players(room_id, redis.clone()).await {
+    if let Ok(room_players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         let room_player_ids: std::collections::HashSet<Uuid> =
             room_players.iter().map(|p| p.id).collect();
 
@@ -183,11 +183,11 @@ pub async fn send_to_player(
 }
 
 pub async fn get_join_requests(
-    room_id: Uuid,
+    lobby_id: Uuid,
     join_requests: &LobbyJoinRequests,
 ) -> Vec<JoinRequest> {
     let map = join_requests.lock().await;
-    map.get(&room_id).cloned().unwrap_or_default()
+    map.get(&lobby_id).cloned().unwrap_or_default()
 }
 
 pub async fn request_to_join(
@@ -339,7 +339,7 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::LeaveRoom => {
-                                leave_room(room_id, player, connections, chat_connections, &redis)
+                                leave_lobby(room_id, player, connections, chat_connections, &redis)
                                     .await
                             }
                             LobbyClientMessage::KickPlayer {

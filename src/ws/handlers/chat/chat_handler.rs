@@ -7,10 +7,13 @@ use futures::StreamExt;
 use std::net::SocketAddr;
 
 use crate::{
-    db,
+    db::{
+        lobby::get::{get_lobby_info, get_lobby_players},
+        user::get::get_user_by_id,
+    },
     models::{
         chat::ChatServerMessage,
-        game::{GameState, Player, WsQueryParams},
+        game::{LobbyState, Player, PlayerState, WsQueryParams},
     },
     state::{AppState, ChatHistories, RedisClient},
     ws::handlers::chat::{message_handler, utils::*},
@@ -33,12 +36,12 @@ pub async fn chat_handler(
     let chat_histories = state.chat_histories.clone();
 
     // Check if room exists and get room state
-    let room_info = db::lobby::get_room_info(room_id, redis.clone())
+    let room_info = get_lobby_info(room_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
     // If game is finished, close connection immediately
-    if room_info.state == GameState::Finished {
+    if room_info.state == LobbyState::Finished {
         tracing::info!(
             "Player {} trying to connect to chat while game is finished",
             player_id
@@ -55,7 +58,7 @@ pub async fn chat_handler(
     }
 
     // Get user info to create player object
-    let user = db::user::get_user_by_id(player_id, redis.clone())
+    let user = get_user_by_id(player_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -63,9 +66,11 @@ pub async fn chat_handler(
         id: user.id,
         wallet_address: user.wallet_address.clone(),
         display_name: user.display_name.clone(),
-        state: crate::models::game::PlayerState::NotReady,
+        username: user.username.clone(),
+        wars_point: user.wars_point,
+        state: PlayerState::NotReady,
         rank: None,
-        used_words: vec![],
+        used_words: None,
         tx_id: None,
         claim: None,
         prize: None,
@@ -97,7 +102,7 @@ async fn handle_chat_socket(
         .await;
 
     // Check if player is in the room and send permission status
-    let is_room_member = match db::lobby::get_room_players(room_id, redis.clone()).await {
+    let is_room_member = match get_lobby_players(room_id, None, redis.clone()).await {
         Ok(players) => players.iter().any(|p| p.id == player.id),
         Err(e) => {
             tracing::error!("Failed to check room membership: {}", e);

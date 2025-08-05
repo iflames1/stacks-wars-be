@@ -44,7 +44,7 @@ pub async fn get_user_by_id(user_id: Uuid, redis: RedisClient) -> Result<User, A
     Ok(user)
 }
 
-pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid, AppError> {
+pub async fn _get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
