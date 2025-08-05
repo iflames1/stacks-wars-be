@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    db::{tx::validate_payment_tx, user::get::get_user_by_id},
+    db::{
+        game::patch::update_game_active_lobby, tx::validate_payment_tx, user::get::get_user_by_id,
+    },
     errors::AppError,
     models::{
         game::{ClaimState, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
@@ -210,14 +212,22 @@ pub async fn update_lobby_state(
 
     let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
 
-    // Read the existing state
+    // Read the existing state and game_id
     let old_state_str: String = conn
         .hget(&lobby_key, "state")
         .await
         .map_err(AppError::RedisCommandError)?;
+    let game_id_str: String = conn
+        .hget(&lobby_key, "game_id")
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
     let old_state = old_state_str
         .parse::<LobbyState>()
         .map_err(|_| AppError::Deserialization("Invalid old state".into()))?;
+    let game_id = game_id_str
+        .parse::<Uuid>()
+        .map_err(|_| AppError::Deserialization("Invalid game_id".into()))?;
 
     // No-op if state is unchanged
     if old_state == new_state {
@@ -242,6 +252,17 @@ pub async fn update_lobby_state(
         .zadd(&new_z, lobby_id.to_string(), score)
         .await
         .map_err(AppError::RedisCommandError)?;
+
+    // Update active lobby count when transitioning to/from Finished
+    if new_state == LobbyState::Finished
+        && (old_state == LobbyState::Waiting || old_state == LobbyState::InProgress)
+    {
+        update_game_active_lobby(game_id, false, redis.clone()).await?;
+    } else if (new_state == LobbyState::InProgress || new_state == LobbyState::Waiting)
+        && old_state == LobbyState::Finished
+    {
+        update_game_active_lobby(game_id, true, redis.clone()).await?;
+    }
 
     Ok(())
 }
