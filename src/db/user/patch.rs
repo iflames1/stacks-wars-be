@@ -27,7 +27,7 @@ pub async fn _update_username(
 
     // Check if new username is taken by someone else
     let normalized = new_username.trim().to_lowercase();
-    if !is_valid_username(&normalized) {
+    if !_is_valid_username(&normalized) {
         return Err(AppError::BadRequest("Invalid username".into()));
     }
     let new_username_key = RedisKey::username(KeyPart::Str(normalized));
@@ -75,7 +75,7 @@ pub async fn _update_username(
     Ok(())
 }
 
-pub async fn update_display_name(
+pub async fn _update_display_name(
     user_id: Uuid,
     new_display_name: String,
     redis: RedisClient,
@@ -100,7 +100,7 @@ pub async fn update_display_name(
     Ok(())
 }
 
-pub async fn increase_wars_point(
+pub async fn _increase_wars_point(
     user_id: Uuid,
     amount: u64,
     redis: RedisClient,
@@ -119,7 +119,7 @@ pub async fn increase_wars_point(
     Ok(new_total.max(0) as u64)
 }
 
-pub async fn decrease_wars_point(
+pub async fn _decrease_wars_point(
     user_id: Uuid,
     amount: u64,
     redis: RedisClient,
