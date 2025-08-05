@@ -21,6 +21,7 @@ pub enum GameData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GameType {
     pub id: Uuid,
     pub name: String,
@@ -113,7 +114,7 @@ pub struct Standing {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum PlayerState {
     NotReady,
     Ready,
@@ -132,13 +133,14 @@ impl FromStr for PlayerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "status", content = "data")]
+#[serde(tag = "status", content = "data", rename_all = "camelCase")]
 pub enum ClaimState {
     Claimed { tx_id: String },
     NotClaimed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Player {
     pub id: Uuid,
     pub wallet_address: String,

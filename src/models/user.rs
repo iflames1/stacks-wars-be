@@ -4,17 +4,14 @@ use uuid::Uuid;
 use crate::models::game::Player;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,
     pub wallet_address: String,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-
     pub wars_point: u64,
+
+    pub username: Option<String>,
+    pub display_name: Option<String>,
 }
 
 impl From<Player> for User {
