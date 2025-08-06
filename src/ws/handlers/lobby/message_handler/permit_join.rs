@@ -79,7 +79,7 @@ pub async fn permit_join(
         }
     };
 
-    if lobby_info.creator_id != player.id {
+    if lobby_info.creator.id != player.id {
         tracing::warn!(
             "Unauthorized PermitJoin attempt by {}",
             player.wallet_address

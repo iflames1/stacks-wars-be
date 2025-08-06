@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{errors::AppError, games::lexi_wars::rules::RuleContext};
+use crate::{errors::AppError, games::lexi_wars::rules::RuleContext, models::User};
 
 #[derive(Deserialize)]
 pub struct WsQueryParams {
@@ -268,7 +268,7 @@ pub struct LobbyInfo {
     pub id: Uuid,
     pub name: String,
 
-    pub creator_id: Uuid,
+    pub creator: User,
     pub state: LobbyState,
     pub game_id: Uuid,
     pub game_name: String,
@@ -284,7 +284,7 @@ impl LobbyInfo {
         let mut fields = vec![
             ("id".into(), self.id.to_string()),
             ("name".into(), self.name.clone()),
-            ("creator_id".into(), self.creator_id.to_string()),
+            ("creator_id".into(), self.creator.id.to_string()),
             ("state".into(), format!("{:?}", self.state)),
             ("game_id".into(), self.game_id.to_string()),
             ("game_name".into(), self.game_name.clone()),
@@ -300,58 +300,64 @@ impl LobbyInfo {
         fields
     }
 
-    pub fn from_redis_hash(map: &HashMap<String, String>) -> Result<Self, AppError> {
-        Ok(Self {
+    pub fn from_redis_hash_partial(
+        map: &HashMap<String, String>,
+    ) -> Result<(Self, Uuid), AppError> {
+        let creator_id = map
+            .get("creator_id")
+            .ok_or_else(|| AppError::Deserialization("Missing creator_id".into()))?
+            .parse()
+            .map_err(|_| AppError::Deserialization("Invalid UUID for creator_id".into()))?;
+
+        // Create a placeholder User - will be replaced during hydration
+        let placeholder_creator = User {
+            id: creator_id,
+            wallet_address: String::new(),
+            wars_point: 0,
+            username: None,
+            display_name: None,
+        };
+
+        let lobby = Self {
             id: map
                 .get("id")
                 .ok_or_else(|| AppError::Deserialization("Missing id".into()))?
                 .parse()
                 .map_err(|_| AppError::Deserialization("Invalid UUID for id".into()))?,
-
             name: map
                 .get("name")
                 .ok_or_else(|| AppError::Deserialization("Missing name".into()))?
                 .clone(),
-
-            creator_id: map
-                .get("creator_id")
-                .ok_or_else(|| AppError::Deserialization("Missing creator_id".into()))?
-                .parse()
-                .map_err(|_| AppError::Deserialization("Invalid UUID for creator_id".into()))?,
-
+            creator: placeholder_creator,
             state: map
                 .get("state")
                 .ok_or_else(|| AppError::Deserialization("Missing state".into()))?
                 .parse::<LobbyState>()
                 .map_err(|_| AppError::Deserialization("Invalid state".into()))?,
-
             game_id: map
                 .get("game_id")
                 .ok_or_else(|| AppError::Deserialization("Missing game_id".into()))?
                 .parse()
                 .map_err(|_| AppError::Deserialization("Invalid UUID for game_id".into()))?,
-
             game_name: map
                 .get("game_name")
                 .ok_or_else(|| AppError::Deserialization("Missing game_name".into()))?
                 .clone(),
-
             participants: map
                 .get("participants")
                 .ok_or_else(|| AppError::Deserialization("Missing participants".into()))?
                 .parse()
                 .map_err(|_| AppError::Deserialization("Invalid participants count".into()))?,
-
             created_at: map
                 .get("created_at")
                 .ok_or_else(|| AppError::Deserialization("Missing created_at".into()))?
                 .parse()
                 .map_err(|_| AppError::Deserialization("Invalid datetime format".into()))?,
-
             description: map.get("description").cloned(),
-
             contract_address: map.get("contract_address").cloned(),
-        })
+        };
+
+        Ok((lobby, creator_id))
     }
 }
 

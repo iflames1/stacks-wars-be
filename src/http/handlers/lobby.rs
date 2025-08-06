@@ -279,7 +279,7 @@ pub async fn kick_player_handler(
             e.to_response()
         })?;
 
-    if lobby_info.creator_id != caller_id {
+    if lobby_info.creator.id != caller_id {
         return Err({
             tracing::error!("Only the creator can kick players");
             AppError::Unauthorized("Only the creator can kick players".into()).to_response()

@@ -64,7 +64,7 @@ async fn _setup_player_and_lobby(
             players: players.clone(),
             data: GameData::LexiWar { word_list },
             eliminated_players: vec![],
-            current_turn_id: lobby_info.creator_id,
+            current_turn_id: lobby_info.creator.id,
             used_words: HashMap::new(),
             used_words_in_lobby: HashSet::new(),
             rule_context: RuleContext {
@@ -153,7 +153,7 @@ async fn setup_player_and_lobby(
             players: players.clone(),
             data: GameData::LexiWar { word_list },
             eliminated_players: vec![],
-            current_turn_id: lobby_info.creator_id,
+            current_turn_id: lobby_info.creator.id,
             used_words: HashMap::new(),
             used_words_in_lobby: HashSet::new(),
             rule_context: RuleContext {

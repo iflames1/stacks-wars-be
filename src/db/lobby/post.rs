@@ -27,6 +27,7 @@ pub async fn create_lobby(
     bot: Bot,
 ) -> Result<Uuid, AppError> {
     let lobby_id = Uuid::new_v4();
+    let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -36,7 +37,7 @@ pub async fn create_lobby(
         id: lobby_id,
         name,
         description,
-        creator_id,
+        creator: creator_user.clone(),
         state: LobbyState::Waiting,
         game_id,
         game_name,
@@ -44,8 +45,6 @@ pub async fn create_lobby(
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
         created_at: Utc::now(),
     };
-
-    let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
 
     // Store pool if it exists
     if let Some(pool_input) = &pool {
