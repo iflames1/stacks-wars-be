@@ -5,12 +5,14 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        game::patch::update_game_active_lobby, tx::validate_payment_tx, user::get::get_user_by_id,
+        game::{get::get_game, patch::update_game_active_lobby},
+        tx::validate_payment_tx,
+        user::get::get_user_by_id,
     },
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::{
-        game::{GameType, LobbyInfo, LobbyPool, LobbyPoolInput, LobbyState, Player, PlayerState},
+        game::{LobbyInfo, LobbyPool, LobbyPoolInput, LobbyState, Player, PlayerState},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -21,13 +23,15 @@ pub async fn create_lobby(
     description: Option<String>,
     creator_id: Uuid,
     game_id: Uuid,
-    game_name: String,
     pool: Option<LobbyPoolInput>,
     redis: RedisClient,
     bot: Bot,
 ) -> Result<Uuid, AppError> {
     let lobby_id = Uuid::new_v4();
-    let creator_user = get_user_by_id(creator_id, redis.clone()).await?;
+    let (creator_user, game) = tokio::try_join!(
+        get_user_by_id(creator_id, redis.clone()),
+        get_game(game_id, redis.clone())
+    )?;
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -39,8 +43,7 @@ pub async fn create_lobby(
         description,
         creator: creator_user.clone(),
         state: LobbyState::Waiting,
-        game_id,
-        game_name,
+        game: game.clone(),
         participants: 1,
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
         created_at: Utc::now(),
@@ -136,35 +139,12 @@ pub async fn create_lobby(
 
     update_game_active_lobby(game_id, true, redis.clone()).await?;
 
-    let redis_clone = redis.clone();
     tokio::spawn(async move {
-        let game_key = format!("game:{}:data", game_id);
-        let game_data_json: Option<String> = match redis_clone.get().await {
-            Ok(mut conn) => match conn.get(game_key).await {
-                Ok(json) => Some(json),
-                Err(e) => {
-                    tracing::warn!("Could not fetch game data for Telegram bot: {}", e);
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Could not connect to Redis: {}", e);
-                None
-            }
-        };
-
-        let game_image = game_data_json
-            .as_ref()
-            .and_then(|json| serde_json::from_str::<GameType>(json).ok())
-            .map(|g| g.image_url)
-            .unwrap_or_default();
-
         let payload = BotNewLobbyPayload {
             lobby_id,
             lobby_name: lobby_info.name.clone(),
             description: lobby_info.description.clone(),
-            game_name: lobby_info.game_name.clone(),
-            game_image,
+            game: lobby_info.game,
             entry_amount: pool.as_ref().and_then(|p| Some(p.entry_amount)),
             contract_address: lobby_info.contract_address.clone(),
             creator_name: creator_user.display_name.or(creator_user.username),

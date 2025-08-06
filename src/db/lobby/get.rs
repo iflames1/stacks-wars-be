@@ -5,7 +5,7 @@ use bb8_redis::RedisConnectionManager;
 use uuid::Uuid;
 
 use crate::{
-    db::user::get::get_user_by_id,
+    db::{game::get::get_game, user::get::get_user_by_id},
     errors::AppError,
     models::{
         game::{LobbyExtended, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
@@ -119,30 +119,43 @@ pub async fn get_lobbies_by_game_id(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    // Parse partial lobbies and collect unique creator IDs
+    // Parse partial lobbies and collect unique creator and game IDs
     let mut partial_lobbies = Vec::new();
     let mut creator_ids = HashSet::new();
+    let mut game_ids = HashSet::new();
 
     for map in results {
-        if let Ok((lobby, creator_id)) = LobbyInfo::from_redis_hash_partial(&map) {
+        if let Ok((lobby, creator_id, game_id)) = LobbyInfo::from_redis_hash_partial(&map) {
             creator_ids.insert(creator_id);
-            partial_lobbies.push((lobby, creator_id));
+            game_ids.insert(game_id);
+            partial_lobbies.push((lobby, creator_id, game_id));
         }
     }
 
-    // Batch fetch all creators
+    // Batch fetch all creators and games
     let mut creators = HashMap::new();
+    let mut games = HashMap::new();
+
+    // Fetch creators
     for creator_id in creator_ids {
         if let Ok(creator) = get_user_by_id(creator_id, redis.clone()).await {
             creators.insert(creator_id, creator);
         }
     }
 
-    // Hydrate creators
+    // Fetch games
+    for game_id in game_ids {
+        if let Ok(game) = get_game(game_id, redis.clone()).await {
+            games.insert(game_id, game);
+        }
+    }
+
+    // Hydrate creators and games
     let mut out = Vec::new();
-    for (mut lobby, creator_id) in partial_lobbies {
-        if let Some(creator) = creators.get(&creator_id) {
+    for (mut lobby, creator_id, game_id) in partial_lobbies {
+        if let (Some(creator), Some(game)) = (creators.get(&creator_id), games.get(&game_id)) {
             lobby.creator = creator.clone();
+            lobby.game = game.clone();
             out.push(lobby);
         }
     }
@@ -169,11 +182,16 @@ pub async fn get_lobby_info(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyI
     }
 
     // Get partial lobby info and creator ID
-    let (mut info, creator_id) = LobbyInfo::from_redis_hash_partial(&map)?;
+    let (mut info, creator_id, game_id) = LobbyInfo::from_redis_hash_partial(&map)?;
 
-    // Hydrate the creator
-    let creator = get_user_by_id(creator_id, redis).await?;
-    info.creator = creator;
+    // Hydrate both creator and game concurrently
+    let (creator_result, game_result) = tokio::try_join!(
+        get_user_by_id(creator_id, redis.clone()),
+        get_game(game_id, redis.clone())
+    )?;
+
+    info.creator = creator_result;
+    info.game = game_result;
 
     Ok(info)
 }
@@ -237,30 +255,43 @@ pub async fn get_all_lobbies_info(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    // Parse partial lobbies and collect unique creator IDs
+    // Parse partial lobbies and collect unique creator and game IDs
     let mut partial_lobbies = Vec::new();
     let mut creator_ids = HashSet::new();
+    let mut game_ids = HashSet::new();
 
     for map in results {
-        if let Ok((lobby, creator_id)) = LobbyInfo::from_redis_hash_partial(&map) {
+        if let Ok((lobby, creator_id, game_id)) = LobbyInfo::from_redis_hash_partial(&map) {
             creator_ids.insert(creator_id);
-            partial_lobbies.push((lobby, creator_id));
+            game_ids.insert(game_id);
+            partial_lobbies.push((lobby, creator_id, game_id));
         }
     }
 
-    // Batch fetch all creators
+    // Batch fetch all creators and games
     let mut creators = HashMap::new();
+    let mut games = HashMap::new();
+
+    // Fetch creators
     for creator_id in creator_ids {
         if let Ok(creator) = get_user_by_id(creator_id, redis.clone()).await {
             creators.insert(creator_id, creator);
         }
     }
 
-    // Hydrate creators
+    // Fetch games
+    for game_id in game_ids {
+        if let Ok(game) = get_game(game_id, redis.clone()).await {
+            games.insert(game_id, game);
+        }
+    }
+
+    // Hydrate creators and games
     let mut out = Vec::new();
-    for (mut lobby, creator_id) in partial_lobbies {
-        if let Some(creator) = creators.get(&creator_id) {
+    for (mut lobby, creator_id, game_id) in partial_lobbies {
+        if let (Some(creator), Some(game)) = (creators.get(&creator_id), games.get(&game_id)) {
             lobby.creator = creator.clone();
+            lobby.game = game.clone();
             out.push(lobby);
         }
     }
