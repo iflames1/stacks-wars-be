@@ -37,7 +37,7 @@ pub async fn kick_player(
         }
     };
 
-    if lobby_info.creator_id != player.id {
+    if lobby_info.creator.id != player.id {
         tracing::error!("Unauthorized kick attempt by {}", player.wallet_address);
         send_error_to_player(
             player.id,
