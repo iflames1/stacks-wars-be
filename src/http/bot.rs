@@ -6,14 +6,14 @@ use teloxide::{
     types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode},
 };
 
+use crate::models::game::GameType;
 use uuid::Uuid;
 
 pub struct BotNewLobbyPayload {
     pub lobby_id: Uuid,
     pub lobby_name: String,
     pub description: Option<String>,
-    pub game_name: String,
-    pub game_image: String,
+    pub game: GameType,
     pub contract_address: Option<String>,
     pub entry_amount: Option<f64>,
     pub creator_name: Option<String>,
@@ -30,7 +30,7 @@ pub async fn broadcast_lobby_created(
 
     let lobby_name = format!("🏷 *Lobby Name:* {}\n", payload.lobby_name);
 
-    let game_name = format!("🎮 *Game:* {}\n", payload.game_name);
+    let game_name = format!("🎮 *Game:* {}\n", payload.game.name);
 
     let creator = payload
         .creator_name
@@ -84,7 +84,7 @@ pub async fn broadcast_lobby_created(
 
     bot.send_photo(
         ChatId(chat_id),
-        InputFile::url(payload.game_image.parse().unwrap()),
+        InputFile::url(payload.game.image_url.parse().unwrap()),
     )
     .caption(caption)
     .parse_mode(ParseMode::MarkdownV2)

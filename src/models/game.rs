@@ -270,8 +270,7 @@ pub struct LobbyInfo {
 
     pub creator: User,
     pub state: LobbyState,
-    pub game_id: Uuid,
-    pub game_name: String,
+    pub game: GameType,
     pub participants: usize,
     pub created_at: DateTime<Utc>,
 
@@ -286,8 +285,7 @@ impl LobbyInfo {
             ("name".into(), self.name.clone()),
             ("creator_id".into(), self.creator.id.to_string()),
             ("state".into(), format!("{:?}", self.state)),
-            ("game_id".into(), self.game_id.to_string()),
-            ("game_name".into(), self.game_name.clone()),
+            ("game_id".into(), self.game.id.to_string()), // Store only the game ID
             ("participants".into(), self.participants.to_string()),
             ("created_at".into(), self.created_at.to_rfc3339()),
         ];
@@ -302,20 +300,36 @@ impl LobbyInfo {
 
     pub fn from_redis_hash_partial(
         map: &HashMap<String, String>,
-    ) -> Result<(Self, Uuid), AppError> {
+    ) -> Result<(Self, Uuid, Uuid), AppError> {
         let creator_id = map
             .get("creator_id")
             .ok_or_else(|| AppError::Deserialization("Missing creator_id".into()))?
             .parse()
             .map_err(|_| AppError::Deserialization("Invalid UUID for creator_id".into()))?;
 
-        // Create a placeholder User - will be replaced during hydration
+        let game_id = map
+            .get("game_id")
+            .ok_or_else(|| AppError::Deserialization("Missing game_id".into()))?
+            .parse()
+            .map_err(|_| AppError::Deserialization("Invalid UUID for game_id".into()))?;
+
+        // Create placeholder structs - will be replaced during hydration
         let placeholder_creator = User {
             id: creator_id,
             wallet_address: String::new(),
             wars_point: 0,
             username: None,
             display_name: None,
+        };
+
+        let placeholder_game = GameType {
+            id: game_id,
+            name: String::new(),
+            description: String::new(),
+            image_url: String::new(),
+            min_players: 0,
+            active_lobbies: 0,
+            tags: None,
         };
 
         let lobby = Self {
@@ -334,15 +348,7 @@ impl LobbyInfo {
                 .ok_or_else(|| AppError::Deserialization("Missing state".into()))?
                 .parse::<LobbyState>()
                 .map_err(|_| AppError::Deserialization("Invalid state".into()))?,
-            game_id: map
-                .get("game_id")
-                .ok_or_else(|| AppError::Deserialization("Missing game_id".into()))?
-                .parse()
-                .map_err(|_| AppError::Deserialization("Invalid UUID for game_id".into()))?,
-            game_name: map
-                .get("game_name")
-                .ok_or_else(|| AppError::Deserialization("Missing game_name".into()))?
-                .clone(),
+            game: placeholder_game,
             participants: map
                 .get("participants")
                 .ok_or_else(|| AppError::Deserialization("Missing participants".into()))?
@@ -357,7 +363,7 @@ impl LobbyInfo {
             contract_address: map.get("contract_address").cloned(),
         };
 
-        Ok((lobby, creator_id))
+        Ok((lobby, creator_id, game_id))
     }
 }
 

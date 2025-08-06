@@ -34,7 +34,7 @@ pub async fn join_lobby(
     if lobby_map.is_empty() {
         return Err(AppError::NotFound(format!("Lobby {} not found", lobby_id)));
     }
-    let (lobby, _creator_id) = LobbyInfo::from_redis_hash_partial(&lobby_map)?;
+    let (lobby, _creator_id, _game_id) = LobbyInfo::from_redis_hash_partial(&lobby_map)?;
 
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
     if conn
@@ -122,7 +122,7 @@ pub async fn leave_lobby(
     if m.is_empty() {
         return Err(AppError::NotFound(format!("Lobby {} not found", lobby_id)));
     }
-    let (info, creator_id) = LobbyInfo::from_redis_hash_partial(&m)?;
+    let (info, creator_id, _game_id) = LobbyInfo::from_redis_hash_partial(&m)?;
 
     if creator_id == user_id {
         // delete lobby hash

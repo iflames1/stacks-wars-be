@@ -34,7 +34,6 @@ pub struct CreateLobbyPayload {
     pub contract_address: Option<String>,
     pub tx_id: Option<String>,
     pub game_id: Uuid,
-    pub game_name: String,
 }
 
 pub async fn create_lobby_handler(
@@ -65,7 +64,6 @@ pub async fn create_lobby_handler(
         payload.description,
         user_id,
         payload.game_id,
-        payload.game_name,
         pool,
         state.redis.clone(),
         state.bot.clone(),
