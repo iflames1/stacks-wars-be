@@ -30,10 +30,6 @@ impl RedisKey {
         format!("lobby:{lobby_id}")
     }
 
-    pub fn lobby_pool(lobby_id: KeyPart) -> String {
-        format!("lobby:{lobby_id}:pool")
-    }
-
     pub fn lobby_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
         format!("lobby:{lobby_id}:player:{player_id}")
     }
