@@ -22,7 +22,6 @@ pub async fn initialize_games(redis: RedisClient) -> Result<(), AppError> {
                 "Failed to get games from database: {}, adding default games",
                 e
             );
-            add_default_games(redis).await?;
         }
     }
 

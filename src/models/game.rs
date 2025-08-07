@@ -430,7 +430,7 @@ pub fn parse_lobby_states(state_param: Option<String>) -> Option<Vec<LobbyState>
                     let trimmed = state_str.trim();
                     match trimmed.to_lowercase().as_str() {
                         "waiting" => Some(LobbyState::Waiting),
-                        "inprogress" | "in_progress" => Some(LobbyState::InProgress),
+                        "inprogress" | "in_progress" | "inProgress" => Some(LobbyState::InProgress),
                         "finished" => Some(LobbyState::Finished),
                         _ => {
                             tracing::warn!("Invalid state filter: {}", trimmed);
