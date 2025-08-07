@@ -1,7 +1,10 @@
 use crate::{
-    db::lobby::{
-        get::{get_lobby_info, get_lobby_players},
-        patch::leave_lobby,
+    db::{
+        lobby::{
+            get::{get_lobby_info, get_lobby_players},
+            patch::leave_lobby,
+        },
+        user::get::get_user_by_id,
     },
     models::{
         game::{LobbyState, Player},
@@ -20,8 +23,6 @@ use uuid::Uuid;
 
 pub async fn kick_player(
     player_id: Uuid,
-    wallet_address: String,
-    display_name: Option<String>,
     lobby_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
@@ -81,11 +82,15 @@ pub async fn kick_player(
             player.wallet_address,
             lobby_id
         );
-        let kicked_msg = LobbyServerMessage::PlayerKicked {
-            player_id,
-            wallet_address,
-            display_name,
+        let player = match get_user_by_id(player_id, redis.clone()).await {
+            Ok(player) => player,
+            Err(e) => {
+                tracing::error!("Failed to fetch player info: {}", e);
+                send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                return;
+            }
         };
+        let kicked_msg = LobbyServerMessage::PlayerKicked { player };
         broadcast_to_lobby(lobby_id, &kicked_msg, &connections, None, redis.clone()).await;
 
         let msg: LobbyServerMessage = LobbyServerMessage::NotifyKicked;

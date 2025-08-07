@@ -338,19 +338,13 @@ pub async fn handle_incoming_messages(
                                 )
                                 .await
                             }
-                            LobbyClientMessage::LeaveRoom => {
+                            LobbyClientMessage::LeaveLobby => {
                                 leave_lobby(lobby_id, player, connections, chat_connections, &redis)
                                     .await
                             }
-                            LobbyClientMessage::KickPlayer {
-                                player_id,
-                                wallet_address,
-                                display_name,
-                            } => {
+                            LobbyClientMessage::KickPlayer { player_id } => {
                                 kick_player(
                                     player_id,
-                                    wallet_address,
-                                    display_name,
                                     lobby_id,
                                     player,
                                     connections,
