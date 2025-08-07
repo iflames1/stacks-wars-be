@@ -1,5 +1,4 @@
 use chrono::Utc;
-use redis::AsyncCommands;
 use teloxide::Bot;
 use uuid::Uuid;
 
@@ -12,7 +11,7 @@ use crate::{
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::{
-        game::{LobbyInfo, LobbyPool, LobbyPoolInput, LobbyState, Player, PlayerState},
+        game::{LobbyInfo, LobbyPoolInput, LobbyState, Player, PlayerState},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -47,6 +46,8 @@ pub async fn create_lobby(
         participants: 1,
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
         created_at: Utc::now(),
+        entry_amount: pool.as_ref().map(|p| p.entry_amount),
+        current_amount: pool.as_ref().map(|p| p.entry_amount),
     };
 
     // Store pool if it exists
@@ -58,29 +59,11 @@ pub async fn create_lobby(
             pool_input.entry_amount,
         )
         .await?;
-
-        let pool_struct = LobbyPool {
-            entry_amount: pool_input.entry_amount,
-            contract_address: pool_input.contract_address.clone(),
-            current_amount: pool_input.entry_amount,
-        };
-
-        let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
-
-        let pool_hash = pool_struct.to_redis_hash();
-        let fields: Vec<(&str, &str)> = pool_hash
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
-        let _: () = conn
-            .hset_multiple(&pool_key, &fields)
-            .await
-            .map_err(AppError::RedisCommandError)?;
     }
 
     let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(creator_user.id));
+
     let lobby_player = Player {
         id: creator_user.id,
         wallet_address: creator_user.wallet_address.clone(),
@@ -95,9 +78,7 @@ pub async fn create_lobby(
         wars_point: creator_user.wars_point,
     };
     let player_hash = lobby_player.to_redis_hash();
-
     let lobby_fields = lobby_info.to_redis_hash();
-
     let created_score = lobby_info.created_at.timestamp();
 
     let _: () = redis::pipe()

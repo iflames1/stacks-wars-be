@@ -10,14 +10,14 @@ use std::{
 };
 
 use crate::{
-    db::lobby::get::{get_connected_players, get_lobby_info, get_lobby_players, get_lobby_pool},
+    db::lobby::get::{get_connected_players, get_lobby_info, get_lobby_players},
     games::lexi_wars::{
         engine::start_auto_start_timer,
         utils::{broadcast_to_player, generate_random_letter},
     },
     models::{
         game::{
-            ClaimState, GameData, LexiWars, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState,
+            ClaimState, GameData, LexiWars, LobbyInfo, LobbyState, Player, PlayerState,
             WsQueryParams,
         },
         lexi_wars::{LexiWarsServerMessage, PlayerStanding},
@@ -37,7 +37,6 @@ async fn _setup_player_and_lobby(
     player: &Player,
     lobby_info: LobbyInfo,
     players: Vec<Player>,
-    pool: Option<LobbyPool>,
     lobbies: &LexiWarsLobbies,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
@@ -72,7 +71,6 @@ async fn _setup_player_and_lobby(
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
-            pool,
             connected_players: connected_players.clone(),
             connected_players_count: connected_players.len(),
             game_started: false,
@@ -136,7 +134,6 @@ async fn setup_player_and_lobby(
     lobby_info: LobbyInfo,
     players: Vec<Player>,
     connected_players: Vec<Player>,
-    pool: Option<LobbyPool>,
     lobbies: &LexiWarsLobbies,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
@@ -161,7 +158,6 @@ async fn setup_player_and_lobby(
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
-            pool,
             connected_players: connected_players.clone(),
             connected_players_count: connected_players.len(),
             game_started: false,
@@ -333,20 +329,6 @@ pub async fn lexi_wars_handler(
         lobby_id
     );
 
-    let pool = if let Some(ref addr) = lobby.contract_address {
-        if !addr.is_empty() {
-            Some(
-                get_lobby_pool(lobby_id, redis.clone())
-                    .await
-                    .map_err(|e| e.to_response())?,
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     let is_game_started = {
         let lobbies_guard = lexi_wars_lobbies.lock().await;
         if let Some(game_lobby) = lobbies_guard.get(&lobby_id) {
@@ -391,7 +373,6 @@ pub async fn lexi_wars_handler(
             matched_player,
             players_clone,
             connected_players,
-            pool,
             lexi_wars_lobbies,
             connections,
             lobby_info,
@@ -407,7 +388,6 @@ async fn handle_lexi_wars_socket(
     player: Player,
     players: Vec<Player>,
     connected_players: Vec<Player>,
-    pool: Option<LobbyPool>,
     lexi_wars_lobbies: LexiWarsLobbies,
     connections: ConnectionInfoMap,
     lobby_info: LobbyInfo,
@@ -423,7 +403,6 @@ async fn handle_lexi_wars_socket(
         lobby_info,
         players,
         connected_players,
-        pool,
         &lexi_wars_lobbies,
         &connections,
         &redis,

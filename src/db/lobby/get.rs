@@ -8,7 +8,7 @@ use crate::{
     db::{game::get::get_game, user::get::get_user_by_id},
     errors::AppError,
     models::{
-        game::{LobbyExtended, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+        game::{LobbyExtended, LobbyInfo, LobbyState, Player, PlayerState},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -193,6 +193,8 @@ pub async fn get_lobby_info(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyI
     info.creator = creator_result;
     info.game = game_result;
 
+    tracing::debug!("{info:?}");
+
     Ok(info)
 }
 
@@ -340,29 +342,6 @@ pub async fn get_lobby_players(
     Ok(players)
 }
 
-pub async fn get_lobby_pool(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyPool, AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
-        bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
-    })?;
-
-    let key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
-    let map: HashMap<String, String> = redis::cmd("HGETALL")
-        .arg(&key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    if map.is_empty() {
-        return Err(AppError::NotFound(format!(
-            "Pool for lobby {} not found",
-            lobby_id
-        )));
-    }
-
-    Ok(LobbyPool::from_redis_hash(&map)?)
-}
-
 pub async fn get_lobby_extended(
     lobby_id: Uuid,
     players_filter: Option<PlayerState>,
@@ -371,21 +350,7 @@ pub async fn get_lobby_extended(
     let info = get_lobby_info(lobby_id, redis.clone()).await?;
     let players = get_lobby_players(lobby_id, players_filter, redis.clone()).await?;
 
-    let pool = if let Some(addr) = &info.contract_address {
-        if !addr.is_empty() {
-            Some(get_lobby_pool(lobby_id, redis).await?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    Ok(LobbyExtended {
-        info,
-        players,
-        pool,
-    })
+    Ok(LobbyExtended { info, players })
 }
 
 pub async fn get_all_lobbies_extended(
@@ -411,13 +376,7 @@ pub async fn get_all_lobbies_extended(
 
         let players = get_lobby_players(lobby_id, players_filter.clone(), redis.clone()).await?;
 
-        let pool = get_lobby_pool(lobby_id, redis.clone()).await.ok();
-
-        out.push(LobbyExtended {
-            info,
-            players,
-            pool,
-        });
+        out.push(LobbyExtended { info, players });
     }
 
     Ok(out)

@@ -9,7 +9,7 @@ use crate::{
     },
     errors::AppError,
     models::{
-        game::{ClaimState, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+        game::{ClaimState, LobbyInfo, LobbyState, Player, PlayerState},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -51,23 +51,22 @@ pub async fn join_lobby(
             .clone()
             .ok_or_else(|| AppError::BadRequest("Missing transaction ID for pool".into()))?;
 
-        let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
-        let pool_map: HashMap<String, String> = conn
-            .hgetall(&pool_key)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-        if pool_map.is_empty() {
-            return Err(AppError::NotFound("Lobby pool not found".into()));
-        }
-        let pool = LobbyPool::from_redis_hash(&pool_map)?;
-
-        // Fetch user for wallet address
         let user = get_user_by_id(user_id, redis.clone()).await?;
-        validate_payment_tx(&tx, &user.wallet_address, addr, pool.entry_amount).await?;
+        validate_payment_tx(
+            &tx,
+            &user.wallet_address,
+            addr,
+            lobby.entry_amount.unwrap_or(0.0),
+        )
+        .await?;
 
-        // Increment pool
+        // Increment pool current amount
         let _: () = conn
-            .hincr(&pool_key, "current_amount", pool.entry_amount as i64)
+            .hincr(
+                &lobby_key,
+                "current_amount",
+                lobby.entry_amount.unwrap_or(0.0) as i64,
+            )
             .await
             .map_err(AppError::RedisCommandError)?;
     }
@@ -133,13 +132,8 @@ pub async fn leave_lobby(
             .await
             .map_err(AppError::RedisCommandError)?;
         if keys.len() == 1 {
-            let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
             let _: () = conn
                 .del(&lobby_key)
-                .await
-                .map_err(AppError::RedisCommandError)?;
-            let _: () = conn
-                .del(&pool_key)
                 .await
                 .map_err(AppError::RedisCommandError)?;
 
@@ -181,19 +175,15 @@ pub async fn leave_lobby(
         .map_err(AppError::RedisCommandError)?;
 
     if let Some(_addr) = &info.contract_address {
-        if player.tx_id.is_some() {
-            let pool_key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
-            let ph: HashMap<String, String> = conn
-                .hgetall(&pool_key)
+        if player.tx_id.is_some() && info.entry_amount.is_some() {
+            let _: () = conn
+                .hincr(
+                    &lobby_key,
+                    "current_amount",
+                    -(info.entry_amount.unwrap() as i64),
+                )
                 .await
                 .map_err(AppError::RedisCommandError)?;
-            if !ph.is_empty() {
-                let pool = LobbyPool::from_redis_hash(&ph)?;
-                let _: () = conn
-                    .hincr(&pool_key, "current_amount", -(pool.entry_amount as i64))
-                    .await
-                    .map_err(AppError::RedisCommandError)?;
-            }
         }
     }
 
