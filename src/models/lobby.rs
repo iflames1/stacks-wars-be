@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum JoinState {
     Idle,
     Pending,
@@ -38,32 +39,14 @@ pub struct PaginationMeta {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LobbyClientMessage {
-    #[serde(rename_all = "camelCase")]
-    UpdatePlayerState {
-        new_state: PlayerState,
-    },
-    #[serde(rename_all = "camelCase")]
-    UpdateLobbyState {
-        new_state: LobbyState,
-    },
+    UpdatePlayerState { new_state: PlayerState },
+    UpdateLobbyState { new_state: LobbyState },
     LeaveLobby,
-    #[serde(rename_all = "camelCase")]
-    KickPlayer {
-        player_id: Uuid,
-    },
+    KickPlayer { player_id: Uuid },
     RequestJoin,
-    #[serde(rename_all = "camelCase")]
-    PermitJoin {
-        user_id: Uuid,
-        allow: bool,
-    },
-    #[serde(rename_all = "camelCase")]
-    JoinLobby {
-        tx_id: Option<String>,
-    },
-    Ping {
-        ts: u64,
-    },
+    PermitJoin { user_id: Uuid, allow: bool },
+    JoinLobby { tx_id: Option<String> },
+    Ping { ts: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,12 +68,10 @@ pub enum LobbyServerMessage {
     Countdown {
         time: u32,
     },
-    #[serde(rename_all = "camelCase")]
     LobbyState {
         state: LobbyState,
         ready_players: Option<Vec<Uuid>>,
     },
-    #[serde(rename_all = "camelCase")]
     PendingPlayers {
         pending_players: Vec<PendingJoin>,
     },
