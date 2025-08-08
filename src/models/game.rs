@@ -377,9 +377,9 @@ impl LobbyInfo {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct LobbyExtended {
-    pub info: LobbyInfo,
+    pub lobby: LobbyInfo,
     pub players: Vec<Player>,
 }
 
@@ -397,7 +397,7 @@ pub fn parse_lobby_states(state_param: Option<String>) -> Option<Vec<LobbyState>
             s.split(',')
                 .filter_map(|state_str| {
                     let trimmed = state_str.trim();
-                    match trimmed.to_lowercase().as_str() {
+                    match trimmed {
                         "waiting" => Some(LobbyState::Waiting),
                         "inProgress" => Some(LobbyState::InProgress),
                         "finished" => Some(LobbyState::Finished),

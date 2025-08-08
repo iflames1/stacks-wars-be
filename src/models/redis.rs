@@ -19,7 +19,7 @@ impl RedisKey {
     }
 
     pub fn game(game_id: KeyPart) -> String {
-        format!("game:{game_id}")
+        format!("game:{game_id}:data")
     }
 
     pub fn game_lobbies(game_id: KeyPart) -> String {
@@ -27,7 +27,7 @@ impl RedisKey {
     }
 
     pub fn lobby(lobby_id: KeyPart) -> String {
-        format!("lobby:{lobby_id}")
+        format!("lobby:{lobby_id}:info")
     }
 
     pub fn lobby_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
@@ -39,7 +39,7 @@ impl RedisKey {
     }
 
     pub fn lobbies_state(state: &LobbyState) -> String {
-        format!("lobbies:{}", format!("{state:?}").to_lowercase())
+        format!("lobbies:{}:state", format!("{state:?}").to_lowercase())
     }
 
     // temp keys

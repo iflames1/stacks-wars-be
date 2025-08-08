@@ -347,10 +347,10 @@ pub async fn get_lobby_extended(
     players_filter: Option<PlayerState>,
     redis: RedisClient,
 ) -> Result<LobbyExtended, AppError> {
-    let info = get_lobby_info(lobby_id, redis.clone()).await?;
+    let lobby = get_lobby_info(lobby_id, redis.clone()).await?;
     let players = get_lobby_players(lobby_id, players_filter, redis.clone()).await?;
 
-    Ok(LobbyExtended { info, players })
+    Ok(LobbyExtended { lobby, players })
 }
 
 pub async fn get_all_lobbies_extended(
@@ -372,11 +372,11 @@ pub async fn get_all_lobbies_extended(
 
     let mut out = Vec::with_capacity(uuids.len());
     for lobby_id in uuids {
-        let info = get_lobby_info(lobby_id, redis.clone()).await?;
+        let lobby = get_lobby_info(lobby_id, redis.clone()).await?;
 
         let players = get_lobby_players(lobby_id, players_filter.clone(), redis.clone()).await?;
 
-        out.push(LobbyExtended { info, players });
+        out.push(LobbyExtended { lobby, players });
     }
 
     Ok(out)

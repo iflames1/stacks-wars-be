@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum ChatClientMessage {
     Chat { text: String },
     Ping { ts: u64 },
@@ -19,7 +19,7 @@ pub struct ChatMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum ChatServerMessage {
     PermitChat { allowed: bool },
     Chat { message: ChatMessage },

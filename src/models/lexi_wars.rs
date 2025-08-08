@@ -2,7 +2,7 @@ use crate::models::game::Player;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum LexiWarsClientMessage {
     WordEntry { word: String },
     Ping { ts: u64 },
@@ -15,7 +15,7 @@ pub struct PlayerStanding {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum LexiWarsServerMessage {
     Turn { current_turn: Player },
     Rule { rule: String },
