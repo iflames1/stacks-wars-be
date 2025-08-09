@@ -18,11 +18,7 @@ pub async fn initialize_games(redis: RedisClient) -> Result<(), AppError> {
             }
         }
         Err(e) => {
-            tracing::warn!(
-                "Failed to get games from database: {}, adding default games",
-                e
-            );
-            add_default_games(redis).await?;
+            tracing::warn!("Failed to get games from database: {}", e);
         }
     }
 

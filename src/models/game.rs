@@ -100,7 +100,6 @@ pub struct LexiWars {
     pub rule_index: usize,
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
-    pub pool: Option<LobbyPool>,
     pub connected_players: Vec<Player>,
     pub connected_players_count: usize,
     pub game_started: bool,
@@ -108,6 +107,7 @@ pub struct LexiWars {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Standing {
     pub wallet_address: String,
     pub rank: usize,
@@ -256,7 +256,7 @@ impl FromStr for LobbyState {
         match s {
             "Waiting" => Ok(LobbyState::Waiting),
             "InProgress" => Ok(LobbyState::InProgress),
-            "Completed" => Ok(LobbyState::Finished),
+            "Finished" => Ok(LobbyState::Finished),
             other => Err(format!("Unknown LobbyState: {}", other)),
         }
     }
@@ -276,6 +276,8 @@ pub struct LobbyInfo {
 
     pub description: Option<String>,
     pub contract_address: Option<String>,
+    pub entry_amount: Option<f64>,
+    pub current_amount: Option<f64>,
 }
 
 impl LobbyInfo {
@@ -285,7 +287,7 @@ impl LobbyInfo {
             ("name".into(), self.name.clone()),
             ("creator_id".into(), self.creator.id.to_string()),
             ("state".into(), format!("{:?}", self.state)),
-            ("game_id".into(), self.game.id.to_string()), // Store only the game ID
+            ("game_id".into(), self.game.id.to_string()),
             ("participants".into(), self.participants.to_string()),
             ("created_at".into(), self.created_at.to_rfc3339()),
         ];
@@ -294,6 +296,12 @@ impl LobbyInfo {
         }
         if let Some(addr) = &self.contract_address {
             fields.push(("contract_address".into(), addr.clone()));
+        }
+        if let Some(entry) = self.entry_amount {
+            fields.push(("entry_amount".into(), entry.to_string()));
+        }
+        if let Some(current) = self.current_amount {
+            fields.push(("current_amount".into(), current.to_string()));
         }
         fields
     }
@@ -361,57 +369,18 @@ impl LobbyInfo {
                 .map_err(|_| AppError::Deserialization("Invalid datetime format".into()))?,
             description: map.get("description").cloned(),
             contract_address: map.get("contract_address").cloned(),
+            entry_amount: map.get("entry_amount").and_then(|s| s.parse().ok()),
+            current_amount: map.get("current_amount").and_then(|s| s.parse().ok()),
         };
 
         Ok((lobby, creator_id, game_id))
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LobbyPool {
-    pub entry_amount: f64,
-    pub contract_address: String,
-    pub current_amount: f64,
-}
-
-impl LobbyPool {
-    pub fn to_redis_hash(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        map.insert("entry_amount".into(), self.entry_amount.to_string());
-        map.insert("contract_address".into(), self.contract_address.clone());
-        map.insert("current_amount".into(), self.current_amount.to_string());
-        map
-    }
-
-    pub fn from_redis_hash(map: &HashMap<String, String>) -> Result<Self, AppError> {
-        let entry_amount = map
-            .get("entry_amount")
-            .ok_or_else(|| AppError::Deserialization("Missing entry_amount".into()))?
-            .parse()
-            .map_err(|_| AppError::Deserialization("Invalid entry_amount".into()))?;
-        let contract_address = map
-            .get("contract_address")
-            .ok_or_else(|| AppError::Deserialization("Missing contract_address".into()))?
-            .clone();
-        let current_amount = map
-            .get("current_amount")
-            .ok_or_else(|| AppError::Deserialization("Missing current_amount".into()))?
-            .parse()
-            .map_err(|_| AppError::Deserialization("Invalid current_amount".into()))?;
-        Ok(Self {
-            entry_amount,
-            contract_address,
-            current_amount,
-        })
-    }
-}
-
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct LobbyExtended {
-    pub info: LobbyInfo,
+    pub lobby: LobbyInfo,
     pub players: Vec<Player>,
-    pub pool: Option<LobbyPool>,
 }
 
 #[derive(Deserialize)]
@@ -428,9 +397,9 @@ pub fn parse_lobby_states(state_param: Option<String>) -> Option<Vec<LobbyState>
             s.split(',')
                 .filter_map(|state_str| {
                     let trimmed = state_str.trim();
-                    match trimmed.to_lowercase().as_str() {
+                    match trimmed {
                         "waiting" => Some(LobbyState::Waiting),
-                        "inprogress" | "in_progress" => Some(LobbyState::InProgress),
+                        "inProgress" => Some(LobbyState::InProgress),
                         "finished" => Some(LobbyState::Finished),
                         _ => {
                             tracing::warn!("Invalid state filter: {}", trimmed);

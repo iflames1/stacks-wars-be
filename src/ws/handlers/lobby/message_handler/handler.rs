@@ -215,6 +215,54 @@ pub async fn request_to_join(
     Ok(())
 }
 
+pub async fn set_join_state(
+    lobby_id: Uuid,
+    user: User,
+    state: JoinState,
+    join_requests: &LobbyJoinRequests,
+) -> Result<(), AppError> {
+    let mut map = join_requests.lock().await;
+    let lobby_requests = map.entry(lobby_id).or_default();
+
+    if let Some(existing) = lobby_requests.iter_mut().find(|r| r.user.id == user.id) {
+        existing.state = state;
+        return Ok(());
+    }
+
+    // If user doesn't exist in requests, add them with the specified state
+    lobby_requests.push(JoinRequest { user, state });
+
+    Ok(())
+}
+
+pub async fn mark_player_as_idle(
+    lobby_id: Uuid,
+    player: &Player,
+    join_requests: &LobbyJoinRequests,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    if let Err(e) = set_join_state(
+        lobby_id,
+        player.clone().into(),
+        JoinState::Idle,
+        join_requests,
+    )
+    .await
+    {
+        tracing::error!("Failed to mark player {} as idle: {}", player.id, e);
+        return;
+    }
+
+    if let Ok(pending_players) = get_pending_players(lobby_id, join_requests).await {
+        let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
+
+        send_to_player(player.id, connections, &pending_msg, redis).await;
+
+        broadcast_to_lobby(lobby_id, &pending_msg, connections, None, redis.clone()).await;
+    }
+}
+
 pub async fn accept_join_request(
     lobby_id: Uuid,
     user_id: Uuid,
@@ -268,9 +316,9 @@ pub async fn get_pending_players(
     join_requests: &LobbyJoinRequests,
 ) -> Result<Vec<PendingJoin>, AppError> {
     let map = get_join_requests(lobby_id, join_requests).await;
+
     let pending_players = map
         .into_iter()
-        .filter(|req| req.state == JoinState::Pending)
         .map(|req| PendingJoin {
             user: req.user,
             state: req.state,
@@ -338,23 +386,25 @@ pub async fn handle_incoming_messages(
                                 )
                                 .await
                             }
-                            LobbyClientMessage::LeaveRoom => {
-                                leave_lobby(lobby_id, player, connections, chat_connections, &redis)
-                                    .await
-                            }
-                            LobbyClientMessage::KickPlayer {
-                                player_id,
-                                wallet_address,
-                                display_name,
-                            } => {
-                                kick_player(
-                                    player_id,
-                                    wallet_address,
-                                    display_name,
+                            LobbyClientMessage::LeaveLobby => {
+                                leave_lobby(
                                     lobby_id,
                                     player,
                                     connections,
                                     chat_connections,
+                                    &join_requests,
+                                    &redis,
+                                )
+                                .await
+                            }
+                            LobbyClientMessage::KickPlayer { player_id } => {
+                                kick_player(
+                                    player_id,
+                                    lobby_id,
+                                    player,
+                                    connections,
+                                    chat_connections,
+                                    &join_requests,
                                     &redis,
                                 )
                                 .await
@@ -371,6 +421,8 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                         }
+                    } else {
+                        tracing::debug!("uncaught message: {text}");
                     }
                 }
                 Message::Ping(data) => {

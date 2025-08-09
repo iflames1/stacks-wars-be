@@ -25,24 +25,27 @@ use crate::{
 use uuid::Uuid;
 
 fn get_prize(lobby: &LexiWars, position: usize) -> Option<f64> {
-    let prize = lobby.pool.as_ref().map(|pool| {
-        // Use the fixed connected_players_count instead of current connected_players.len()
-        let total_pool = pool.entry_amount * lobby.connected_players_count as f64;
-        match position {
-            1 => {
-                if lobby.connected_players_count == 2 {
-                    (total_pool * 70.0) / 100.0
-                } else {
-                    (total_pool * 50.0) / 100.0
-                }
-            }
-            2 => (total_pool * 30.0) / 100.0,
-            3 => (total_pool * 20.0) / 100.0,
-            _ => 0.0,
-        }
-    });
+    if lobby.info.contract_address.is_none() || lobby.info.entry_amount.is_none() {
+        return None;
+    }
 
-    prize
+    let entry_amount = lobby.info.entry_amount.unwrap();
+    let total_pool = entry_amount * lobby.connected_players_count as f64;
+
+    let prize = match position {
+        1 => {
+            if lobby.connected_players_count == 2 {
+                (total_pool * 70.0) / 100.0
+            } else {
+                (total_pool * 50.0) / 100.0
+            }
+        }
+        2 => (total_pool * 30.0) / 100.0,
+        3 => (total_pool * 20.0) / 100.0,
+        _ => 0.0,
+    };
+
+    Some(prize)
 }
 
 pub fn start_auto_start_timer(

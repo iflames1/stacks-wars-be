@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum JoinState {
     Idle,
     Pending,
@@ -36,28 +37,37 @@ pub struct PaginationMeta {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum LobbyClientMessage {
+    #[serde(rename_all = "camelCase")]
     UpdatePlayerState {
         new_state: PlayerState,
     },
+
+    #[serde(rename_all = "camelCase")]
     UpdateLobbyState {
         new_state: LobbyState,
     },
-    LeaveRoom,
+
+    LeaveLobby,
+
+    #[serde(rename_all = "camelCase")]
     KickPlayer {
         player_id: Uuid,
-        wallet_address: String,
-        display_name: Option<String>,
     },
     RequestJoin,
+
+    #[serde(rename_all = "camelCase")]
     PermitJoin {
         user_id: Uuid,
         allow: bool,
     },
+
+    #[serde(rename_all = "camelCase")]
     JoinLobby {
         tx_id: Option<String>,
     },
+
     Ping {
         ts: u64,
     },
@@ -70,24 +80,26 @@ pub struct PendingJoin {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum LobbyServerMessage {
     PlayerUpdated {
         players: Vec<Player>,
     },
     PlayerKicked {
-        player_id: Uuid,
-        wallet_address: String,
-        display_name: Option<String>,
+        player: User,
     },
     NotifyKicked,
     Countdown {
         time: u32,
     },
+
+    #[serde(rename_all = "camelCase")]
     LobbyState {
         state: LobbyState,
         ready_players: Option<Vec<Uuid>>,
     },
+
+    #[serde(rename_all = "camelCase")]
     PendingPlayers {
         pending_players: Vec<PendingJoin>,
     },
@@ -106,7 +118,6 @@ pub enum LobbyServerMessage {
     },
 }
 
-// Add this to your lobby.rs file (assuming it exists)
 impl LobbyServerMessage {
     /// Determines if this message should be queued for offline players
     pub fn should_queue(&self) -> bool {

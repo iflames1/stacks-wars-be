@@ -8,7 +8,7 @@ use crate::{
     db::{game::get::get_game, user::get::get_user_by_id},
     errors::AppError,
     models::{
-        game::{LobbyExtended, LobbyInfo, LobbyPool, LobbyState, Player, PlayerState},
+        game::{LobbyExtended, LobbyInfo, LobbyState, Player, PlayerState},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -193,6 +193,8 @@ pub async fn get_lobby_info(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyI
     info.creator = creator_result;
     info.game = game_result;
 
+    tracing::debug!("{info:?}");
+
     Ok(info)
 }
 
@@ -241,6 +243,10 @@ pub async fn get_all_lobbies_info(
     let offset = ((page.saturating_sub(1)) as usize).saturating_mul(limit as usize);
     let end = offset + (limit as usize) - 1;
     let uuids: Vec<Uuid> = fetch_lobby_uuids(&mut conn, lobby_filters, offset, end).await?;
+
+    if uuids.is_empty() {
+        return Ok(Vec::new());
+    }
 
     // Batch all HGETALLs using a Redis pipeline
     let mut pipe = redis::pipe();
@@ -340,52 +346,15 @@ pub async fn get_lobby_players(
     Ok(players)
 }
 
-pub async fn get_lobby_pool(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyPool, AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
-        bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
-    })?;
-
-    let key = RedisKey::lobby_pool(KeyPart::Id(lobby_id));
-    let map: HashMap<String, String> = redis::cmd("HGETALL")
-        .arg(&key)
-        .query_async(&mut *conn)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    if map.is_empty() {
-        return Err(AppError::NotFound(format!(
-            "Pool for lobby {} not found",
-            lobby_id
-        )));
-    }
-
-    Ok(LobbyPool::from_redis_hash(&map)?)
-}
-
 pub async fn get_lobby_extended(
     lobby_id: Uuid,
     players_filter: Option<PlayerState>,
     redis: RedisClient,
 ) -> Result<LobbyExtended, AppError> {
-    let info = get_lobby_info(lobby_id, redis.clone()).await?;
+    let lobby = get_lobby_info(lobby_id, redis.clone()).await?;
     let players = get_lobby_players(lobby_id, players_filter, redis.clone()).await?;
 
-    let pool = if let Some(addr) = &info.contract_address {
-        if !addr.is_empty() {
-            Some(get_lobby_pool(lobby_id, redis).await?)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    Ok(LobbyExtended {
-        info,
-        players,
-        pool,
-    })
+    Ok(LobbyExtended { lobby, players })
 }
 
 pub async fn get_all_lobbies_extended(
@@ -405,19 +374,27 @@ pub async fn get_all_lobbies_extended(
 
     let uuids: Vec<Uuid> = fetch_lobby_uuids(&mut conn, lobby_filters, offset, end).await?;
 
+    if uuids.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut out = Vec::with_capacity(uuids.len());
     for lobby_id in uuids {
-        let info = get_lobby_info(lobby_id, redis.clone()).await?;
-
-        let players = get_lobby_players(lobby_id, players_filter.clone(), redis.clone()).await?;
-
-        let pool = get_lobby_pool(lobby_id, redis.clone()).await.ok();
-
-        out.push(LobbyExtended {
-            info,
-            players,
-            pool,
-        });
+        match get_lobby_info(lobby_id, redis.clone()).await {
+            Ok(lobby) => {
+                match get_lobby_players(lobby_id, players_filter.clone(), redis.clone()).await {
+                    Ok(players) => {
+                        out.push(LobbyExtended { lobby, players });
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to get players for lobby {}: {}", lobby_id, e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get lobby info for {}: {}", lobby_id, e);
+            }
+        }
     }
 
     Ok(out)
@@ -434,11 +411,30 @@ async fn fetch_lobby_uuids(
             .iter()
             .map(|state| RedisKey::lobbies_state(state))
             .collect();
+
+        // Check if any of the state sets exist before trying union
+        let mut existing_keys = Vec::new();
+        for key in &keys {
+            let exists: bool = redis::cmd("EXISTS")
+                .arg(key)
+                .query_async(&mut **conn)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+            if exists {
+                existing_keys.push(key);
+            }
+        }
+
+        // If no state sets exist, return empty
+        if existing_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let union = RedisKey::temp_union();
         let _: () = redis::cmd("ZUNIONSTORE")
             .arg(&union)
-            .arg(keys.len())
-            .arg(&keys)
+            .arg(existing_keys.len())
+            .arg(&existing_keys)
             .query_async(&mut **conn)
             .await
             .map_err(AppError::RedisCommandError)?;
@@ -465,6 +461,17 @@ async fn fetch_lobby_uuids(
             .ok();
         out
     } else {
+        // Check if "lobbies:all" exists before trying to access it
+        let exists: bool = redis::cmd("EXISTS")
+            .arg("lobbies:all")
+            .query_async(&mut **conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        if !exists {
+            return Ok(Vec::new());
+        }
+
         redis::cmd("ZREVRANGE")
             .arg("lobbies:all")
             .arg(offset)
