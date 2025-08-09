@@ -9,8 +9,10 @@ use crate::{
         chat::{ChatClientMessage, ChatMessage, ChatServerMessage},
         game::Player,
     },
-    state::{ChatConnectionInfoMap, ChatHistories, RedisClient},
-    ws::handlers::chat::utils::{queue_chat_message_for_player, send_chat_message_to_player},
+    state::{ChatConnectionInfoMap, RedisClient},
+    ws::handlers::chat::utils::{
+        queue_chat_message_for_player, send_chat_message_to_player, store_chat_message_in_redis,
+    },
 };
 
 pub async fn handle_incoming_chat_messages(
@@ -19,7 +21,6 @@ pub async fn handle_incoming_chat_messages(
     player: &Player,
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
-    chat_histories: ChatHistories,
 ) {
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
@@ -35,13 +36,8 @@ pub async fn handle_incoming_chat_messages(
                                     ts,
                                     pong: pong_time,
                                 };
-                                send_chat_message_to_player(
-                                    player.id,
-                                    &pong_msg,
-                                    chat_connections,
-                                    &redis,
-                                )
-                                .await;
+                                send_chat_message_to_player(player.id, &pong_msg, chat_connections)
+                                    .await;
                             }
                             ChatClientMessage::Chat { text } => {
                                 let lobby_players =
@@ -49,7 +45,6 @@ pub async fn handle_incoming_chat_messages(
                                         Ok(players) => players,
                                         Err(e) => {
                                             tracing::error!("Failed to get lobby players: {}", e);
-                                            // Send error to user and continue
                                             let error_msg = ChatServerMessage::Error {
                                                 message: "Failed to verify lobby membership"
                                                     .to_string(),
@@ -58,7 +53,6 @@ pub async fn handle_incoming_chat_messages(
                                                 player.id,
                                                 &error_msg,
                                                 chat_connections,
-                                                &redis,
                                             )
                                             .await;
                                             continue;
@@ -76,7 +70,6 @@ pub async fn handle_incoming_chat_messages(
                                         player.id,
                                         &error_msg,
                                         chat_connections,
-                                        &redis,
                                     )
                                     .await;
                                     continue;
@@ -90,13 +83,11 @@ pub async fn handle_incoming_chat_messages(
                                         player.id,
                                         &error_msg,
                                         chat_connections,
-                                        &redis,
                                     )
                                     .await;
                                     continue;
                                 }
 
-                                // Create chat message
                                 let chat_message = ChatMessage {
                                     id: Uuid::new_v4(),
                                     text: text.trim().to_string(),
@@ -104,19 +95,19 @@ pub async fn handle_incoming_chat_messages(
                                     timestamp: Utc::now(),
                                 };
 
-                                // Store in chat history
+                                // Store in Redis chat history
+                                if let Err(e) =
+                                    store_chat_message_in_redis(lobby_id, &chat_message, &redis)
+                                        .await
                                 {
-                                    let mut histories = chat_histories.lock().await;
-                                    let history = histories
-                                        .entry(lobby_id)
-                                        .or_insert_with(|| crate::state::ChatHistory::new());
-                                    history.add_message(chat_message.clone());
+                                    tracing::error!("Failed to store chat message in Redis: {}", e);
                                 }
 
                                 broadcast_chat_to_lobby(
                                     &chat_message,
                                     &lobby_players,
                                     chat_connections,
+                                    lobby_id,
                                     &redis,
                                 )
                                 .await;
@@ -140,13 +131,11 @@ pub async fn handle_incoming_chat_messages(
                             ts: client_ts,
                             pong: pong_time,
                         };
-                        send_chat_message_to_player(player.id, &pong_msg, chat_connections, &redis)
-                            .await;
+                        send_chat_message_to_player(player.id, &pong_msg, chat_connections).await;
                     } else {
                         let now = Utc::now().timestamp_millis() as u64;
                         let pong_msg = ChatServerMessage::Pong { ts: now, pong: 0 };
-                        send_chat_message_to_player(player.id, &pong_msg, chat_connections, &redis)
-                            .await;
+                        send_chat_message_to_player(player.id, &pong_msg, chat_connections).await;
                     }
                 }
                 Message::Pong(_) => {
@@ -174,6 +163,7 @@ async fn broadcast_chat_to_lobby(
     chat_message: &ChatMessage,
     lobby_players: &[Player],
     chat_connections: &ChatConnectionInfoMap,
+    lobby_id: Uuid,
     redis: &RedisClient,
 ) {
     let chat_msg = ChatServerMessage::Chat {
@@ -199,8 +189,13 @@ async fn broadcast_chat_to_lobby(
                     drop(sender);
                     drop(connection_guard);
 
-                    if let Err(queue_err) =
-                        queue_chat_message_for_player(player.id, serialized.clone(), redis).await
+                    if let Err(queue_err) = queue_chat_message_for_player(
+                        player.id,
+                        lobby_id,
+                        serialized.clone(),
+                        redis,
+                    )
+                    .await
                     {
                         tracing::error!(
                             "Failed to queue chat message for player {}: {}",
@@ -213,7 +208,7 @@ async fn broadcast_chat_to_lobby(
             }
         } else if chat_msg.should_queue() {
             if let Err(e) =
-                queue_chat_message_for_player(player.id, serialized.clone(), redis).await
+                queue_chat_message_for_player(player.id, lobby_id, serialized.clone(), redis).await
             {
                 tracing::error!(
                     "Failed to queue chat message for offline player {}: {}",

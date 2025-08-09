@@ -120,7 +120,7 @@ async fn notify_chat_about_lobby_changes(
 
             drop(connection_guard);
 
-            send_chat_message_to_player(player_id, &permit_msg, chat_connections, redis).await;
+            send_chat_message_to_player(player_id, &permit_msg, chat_connections).await;
 
             return;
         }

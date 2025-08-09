@@ -35,11 +35,15 @@ impl RedisKey {
     }
 
     pub fn lobby_connected_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
-        format!("lobbies:{}:connected_player:{}", lobby_id, player_id)
+        format!("lobbies:{lobby_id}:connected_player:{player_id}")
     }
 
     pub fn lobbies_state(state: &LobbyState) -> String {
         format!("lobbies:{}:state", format!("{state:?}").to_lowercase())
+    }
+
+    pub fn lobby_chat(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:chats")
     }
 
     // temp keys
