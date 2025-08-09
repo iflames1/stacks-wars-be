@@ -256,7 +256,7 @@ impl FromStr for LobbyState {
         match s {
             "Waiting" => Ok(LobbyState::Waiting),
             "InProgress" => Ok(LobbyState::InProgress),
-            "Completed" => Ok(LobbyState::Finished),
+            "Finished" => Ok(LobbyState::Finished),
             other => Err(format!("Unknown LobbyState: {}", other)),
         }
     }
