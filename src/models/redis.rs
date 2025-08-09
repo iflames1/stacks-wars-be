@@ -6,36 +6,36 @@ pub struct RedisKey;
 
 impl RedisKey {
     pub fn user(user_id: KeyPart) -> String {
-        format!("user:{user_id}")
+        format!("users:{user_id}")
     }
 
     pub fn wallet(wallet_address: KeyPart) -> String {
-        format!("user_wallet:{wallet_address}")
+        format!("user_wallets:{wallet_address}")
     }
 
     pub fn username(username: KeyPart) -> String {
         let username = username.to_string().to_lowercase();
-        format!("username:{username}")
+        format!("usernames:{username}")
     }
 
     pub fn game(game_id: KeyPart) -> String {
-        format!("game:{game_id}:data")
+        format!("games:{game_id}:data")
     }
 
     pub fn game_lobbies(game_id: KeyPart) -> String {
-        format!("game:{game_id}:lobbies")
+        format!("games:{game_id}:lobbies")
     }
 
     pub fn lobby(lobby_id: KeyPart) -> String {
-        format!("lobby:{lobby_id}:info")
+        format!("lobbies:{lobby_id}:info")
     }
 
     pub fn lobby_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
-        format!("lobby:{lobby_id}:player:{player_id}")
+        format!("lobbies:{lobby_id}:player:{player_id}")
     }
 
     pub fn lobby_connected_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
-        format!("lobby:{}:connected_player:{}", lobby_id, player_id)
+        format!("lobbies:{}:connected_player:{}", lobby_id, player_id)
     }
 
     pub fn lobbies_state(state: &LobbyState) -> String {
