@@ -55,8 +55,13 @@ pub async fn broadcast_to_lobby(
                         drop(sender); // Release the sender lock
                         drop(connection_guard); // Release the connection guard
 
-                        if let Err(queue_err) =
-                            queue_message_for_player(player.id, serialized.clone(), &redis).await
+                        if let Err(queue_err) = queue_message_for_player(
+                            player.id,
+                            lobby_id,
+                            serialized.clone(),
+                            &redis,
+                        )
+                        .await
                         {
                             tracing::error!(
                                 "Failed to queue message for player {}: {}",
@@ -72,7 +77,8 @@ pub async fn broadcast_to_lobby(
                 // Player not connected, only queue if message should be queued
                 if msg.should_queue() {
                     if let Err(e) =
-                        queue_message_for_player(player.id, serialized.clone(), &redis).await
+                        queue_message_for_player(player.id, lobby_id, serialized.clone(), &redis)
+                            .await
                     {
                         tracing::error!(
                             "Failed to queue message for offline player {}: {}",
@@ -123,6 +129,7 @@ async fn notify_chat_about_lobby_changes(
 
 pub async fn send_error_to_player(
     player_id: Uuid,
+    lobby_id: Uuid,
     message: impl Into<String>,
     connection_info: &ConnectionInfoMap,
     redis: &RedisClient,
@@ -130,11 +137,12 @@ pub async fn send_error_to_player(
     let error_msg = LobbyServerMessage::Error {
         message: message.into(),
     };
-    send_to_player(player_id, connection_info, &error_msg, redis).await;
+    send_to_player(player_id, lobby_id, connection_info, &error_msg, redis).await;
 }
 
 pub async fn send_to_player(
     player_id: Uuid,
+    lobby_id: Uuid,
     connection_info: &ConnectionInfoMap,
     msg: &LobbyServerMessage,
     redis: &RedisClient,
@@ -158,7 +166,8 @@ pub async fn send_to_player(
                 drop(sender);
                 drop(conns);
 
-                if let Err(queue_err) = queue_message_for_player(player_id, serialized, redis).await
+                if let Err(queue_err) =
+                    queue_message_for_player(player_id, lobby_id, serialized, redis).await
                 {
                     tracing::error!(
                         "Failed to queue message for player {}: {}",
@@ -171,7 +180,7 @@ pub async fn send_to_player(
     } else {
         // Player not connected, only queue if message should be queued
         if msg.should_queue() {
-            if let Err(e) = queue_message_for_player(player_id, serialized, redis).await {
+            if let Err(e) = queue_message_for_player(player_id, lobby_id, serialized, redis).await {
                 tracing::error!(
                     "Failed to queue message for offline player {}: {}",
                     player_id,
@@ -257,7 +266,7 @@ pub async fn mark_player_as_idle(
     if let Ok(pending_players) = get_pending_players(lobby_id, join_requests).await {
         let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
 
-        send_to_player(player.id, connections, &pending_msg, redis).await;
+        send_to_player(player.id, lobby_id, connections, &pending_msg, redis).await;
 
         broadcast_to_lobby(lobby_id, &pending_msg, connections, None, redis.clone()).await;
     }
@@ -345,7 +354,7 @@ pub async fn handle_incoming_messages(
                     if let Ok(parsed) = serde_json::from_str::<LobbyClientMessage>(&text) {
                         match parsed {
                             LobbyClientMessage::Ping { ts } => {
-                                ping(ts, player, connections, &redis).await
+                                ping(ts, player, lobby_id, connections, &redis).await
                             }
                             LobbyClientMessage::JoinLobby { tx_id } => {
                                 join_lobby(
@@ -443,12 +452,12 @@ pub async fn handle_incoming_messages(
                             ts: client_ts,
                             pong: pong_time,
                         };
-                        send_to_player(player.id, &connections, &pong_msg, &redis).await;
+                        send_to_player(player.id, lobby_id, &connections, &pong_msg, &redis).await;
                     } else {
                         // For standard WebSocket pings without timestamp, use current time
                         let now = Utc::now().timestamp_millis() as u64;
                         let pong_msg = LobbyServerMessage::Pong { ts: now, pong: 0 };
-                        send_to_player(player.id, &connections, &pong_msg, &redis).await;
+                        send_to_player(player.id, lobby_id, &connections, &pong_msg, &redis).await;
                     }
                 }
                 Message::Pong(_) => {

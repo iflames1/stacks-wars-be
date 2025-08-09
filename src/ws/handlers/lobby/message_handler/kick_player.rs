@@ -34,7 +34,7 @@ pub async fn kick_player(
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to fetch lobby info: {}", e);
-            send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+            send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
             return;
         }
     };
@@ -43,6 +43,7 @@ pub async fn kick_player(
         tracing::error!("Unauthorized kick attempt by {}", player.wallet_address);
         send_error_to_player(
             player.id,
+            lobby_id,
             "Only creator can kick players",
             &connections,
             &redis,
@@ -55,6 +56,7 @@ pub async fn kick_player(
         tracing::error!("Cannot kick players when game is not waiting");
         send_error_to_player(
             player.id,
+            lobby_id,
             "Cannot kick player when game is in progress",
             &connections,
             &redis,
@@ -66,7 +68,7 @@ pub async fn kick_player(
     // Remove player
     if let Err(e) = leave_lobby(lobby_id, player_id, redis.clone()).await {
         tracing::error!("Failed to kick player: {}", e);
-        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+        send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         let player_updated_msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(
@@ -87,7 +89,8 @@ pub async fn kick_player(
             Ok(user) => user,
             Err(e) => {
                 tracing::error!("Failed to fetch player info: {}", e);
-                send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
+                    .await;
                 return;
             }
         };
@@ -113,8 +116,22 @@ pub async fn kick_player(
         broadcast_to_lobby(lobby_id, &kicked_msg, &connections, None, redis.clone()).await;
 
         let notify_kicked_msg = LobbyServerMessage::NotifyKicked;
-        send_to_player(player_id, &connections, &notify_kicked_msg, &redis).await;
-        send_to_player(player_id, &connections, &player_updated_msg, &redis).await;
+        send_to_player(
+            player_id,
+            lobby_id,
+            &connections,
+            &notify_kicked_msg,
+            &redis,
+        )
+        .await;
+        send_to_player(
+            player_id,
+            lobby_id,
+            &connections,
+            &player_updated_msg,
+            &redis,
+        )
+        .await;
 
         mark_player_as_idle(lobby_id, &kicked_player, join_requests, connections, redis).await;
     }

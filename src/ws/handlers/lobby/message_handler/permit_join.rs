@@ -25,7 +25,7 @@ pub async fn permit_join(
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to fetch lobby info: {}", e);
-            send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+            send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
             return;
         }
     };
@@ -34,6 +34,7 @@ pub async fn permit_join(
         tracing::error!("Unauthorized permit attempt by {}", player.wallet_address);
         send_error_to_player(
             player.id,
+            lobby_id,
             "Only lobby creator can permit joins".to_string(),
             &connections,
             &redis,
@@ -46,6 +47,7 @@ pub async fn permit_join(
         tracing::error!("Cannot permit joins when game is not waiting");
         send_error_to_player(
             player.id,
+            lobby_id,
             "Cannot permit joins when game is not open".to_string(),
             &connections,
             &redis,
@@ -59,7 +61,7 @@ pub async fn permit_join(
         Ok(user) => user,
         Err(e) => {
             tracing::error!("Failed to fetch user info for {}: {}", user_id, e);
-            send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+            send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
             return;
         }
     };
@@ -73,7 +75,7 @@ pub async fn permit_join(
 
     if let Err(e) = set_join_state(lobby_id, user.clone(), new_state.clone(), join_requests).await {
         tracing::error!("Failed to update join state: {}", e);
-        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+        send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
         return;
     }
 
@@ -83,7 +85,7 @@ pub async fn permit_join(
     } else {
         LobbyServerMessage::Rejected
     };
-    send_to_player(user_id, &connections, &response_msg, &redis).await;
+    send_to_player(user_id, lobby_id, &connections, &response_msg, &redis).await;
 
     // Get updated pending players (which now includes users with all states: Pending, Allowed, Rejected, Idle)
     if let Ok(pending_players) = get_pending_players(lobby_id, &join_requests).await {

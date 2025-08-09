@@ -138,7 +138,14 @@ async fn handle_lobby_socket(
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                     Err(e) => {
                         tracing::error!("❌ Failed to get ready players: {}", e);
-                        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                        send_error_to_player(
+                            player.id,
+                            lobby_id,
+                            e.to_string(),
+                            &connections,
+                            &redis,
+                        )
+                        .await;
                         vec![]
                     }
                 };
@@ -203,7 +210,8 @@ async fn handle_lobby_socket(
         }
     }
 
-    store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
+    store_connection_and_send_queued_messages(player.id, lobby_id, sender, &connections, &redis)
+        .await;
 
     if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };

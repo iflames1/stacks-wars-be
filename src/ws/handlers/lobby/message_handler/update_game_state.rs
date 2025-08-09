@@ -32,7 +32,7 @@ pub async fn update_game_state(
         Ok(info) => info,
         Err(e) => {
             tracing::error!("Failed to fetch lobby info: {}", e);
-            send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+            send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
             return;
         }
     };
@@ -44,6 +44,7 @@ pub async fn update_game_state(
         );
         send_error_to_player(
             player.id,
+            lobby_id,
             "Only creator can update game state",
             &connections,
             &redis,
@@ -54,7 +55,7 @@ pub async fn update_game_state(
 
     if let Err(e) = update_lobby_state(lobby_id, new_state.clone(), redis.clone()).await {
         tracing::error!("Failed to update game state: {}", e);
-        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+        send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else {
         if new_state == LobbyState::InProgress {
             let players = get_lobby_players(lobby_id, None, redis.clone())
@@ -67,7 +68,7 @@ pub async fn update_game_state(
 
             if !not_ready.is_empty() {
                 let msg = LobbyServerMessage::PlayersNotReady { players: not_ready };
-                send_to_player(player.id, &connections, &msg, &redis).await;
+                send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
 
                 let game_starting = LobbyServerMessage::LobbyState {
                     state: new_state,
@@ -191,7 +192,8 @@ async fn start_countdown(
             }
             Err(e) => {
                 tracing::error!("Failed to check state: {}", e);
-                send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
+                    .await;
 
                 // Clear countdown state on error
                 {
@@ -215,7 +217,14 @@ async fn start_countdown(
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                     Err(e) => {
                         tracing::error!("❌ Failed to get ready players: {}", e);
-                        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                        send_error_to_player(
+                            player.id,
+                            lobby_id,
+                            e.to_string(),
+                            &connections,
+                            &redis,
+                        )
+                        .await;
                         vec![]
                     }
                 };
@@ -224,7 +233,8 @@ async fn start_countdown(
                 Ok(players) => players,
                 Err(e) => {
                     tracing::error!("❌ Failed to get lobby players: {}", e);
-                    send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                    send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
+                        .await;
                     vec![]
                 }
             };

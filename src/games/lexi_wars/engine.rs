@@ -271,13 +271,21 @@ fn start_turn_timer(
                 if let Some(lobby) = lobbies_guard.get(&lobby_id) {
                     if lobby.current_turn_id != player_id {
                         let countdown_msg = LexiWarsServerMessage::Countdown { time: 30 };
-                        broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
+                        broadcast_to_player(
+                            player_id,
+                            lobby_id,
+                            &countdown_msg,
+                            &connections,
+                            &redis,
+                        )
+                        .await;
 
                         tracing::info!("turn changed, stopping timer");
                         return;
                     }
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
-                    broadcast_to_player(player_id, &countdown_msg, &connections, &redis).await;
+                    broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
+                        .await;
                 } else {
                     tracing::error!("lobby not found, stopping timer");
                     return;
@@ -308,7 +316,7 @@ fn start_turn_timer(
                     let rank_msg = LexiWarsServerMessage::Rank {
                         rank: position.to_string(),
                     };
-                    broadcast_to_player(player_id, &rank_msg, &connections, &redis).await;
+                    broadcast_to_player(player_id, lobby_id, &rank_msg, &connections, &redis).await;
 
                     let player_used_words = lobby.used_words.remove(&player.id).unwrap_or_default();
 
@@ -329,7 +337,8 @@ fn start_turn_timer(
 
                     if let Some(amount) = prize {
                         let prize_msg = LexiWarsServerMessage::Prize { amount };
-                        broadcast_to_player(player_id, &prize_msg, &connections, &redis).await;
+                        broadcast_to_player(player_id, lobby_id, &prize_msg, &connections, &redis)
+                            .await;
                     }
                 }
 
@@ -346,7 +355,7 @@ fn start_turn_timer(
                     let rank_msg = LexiWarsServerMessage::Rank {
                         rank: "1".to_string(),
                     };
-                    broadcast_to_player(winner.id, &rank_msg, &connections, &redis).await;
+                    broadcast_to_player(winner.id, lobby_id, &rank_msg, &connections, &redis).await;
 
                     let player_used_words = lobby.used_words.remove(&winner.id).unwrap_or_default();
 
@@ -367,7 +376,8 @@ fn start_turn_timer(
 
                     if let Some(amount) = prize {
                         let prize_msg = LexiWarsServerMessage::Prize { amount };
-                        broadcast_to_player(winner.id, &prize_msg, &connections, &redis).await;
+                        broadcast_to_player(winner.id, lobby_id, &prize_msg, &connections, &redis)
+                            .await;
                     }
 
                     // Move winner to eliminated_players
@@ -472,7 +482,8 @@ pub async fn handle_incoming_messages(
                             let pong = now.saturating_sub(ts);
 
                             let msg = LexiWarsServerMessage::Pong { ts, pong };
-                            broadcast_to_player(player.id, &msg, connections, &redis).await
+                            broadcast_to_player(player.id, lobby_id, &msg, connections, &redis)
+                                .await
                         }
                         LexiWarsClientMessage::WordEntry { word } => {
                             // Check if game has started before processing word entries
@@ -516,6 +527,7 @@ pub async fn handle_incoming_messages(
                                     };
                                     broadcast_to_player(
                                         player.id,
+                                        lobby_id,
                                         &used_word_msg,
                                         connections,
                                         &redis,
@@ -543,6 +555,7 @@ pub async fn handle_incoming_messages(
                                                 LexiWarsServerMessage::Validate { msg: reason };
                                             broadcast_to_player(
                                                 player.id,
+                                                lobby_id,
                                                 &validation_msg,
                                                 connections,
                                                 &redis,
@@ -564,6 +577,7 @@ pub async fn handle_incoming_messages(
                                             LexiWarsServerMessage::Validate { msg: reason };
                                         broadcast_to_player(
                                             player.id,
+                                            lobby_id,
                                             &validation_msg,
                                             connections,
                                             &redis,
@@ -582,6 +596,7 @@ pub async fn handle_incoming_messages(
                                     };
                                     broadcast_to_player(
                                         player.id,
+                                        lobby_id,
                                         &validation_msg,
                                         connections,
                                         &redis,
@@ -678,12 +693,14 @@ pub async fn handle_incoming_messages(
                             ts: client_ts,
                             pong: pong_time,
                         };
-                        broadcast_to_player(player.id, &pong_msg, &connections, &redis).await;
+                        broadcast_to_player(player.id, lobby_id, &pong_msg, &connections, &redis)
+                            .await;
                     } else {
                         // For standard WebSocket pings without timestamp, use current time
                         let now = Utc::now().timestamp_millis() as u64;
                         let pong_msg = LexiWarsServerMessage::Pong { ts: now, pong: 0 };
-                        broadcast_to_player(player.id, &pong_msg, &connections, &redis).await;
+                        broadcast_to_player(player.id, lobby_id, &pong_msg, &connections, &redis)
+                            .await;
                     }
                 }
                 Message::Pong(_) => {
