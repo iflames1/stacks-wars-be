@@ -52,6 +52,14 @@ impl RedisKey {
         let id = Uuid::new_v4();
         format!("temp:inter:{id}")
     }
+
+    pub fn player_missed_msgs(lobby_id: KeyPart, player_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:missed_msgs:{player_id}")
+    }
+
+    pub fn player_missed_chat_msgs(lobby_id: KeyPart, player_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:missed_chat_msgs:{player_id}")
+    }
 }
 
 #[derive(Debug, Clone)]

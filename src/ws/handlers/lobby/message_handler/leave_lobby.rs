@@ -22,7 +22,7 @@ pub async fn leave_lobby(
 ) {
     if let Err(e) = patch::leave_lobby(lobby_id, player.id, redis.clone()).await {
         tracing::error!("Failed to leave lobby: {}", e);
-        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+        send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         tracing::info!("Player {} left lobby {}", player.wallet_address, lobby_id);
         let msg = LobbyServerMessage::PlayerUpdated { players };
@@ -34,7 +34,7 @@ pub async fn leave_lobby(
             redis.clone(),
         )
         .await;
-        send_to_player(player.id, &connections, &msg, redis).await;
+        send_to_player(player.id, lobby_id, &connections, &msg, redis).await;
 
         // add to idle
         mark_player_as_idle(lobby_id, player, join_requests, connections, redis).await;

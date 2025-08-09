@@ -300,7 +300,8 @@ async fn handle_lexi_wars_socket(
 ) {
     let (sender, receiver) = socket.split();
 
-    store_connection_and_send_queued_messages(player.id, sender, &connections, &redis).await;
+    store_connection_and_send_queued_messages(player.id, lobby_id, sender, &connections, &redis)
+        .await;
 
     setup_player_and_lobby(
         &player,
@@ -324,7 +325,7 @@ async fn handle_lexi_wars_socket(
                 let turn_msg = LexiWarsServerMessage::Turn {
                     current_turn: current_player.clone(),
                 };
-                broadcast_to_player(player.id, &turn_msg, &connections, &redis).await;
+                broadcast_to_player(player.id, lobby_id, &turn_msg, &connections, &redis).await;
             }
 
             // Send current rule
@@ -332,7 +333,7 @@ async fn handle_lexi_wars_socket(
                 let rule_msg = LexiWarsServerMessage::Rule {
                     rule: current_rule.clone(),
                 };
-                broadcast_to_player(player.id, &rule_msg, &connections, &redis).await;
+                broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
             }
 
             tracing::info!(

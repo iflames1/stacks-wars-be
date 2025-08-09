@@ -48,6 +48,7 @@ pub fn get_next_player_and_wrap(lobby: &mut LexiWars, current_id: Uuid) -> Optio
 
 pub async fn broadcast_to_player(
     target_player_id: Uuid,
+    lobby_id: Uuid,
     message: &LexiWarsServerMessage,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
@@ -75,7 +76,7 @@ pub async fn broadcast_to_player(
                 drop(connection_guard);
 
                 if let Err(queue_err) =
-                    queue_message_for_player(target_player_id, serialized, redis).await
+                    queue_message_for_player(target_player_id, lobby_id, serialized, redis).await
                 {
                     tracing::error!(
                         "Failed to queue message for player {}: {}",
@@ -87,7 +88,9 @@ pub async fn broadcast_to_player(
         }
     } else {
         if message.should_queue() {
-            if let Err(e) = queue_message_for_player(target_player_id, serialized, redis).await {
+            if let Err(e) =
+                queue_message_for_player(target_player_id, lobby_id, serialized, redis).await
+            {
                 tracing::error!(
                     "Failed to queue message for offline player {}: {}",
                     target_player_id,
@@ -129,8 +132,13 @@ pub async fn broadcast_to_lobby(
                 if message.should_queue() {
                     drop(sender);
 
-                    if let Err(queue_err) =
-                        queue_message_for_player(player.id, serialized.clone(), redis).await
+                    if let Err(queue_err) = queue_message_for_player(
+                        player.id,
+                        lobby.info.id,
+                        serialized.clone(),
+                        redis,
+                    )
+                    .await
                     {
                         tracing::error!(
                             "Failed to queue message for player {}: {}",
@@ -143,7 +151,9 @@ pub async fn broadcast_to_lobby(
         } else {
             // Player not connected, only queue if message should be queued
             if message.should_queue() {
-                if let Err(e) = queue_message_for_player(player.id, serialized.clone(), redis).await
+                if let Err(e) =
+                    queue_message_for_player(player.id, lobby.info.id, serialized.clone(), redis)
+                        .await
                 {
                     tracing::error!(
                         "Failed to queue message for offline player {}: {}",

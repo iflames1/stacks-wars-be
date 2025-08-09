@@ -23,7 +23,7 @@ pub async fn request_join(
                     player.wallet_address
                 );
                 let msg = LobbyServerMessage::Pending;
-                send_to_player(player.id, &connections, &msg, &redis).await;
+                send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
 
                 let msg = LobbyServerMessage::PendingPlayers { pending_players };
                 broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
@@ -33,6 +33,7 @@ pub async fn request_join(
             tracing::error!("Failed to mark user as pending: {}", e);
             send_error_to_player(
                 player.id,
+                lobby_id,
                 "Failed to send join request",
                 &connections,
                 &redis,

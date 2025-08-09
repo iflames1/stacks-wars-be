@@ -26,7 +26,8 @@ pub async fn join_lobby(
         if req.state == JoinState::Allowed {
             if let Err(e) = patch::join_lobby(lobby_id, player.id, tx_id, redis.clone()).await {
                 tracing::error!("Failed to join lobby: {}", e);
-                send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
+                send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
+                    .await;
             } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
                 tracing::info!(
                     "{} joined lobby {} successfully",
@@ -50,6 +51,7 @@ pub async fn join_lobby(
             );
             send_error_to_player(
                 player.id,
+                lobby_id,
                 "Join request has to be accpeted to join lobby",
                 &connections,
                 &redis,
