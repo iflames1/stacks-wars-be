@@ -6,17 +6,17 @@ use teloxide::{
     types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode},
 };
 
+use crate::models::game::GameType;
 use uuid::Uuid;
 
 pub struct BotNewLobbyPayload {
-    pub room_id: Uuid,
-    pub room_name: String,
+    pub lobby_id: Uuid,
+    pub lobby_name: String,
     pub description: Option<String>,
-    pub game_name: String,
-    pub game_image: String,
+    pub game: GameType,
     pub contract_address: Option<String>,
     pub entry_amount: Option<f64>,
-    pub creator_display_name: Option<String>,
+    pub creator_name: Option<String>,
     pub wallet_address: String,
 }
 
@@ -25,6 +25,24 @@ pub async fn broadcast_lobby_created(
     chat_id: i64,
     payload: BotNewLobbyPayload,
 ) -> Result<(), teloxide::RequestError> {
+    let wallet = payload.wallet_address;
+    let truncated_wallet = format!("{}...{}", &wallet[0..4], &wallet[wallet.len() - 4..]);
+
+    let lobby_name = format!("🏷 *Lobby Name:* {}\n", payload.lobby_name);
+
+    let game_name = format!("🎮 *Game:* {}\n", payload.game.name);
+
+    let creator = payload
+        .creator_name
+        .map(|name| format!("🧑‍🚀 *Creator:* {name} ({truncated_wallet})\n"))
+        .unwrap_or(format!("🧑‍🚀 *Creator:* {wallet}\n"));
+
+    let description = payload
+        .description
+        .as_ref()
+        .map(|desc| format!("📝 *Description:* {}\n", desc))
+        .unwrap_or_default();
+
     let contract_line = payload
         .contract_address
         .as_ref()
@@ -41,31 +59,21 @@ pub async fn broadcast_lobby_created(
         .map(|amount| format!("💵 *Entry Fee:* {} STX\n", amount))
         .unwrap_or_default();
 
-    let description = payload
-        .description
-        .as_ref()
-        .map(|desc| format!("📝 *Description:* {}\n", desc))
-        .unwrap_or_default();
-
-    let lobby_link = format!("https://stackswars.com/lobby/{}", payload.room_id);
+    let lobby_link = format!(
+        "\n🔗 *Link:* https://stackswars.com/lobby/{}",
+        payload.lobby_id
+    );
     let lobby_url: Url = Url::parse(&lobby_link).unwrap();
 
     let caption = format!(
         "🆕 *New Lobby Created*\n\n\
-        🏷 *Name:* {}\n\
-        🎮 *Game:* {}\n\
-        🧑‍🚀 *Creator:* {}\n\
-        {}{}{}\
-        \n🔗 *Link:* `{}`",
-        payload.room_name,
-        payload.game_name,
-        payload
-            .creator_display_name
-            .unwrap_or(payload.wallet_address.clone()),
-        description,
-        contract_line,
-        entry_fee_line,
-        lobby_link
+        {lobby_name}\
+        {game_name}\
+        {creator}\
+        {description}\
+        {contract_line}\
+        {entry_fee_line}\
+        {lobby_link}",
     );
 
     // Create keyboard with join button only
@@ -76,7 +84,7 @@ pub async fn broadcast_lobby_created(
 
     bot.send_photo(
         ChatId(chat_id),
-        InputFile::url(payload.game_image.parse().unwrap()),
+        InputFile::url(payload.game.image_url.parse().unwrap()),
     )
     .caption(caption)
     .parse_mode(ParseMode::MarkdownV2)

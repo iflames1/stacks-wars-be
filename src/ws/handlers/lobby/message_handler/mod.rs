@@ -1,7 +1,7 @@
 pub mod handler;
 pub mod join_lobby;
 pub mod kick_player;
-pub mod leave_room;
+pub mod leave_lobby;
 pub mod permit_join;
 pub mod ping;
 pub mod request_join;
@@ -12,7 +12,7 @@ pub use handler::broadcast_to_lobby;
 pub use handler::handle_incoming_messages;
 pub use join_lobby::join_lobby;
 pub use kick_player::kick_player;
-pub use leave_room::leave_room;
+pub use leave_lobby::leave_lobby;
 pub use permit_join::permit_join;
 pub use ping::ping;
 pub use request_join::request_join;

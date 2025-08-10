@@ -1,7 +1,10 @@
 use crate::{
-    db,
+    db::lobby::{
+        get::{get_lobby_info, get_lobby_players},
+        patch::{self, update_lobby_state},
+    },
     models::{
-        game::{GameState, Player, PlayerState},
+        game::{LobbyState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
@@ -11,27 +14,27 @@ use uuid::Uuid;
 
 pub async fn update_player_state(
     new_state: PlayerState,
-    room_id: Uuid,
+    lobby_id: Uuid,
     player: &Player,
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
 ) {
     if let Err(e) =
-        db::room::update_player_state(room_id, player.id, new_state.clone(), redis.clone()).await
+        patch::update_player_state(lobby_id, player.id, new_state.clone(), redis.clone()).await
     {
         tracing::error!("Failed to update state: {}", e);
-        send_error_to_player(player.id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = db::room::get_room_players(room_id, redis.clone()).await {
+        send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
+    } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         tracing::info!(
-            "Player {} updated state to {:?} in room {}",
+            "Player {} updated state to {:?} in lobby {}",
             player.wallet_address,
             new_state,
-            room_id
+            lobby_id
         );
         let msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(
-            room_id,
+            lobby_id,
             &msg,
             &connections,
             Some(&chat_connections),
@@ -40,16 +43,15 @@ pub async fn update_player_state(
         .await;
 
         if new_state == PlayerState::NotReady {
-            if let Ok(room_info) = db::room::get_room_info(room_id, redis.clone()).await {
-                if room_info.state == GameState::InProgress {
+            if let Ok(lobby_info) = get_lobby_info(lobby_id, redis.clone()).await {
+                if lobby_info.state == LobbyState::InProgress {
                     // revert game state to Waiting
-                    let _ = db::room::update_game_state(room_id, GameState::Waiting, redis.clone())
-                        .await;
-                    let msg = LobbyServerMessage::GameState {
-                        state: GameState::Waiting,
+                    let _ = update_lobby_state(lobby_id, LobbyState::Waiting, redis.clone()).await;
+                    let msg = LobbyServerMessage::LobbyState {
+                        state: LobbyState::Waiting,
                         ready_players: None,
                     };
-                    broadcast_to_lobby(room_id, &msg, &connections, None, redis.clone()).await;
+                    broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
                 }
             }
         }

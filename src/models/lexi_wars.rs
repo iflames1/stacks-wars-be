@@ -2,7 +2,7 @@ use crate::models::game::Player;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum LexiWarsClientMessage {
     WordEntry { word: String },
     Ping { ts: u64 },
@@ -15,20 +15,50 @@ pub struct PlayerStanding {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum LexiWarsServerMessage {
-    Turn { current_turn: Player },
-    Rule { rule: String },
-    Countdown { time: u64 },
-    Rank { rank: String },
-    Validate { msg: String },
-    WordEntry { word: String, sender: Player },
-    UsedWord { word: String },
+    #[serde(rename_all = "camelCase")]
+    Turn {
+        current_turn: Player,
+    },
+    Rule {
+        rule: String,
+    },
+    Countdown {
+        time: u64,
+    },
+    Rank {
+        rank: String,
+    },
+    Validate {
+        msg: String,
+    },
+    WordEntry {
+        word: String,
+        sender: Player,
+    },
+    UsedWord {
+        word: String,
+    },
     GameOver,
-    FinalStanding { standing: Vec<PlayerStanding> },
-    Prize { amount: f64 },
-    Pong { ts: u64, pong: u64 },
-    Start { time: u32, started: bool },
+    FinalStanding {
+        standing: Vec<PlayerStanding>,
+    },
+    Prize {
+        amount: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    WarsPoint {
+        wars_point: f64,
+    },
+    Pong {
+        ts: u64,
+        pong: u64,
+    },
+    Start {
+        time: u32,
+        started: bool,
+    },
     StartFailed,
     AlreadyStarted,
 }
@@ -51,6 +81,7 @@ impl LexiWarsServerMessage {
             LexiWarsServerMessage::GameOver => true,
             LexiWarsServerMessage::FinalStanding { .. } => true,
             LexiWarsServerMessage::Prize { .. } => true,
+            LexiWarsServerMessage::WarsPoint { .. } => true,
             LexiWarsServerMessage::Start { started: true, .. } => true, // Game actually started
             LexiWarsServerMessage::StartFailed => true,
             LexiWarsServerMessage::AlreadyStarted => true,

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::errors::AppError;
+use crate::models::redis::{KeyPart, RedisKey};
 use crate::state::ConnectionInfoMap;
 use crate::state::{ConnectionInfo, RedisClient};
 use uuid::Uuid;
@@ -11,6 +12,7 @@ use uuid::Uuid;
 // Redis message queue functions
 pub async fn queue_message_for_player(
     player_id: Uuid,
+    lobby_id: Uuid,
     message: String,
     redis: &RedisClient,
 ) -> Result<(), AppError> {
@@ -19,7 +21,7 @@ pub async fn queue_message_for_player(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("player_queue:{}", player_id);
+    let key = RedisKey::player_missed_msgs(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
 
     // Use Redis list to store messages with 2-minute TTL
     let _: () = redis::cmd("LPUSH")
@@ -43,6 +45,7 @@ pub async fn queue_message_for_player(
 
 pub async fn get_queued_messages_for_player(
     player_id: Uuid,
+    lobby_id: Uuid,
     redis: &RedisClient,
 ) -> Result<Vec<String>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -50,7 +53,7 @@ pub async fn get_queued_messages_for_player(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("player_queue:{}", player_id);
+    let key = RedisKey::player_missed_msgs(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
 
     // Get all messages and delete the key atomically
     let messages: Vec<String> = redis::cmd("LRANGE")
@@ -95,6 +98,8 @@ async fn store_connection(
 
 pub async fn store_connection_and_send_queued_messages(
     player_id: Uuid,
+    lobby_id: Uuid,
+
     sender: SplitSink<WebSocket, Message>,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
@@ -103,13 +108,14 @@ pub async fn store_connection_and_send_queued_messages(
     store_connection(player_id, sender, connections).await;
 
     // Check for queued messages and send them
-    match get_queued_messages_for_player(player_id, redis).await {
+    match get_queued_messages_for_player(player_id, lobby_id, redis).await {
         Ok(messages) => {
             if !messages.is_empty() {
                 tracing::info!(
-                    "Sending {} queued messages to player {}",
+                    "Sending {} queued messages to player {} in lobby {}",
                     messages.len(),
-                    player_id
+                    player_id,
+                    lobby_id
                 );
 
                 let conns = connections.lock().await;

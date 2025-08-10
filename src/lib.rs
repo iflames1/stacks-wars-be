@@ -10,9 +10,7 @@ pub mod ws;
 use axum::Router;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
-use state::{
-    AppState, ChatConnectionInfoMap, ChatHistories, ConnectionInfoMap, LobbyCountdowns, SharedRooms,
-};
+use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap, LexiWarsLobbies, LobbyCountdowns};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
@@ -37,22 +35,19 @@ pub async fn start_server() {
         panic!("Failed to initialize games: {}", e);
     }
 
-    let rooms: SharedRooms = Default::default();
+    let lexi_wars_lobbies: LexiWarsLobbies = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let chat_connections: ChatConnectionInfoMap = Default::default();
     let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
     let lobby_countdowns: LobbyCountdowns = Arc::new(Mutex::new(HashMap::new()));
-    let chat_histories: ChatHistories = Arc::new(Mutex::new(HashMap::new()));
-
     let state = AppState {
-        rooms,
+        lexi_wars_lobbies,
         connections,
         chat_connections,
         redis: redis_pool,
         lobby_join_requests,
         bot,
         lobby_countdowns,
-        chat_histories,
     };
 
     let app = Router::new()

@@ -1,22 +1,48 @@
 use redis::AsyncCommands;
 use uuid::Uuid;
 
-use crate::{errors::AppError, models::game::GameType, state::RedisClient};
+use crate::{
+    errors::AppError,
+    models::{
+        game::GameType,
+        redis::{KeyPart, RedisKey},
+    },
+    state::RedisClient,
+};
 
-pub async fn add_game(game: GameType, redis: RedisClient) -> Result<Uuid, AppError> {
+pub async fn create_game(
+    name: String,
+    description: String,
+    image_url: String,
+    tags: Option<Vec<String>>,
+    min_players: u8,
+    redis: RedisClient,
+) -> Result<Uuid, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let key = format!("game:{}:data", game.id);
-    let value = serde_json::to_string(&game)
-        .map_err(|_| AppError::Serialization("Failed to serialize game".to_string()))?;
+    let game_id = Uuid::new_v4();
+
+    let game = GameType {
+        id: game_id,
+        name,
+        description,
+        image_url,
+        tags,
+        min_players,
+        active_lobbies: 0,
+    };
+
+    let key = RedisKey::game(KeyPart::Id(game_id));
+    let hash = game.to_redis_hash();
+    let fields: Vec<(&str, &str)> = hash.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
 
     let _: () = conn
-        .set(key, value)
+        .hset_multiple(&key, &fields)
         .await
-        .map_err(|e| AppError::RedisCommandError(e.into()))?;
+        .map_err(AppError::RedisCommandError)?;
 
-    Ok(game.id)
+    Ok(game_id)
 }
