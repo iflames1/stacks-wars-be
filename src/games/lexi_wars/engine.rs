@@ -342,12 +342,12 @@ fn start_turn_timer(
     redis: RedisClient,
 ) {
     tokio::spawn(async move {
-        for i in (0..=30).rev() {
+        for i in (0..=15).rev() {
             {
                 let lobbies_guard = lobbies.lock().await;
                 if let Some(lobby) = lobbies_guard.get(&lobby_id) {
                     if lobby.current_turn_id != player_id {
-                        let countdown_msg = LexiWarsServerMessage::Countdown { time: 30 };
+                        let countdown_msg = LexiWarsServerMessage::Countdown { time: 15 };
                         broadcast_to_player(
                             player_id,
                             lobby_id,
