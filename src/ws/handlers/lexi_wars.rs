@@ -203,6 +203,23 @@ pub async fn lexi_wars_handler(
                                     .await;
                             }
                         }
+
+                        //let lobbies_guard = lexi_wars_lobbies.lock().await;
+                        //if let Some(lexi_wars_lobby) = lobbies_guard.get(&lobby_id) {
+                        //    if let Some(rank) = connecting_player.rank {
+                        //        let wars_point = calculate_wars_point(
+                        //            lexi_wars_lobby,
+                        //            rank,
+                        //            connecting_player.prize,
+                        //        );
+                        //        let wars_point_msg =
+                        //            LexiWarsServerMessage::WarsPoint { wars_point };
+                        //        let serialized = serde_json::to_string(&wars_point_msg).unwrap();
+                        //        let _ = socket
+                        //            .send(axum::extract::ws::Message::Text(serialized.into()))
+                        //            .await;
+                        //    }
+                        //}
                     }
                 }
 

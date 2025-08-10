@@ -145,7 +145,7 @@ pub struct Player {
     pub id: Uuid,
     pub wallet_address: String,
     pub state: PlayerState,
-    pub wars_point: u64,
+    pub wars_point: f64,
 
     pub username: Option<String>,
     pub display_name: Option<String>,
@@ -325,7 +325,7 @@ impl LobbyInfo {
         let placeholder_creator = User {
             id: creator_id,
             wallet_address: String::new(),
-            wars_point: 0,
+            wars_point: 0.0,
             username: None,
             display_name: None,
         };

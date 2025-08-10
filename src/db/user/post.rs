@@ -50,7 +50,7 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
             wars_point: user_data
                 .get("wars_point")
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(0),
+                .unwrap_or(0.0),
         };
 
         let token = generate_jwt(&user)?;
@@ -63,7 +63,7 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         wallet_address: wallet_address.clone(),
         display_name: None,
         username: None,
-        wars_point: 0, // Initialize with 0 wars points
+        wars_point: 0.0, // Initialize with 0 wars points
     };
 
     let user_key = RedisKey::user(KeyPart::Id(user.id));

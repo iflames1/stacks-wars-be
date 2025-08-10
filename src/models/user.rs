@@ -8,7 +8,7 @@ use crate::models::game::Player;
 pub struct User {
     pub id: Uuid,
     pub wallet_address: String,
-    pub wars_point: u64,
+    pub wars_point: f64,
 
     pub username: Option<String>,
     pub display_name: Option<String>,
