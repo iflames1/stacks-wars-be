@@ -8,7 +8,10 @@ use crate::{
     db::{
         chat::delete::delete_lobby_chat,
         lobby::{
-            patch::{update_lexi_wars_player, update_lobby_state},
+            patch::{
+                update_lobby_state, update_player_prize, update_player_rank,
+                update_player_used_words,
+            },
             put::update_connected_players,
         },
         user::patch::increase_wars_point,
@@ -87,6 +90,14 @@ async fn send_rank_prize_and_wars_point(
                 e
             );
         }
+    }
+
+    if let Err(e) = update_player_rank(lobby_id, player_id, rank, redis.clone()).await {
+        tracing::error!("Error updating player rank in Redis: {}", e);
+    }
+
+    if let Err(e) = update_player_prize(lobby_id, player_id, prize, redis.clone()).await {
+        tracing::error!("Error updating player prize in Redis: {}", e);
     }
 }
 
@@ -381,12 +392,6 @@ fn start_turn_timer(
 
                     let prize = get_prize(lobby, position);
 
-                    if let Some(amount) = prize {
-                        let prize_msg = LexiWarsServerMessage::Prize { amount };
-                        broadcast_to_player(player_id, lobby_id, &prize_msg, &connections, &redis)
-                            .await;
-                    }
-
                     send_rank_prize_and_wars_point(
                         player_id,
                         lobby_id,
@@ -400,11 +405,9 @@ fn start_turn_timer(
 
                     let player_used_words = lobby.used_words.remove(&player.id).unwrap_or_default();
 
-                    if let Err(e) = update_lexi_wars_player(
+                    if let Err(e) = update_player_used_words(
                         lobby_id,
                         player_id,
-                        position,
-                        prize,
                         player_used_words,
                         redis.clone(),
                     )
@@ -425,12 +428,6 @@ fn start_turn_timer(
                     let winner = lobby.connected_players.remove(0);
                     let prize = get_prize(lobby, 1);
 
-                    if let Some(amount) = prize {
-                        let prize_msg = LexiWarsServerMessage::Prize { amount };
-                        broadcast_to_player(winner.id, lobby_id, &prize_msg, &connections, &redis)
-                            .await;
-                    }
-
                     send_rank_prize_and_wars_point(
                         winner.id,
                         lobby_id,
@@ -444,17 +441,15 @@ fn start_turn_timer(
 
                     let player_used_words = lobby.used_words.remove(&winner.id).unwrap_or_default();
 
-                    if let Err(e) = update_lexi_wars_player(
+                    if let Err(e) = update_player_used_words(
                         lobby_id,
                         winner.id,
-                        1,
-                        prize,
                         player_used_words,
                         redis.clone(),
                     )
                     .await
                     {
-                        tracing::error!("Error updating player in Redis: {}", e);
+                        tracing::error!("Error updating player used words in Redis: {}", e);
                     }
 
                     // Move winner to eliminated_players

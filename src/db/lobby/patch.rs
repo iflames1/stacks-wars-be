@@ -348,10 +348,10 @@ pub async fn update_claim_state(
     Ok(())
 }
 
-pub async fn _update_player_prize(
+pub async fn update_player_prize(
     lobby_id: Uuid,
     player_id: Uuid,
-    prize: f64,
+    prize: Option<f64>,
     redis: RedisClient,
 ) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -374,14 +374,26 @@ pub async fn _update_player_prize(
 
     let player = Player::from_redis_hash(&map)?;
 
-    if player.prize == Some(prize) {
+    // Check if prize is already set to the same value
+    if player.prize == prize {
         return Ok(());
     }
 
-    let claim_json = serde_json::to_string(&ClaimState::NotClaimed)
-        .map_err(|e| AppError::Serialization(e.to_string()))?;
+    let mut updates = Vec::new();
 
-    let updates = vec![("prize", prize.to_string()), ("claim", claim_json)];
+    // Handle prize update
+    if let Some(amount) = prize {
+        updates.push(("prize", amount.to_string()));
+
+        // Set claim state to NotClaimed when prize is set
+        let claim_json = serde_json::to_string(&ClaimState::NotClaimed)
+            .map_err(|e| AppError::Serialization(e.to_string()))?;
+        updates.push(("claim", claim_json));
+    }
+
+    if updates.is_empty() {
+        return Ok(()); // No updates needed
+    }
 
     let hset_args: Vec<(&str, &str)> = updates.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
@@ -393,7 +405,90 @@ pub async fn _update_player_prize(
     Ok(())
 }
 
-pub async fn update_lexi_wars_player(
+pub async fn update_player_rank(
+    lobby_id: Uuid,
+    player_id: Uuid,
+    rank: usize,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
+
+    let map: HashMap<String, String> = conn
+        .hgetall(&player_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+    if map.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "Player {} not found in lobby {}",
+            player_id, lobby_id
+        )));
+    }
+
+    let player = Player::from_redis_hash(&map)?;
+
+    // Check if rank is already set to the same value
+    if player.rank == Some(rank) {
+        return Ok(());
+    }
+
+    // Update rank
+    let _: () = conn
+        .hset(&player_key, "rank", rank.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
+pub async fn update_player_used_words(
+    lobby_id: Uuid,
+    player_id: Uuid,
+    used_words: Vec<String>,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
+
+    let map: HashMap<String, String> = conn
+        .hgetall(&player_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+    if map.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "Player {} not found in lobby {}",
+            player_id, lobby_id
+        )));
+    }
+
+    let player = Player::from_redis_hash(&map)?;
+
+    // Check if used_words is already set to the same value
+    if player.used_words == Some(used_words.clone()) {
+        return Ok(());
+    }
+
+    // Update used_words
+    let used_words_json =
+        serde_json::to_string(&used_words).map_err(|e| AppError::Serialization(e.to_string()))?;
+
+    let _: () = conn
+        .hset(&player_key, "used_words", used_words_json)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
+pub async fn _update_lexi_wars_player(
     lobby_id: Uuid,
     player_id: Uuid,
     rank: usize,
