@@ -5,9 +5,12 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
 use crate::{
-    db::lobby::{
-        patch::{update_lexi_wars_player, update_lobby_state},
-        put::update_connected_players,
+    db::{
+        chat::delete::delete_lobby_chat,
+        lobby::{
+            patch::{update_lexi_wars_player, update_lobby_state},
+            put::update_connected_players,
+        },
     },
     games::lexi_wars::{
         rules::get_rule_by_index,
@@ -408,6 +411,11 @@ fn start_turn_timer(
                         update_lobby_state(lobby_id, LobbyState::Finished, redis.clone()).await
                     {
                         tracing::error!("Error updating game state in Redis: {}", e);
+                    }
+
+                    // Delete lobby chat history since game is finished
+                    if let Err(e) = delete_lobby_chat(lobby_id, &redis).await {
+                        tracing::error!("Failed to delete lobby chat history: {}", e);
                     }
 
                     // Close all player connections since the game has ended

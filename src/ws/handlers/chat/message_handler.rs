@@ -4,15 +4,13 @@ use futures::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 use crate::{
-    db::lobby::get::get_lobby_players,
+    db::{chat::post::store_chat_message, lobby::get::get_lobby_players},
     models::{
         chat::{ChatClientMessage, ChatMessage, ChatServerMessage},
         game::Player,
     },
     state::{ChatConnectionInfoMap, RedisClient},
-    ws::handlers::chat::utils::{
-        queue_chat_message_for_player, send_chat_message_to_player, store_chat_message_in_redis,
-    },
+    ws::handlers::chat::utils::{queue_chat_message_for_player, send_chat_message_to_player},
 };
 
 pub async fn handle_incoming_chat_messages(
@@ -97,8 +95,7 @@ pub async fn handle_incoming_chat_messages(
 
                                 // Store in Redis chat history
                                 if let Err(e) =
-                                    store_chat_message_in_redis(lobby_id, &chat_message, &redis)
-                                        .await
+                                    store_chat_message(lobby_id, &chat_message, &redis).await
                                 {
                                     tracing::error!("Failed to store chat message in Redis: {}", e);
                                 }

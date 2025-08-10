@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 
 use crate::{
     db::{
+        chat::get::get_chat_history,
         lobby::get::{get_lobby_info, get_lobby_players},
         user::get::get_user_by_id,
     },
@@ -114,7 +115,7 @@ async fn handle_chat_socket(
 
     // If player is a lobby member, send chat history from Redis
     if is_lobby_member {
-        match get_chat_history_from_redis(lobby_id, &redis).await {
+        match get_chat_history(lobby_id, &redis).await {
             Ok(chat_history) => {
                 if !chat_history.is_empty() {
                     let history_msg = ChatServerMessage::ChatHistory {

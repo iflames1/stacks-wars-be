@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        game::patch::update_game_active_lobby, tx::validate_payment_tx, user::get::get_user_by_id,
+        chat::delete::delete_lobby_chat, game::patch::update_game_active_lobby,
+        tx::validate_payment_tx, user::get::get_user_by_id,
     },
     errors::AppError,
     models::{
@@ -252,6 +253,16 @@ pub async fn update_lobby_state(
         && old_state == LobbyState::Finished
     {
         update_game_active_lobby(game_id, true, redis.clone()).await?;
+    }
+
+    // clean up chat history if transitioning to Finished
+    if new_state == LobbyState::Finished {
+        if let Err(e) = delete_lobby_chat(lobby_id, &redis).await {
+            tracing::error!(
+                "Failed to delete lobby chat history when setting state to Finished: {}",
+                e
+            );
+        }
     }
 
     Ok(())
