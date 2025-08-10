@@ -6,6 +6,7 @@ use axum::{
 use crate::{
     http::handlers::{
         game::{create_game_handler, get_all_games_handler, get_game_handler},
+        leaderboard::get_leaderboard_handler,
         lobby::{
             create_lobby_handler, get_all_lobbies_extended_handler, get_all_lobbies_info_handler,
             get_lobbies_by_game_id_handler, get_lobby_extended_handler, get_lobby_info_handler,
@@ -54,5 +55,6 @@ pub fn create_http_routes(state: AppState) -> Router {
             "/lobby/{lobby_id}/claim-state",
             patch(update_claim_state_handler),
         )
+        .route("/leaderboard", get(get_leaderboard_handler))
         .with_state(state)
 }
