@@ -136,18 +136,16 @@ async fn calculate_pnl(user_id: Uuid, redis: RedisClient) -> Result<f64, AppErro
             if let Ok(prize) = prize_str.parse::<f64>() {
                 has_any_prize = true;
 
-                // Extract lobby_id from key (lobbies:{lobby_id}:player:{user_id})
-                if let Some(lobby_id_str) = extract_lobby_id_from_player_key(&key) {
-                    if let Ok(lobby_id) = Uuid::parse_str(&lobby_id_str) {
-                        // Get lobby info to get entry_amount
-                        match get_lobby_info(lobby_id, redis.clone()).await {
-                            Ok(lobby_info) => {
-                                let entry_amount = lobby_info.entry_amount.unwrap_or(0.0);
-                                total_pnl += prize - entry_amount;
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to get lobby info for {}: {}", lobby_id, e);
-                            }
+                // Use centralized key parsing
+                if let Some(lobby_id) = RedisKey::extract_lobby_id_from_player_key(&key) {
+                    // Get lobby info to get entry_amount
+                    match get_lobby_info(lobby_id, redis.clone()).await {
+                        Ok(lobby_info) => {
+                            let entry_amount = lobby_info.entry_amount.unwrap_or(0.0);
+                            total_pnl += prize - entry_amount;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to get lobby info for {}: {}", lobby_id, e);
                         }
                     }
                 }
@@ -160,15 +158,5 @@ async fn calculate_pnl(user_id: Uuid, redis: RedisClient) -> Result<f64, AppErro
         Ok(0.0)
     } else {
         Ok(total_pnl)
-    }
-}
-
-fn extract_lobby_id_from_player_key(key: &str) -> Option<String> {
-    // Parse "lobbies:{lobby_id}:player:{user_id}" to extract lobby_id
-    let parts: Vec<&str> = key.split(':').collect();
-    if parts.len() >= 2 && parts[0] == "lobbies" {
-        Some(parts[1].to_string())
-    } else {
-        None
     }
 }

@@ -87,12 +87,9 @@ pub async fn get_all_users(redis: RedisClient) -> Result<Vec<User>, AppError> {
     let mut users = Vec::new();
 
     for key in user_keys {
-        // Extract user ID from key (users:{uuid})
-        if let Some(user_id_str) = key.strip_prefix("users:") {
-            if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                if let Ok(user) = get_user_by_id(user_id, redis.clone()).await {
-                    users.push(user);
-                }
+        if let Some(user_id) = RedisKey::extract_user_id_from_user_key(&key) {
+            if let Ok(user) = get_user_by_id(user_id, redis.clone()).await {
+                users.push(user);
             }
         }
     }
