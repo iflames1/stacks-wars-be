@@ -116,6 +116,13 @@ pub enum LobbyServerMessage {
         ts: u64,
         pong: u64,
     },
+
+    #[serde(rename_all = "camelCase")]
+    WarsPointDeduction {
+        amount: f64,
+        new_total: f64,
+        reason: String,
+    },
 }
 
 impl LobbyServerMessage {
@@ -137,6 +144,7 @@ impl LobbyServerMessage {
             LobbyServerMessage::NotifyKicked => true,
             LobbyServerMessage::PlayerUpdated { .. } => true,
             LobbyServerMessage::Pending { .. } => true,
+            LobbyServerMessage::WarsPointDeduction { .. } => true,
         }
     }
 }
