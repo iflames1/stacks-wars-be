@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     errors::AppError,
     models::{
-        chat::{ChatMessage, ChatServerMessage},
+        chat::ChatServerMessage,
         redis::{KeyPart, RedisKey},
     },
     state::{ChatConnectionInfo, ChatConnectionInfoMap, RedisClient},

@@ -112,14 +112,14 @@ pub async fn increase_wars_point(
 
     let user_key = RedisKey::user(KeyPart::Id(user_id));
     let new_total: f64 = conn
-        .hincr(&user_key, "wars_point", amount as f64)
+        .hincr(&user_key, "wars_point", amount)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    Ok(new_total.max(0.0) as f64)
+    Ok(new_total)
 }
 
-pub async fn _decrease_wars_point(
+pub async fn decrease_wars_point(
     user_id: Uuid,
     amount: f64,
     redis: RedisClient,
@@ -130,25 +130,12 @@ pub async fn _decrease_wars_point(
     })?;
 
     let user_key = RedisKey::user(KeyPart::Id(user_id));
-    let current: f64 = conn
-        .hget::<_, _, Option<f64>>(&user_key, "wars_point")
-        .await
-        .map_err(AppError::RedisCommandError)?
-        .unwrap_or(0.0);
 
-    let new_total = if current <= 0.0 || current < amount as f64 {
-        let _: () = conn
-            .hset(&user_key, "wars_point", 0)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-        0.0
-    } else {
-        let result: f64 = conn
-            .hincr(&user_key, "wars_point", -(amount as f64))
-            .await
-            .map_err(AppError::RedisCommandError)?;
-        result.max(0.0) as f64
-    };
+    // Simplified: just subtract the amount, allow negative values
+    let new_total: f64 = conn
+        .hincr(&user_key, "wars_point", -amount)
+        .await
+        .map_err(AppError::RedisCommandError)?;
 
     Ok(new_total)
 }
