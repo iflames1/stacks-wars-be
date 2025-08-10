@@ -47,6 +47,10 @@ pub enum LexiWarsServerMessage {
     Prize {
         amount: f64,
     },
+    #[serde(rename_all = "camelCase")]
+    WarsPoint {
+        wars_point: f64,
+    },
     Pong {
         ts: u64,
         pong: u64,
@@ -77,6 +81,7 @@ impl LexiWarsServerMessage {
             LexiWarsServerMessage::GameOver => true,
             LexiWarsServerMessage::FinalStanding { .. } => true,
             LexiWarsServerMessage::Prize { .. } => true,
+            LexiWarsServerMessage::WarsPoint { .. } => true,
             LexiWarsServerMessage::Start { started: true, .. } => true, // Game actually started
             LexiWarsServerMessage::StartFailed => true,
             LexiWarsServerMessage::AlreadyStarted => true,

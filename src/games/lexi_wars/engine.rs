@@ -11,6 +11,7 @@ use crate::{
             patch::{update_lexi_wars_player, update_lobby_state},
             put::update_connected_players,
         },
+        user::patch::increase_wars_point,
     },
     games::lexi_wars::{
         rules::get_rule_by_index,
@@ -26,6 +27,68 @@ use crate::{
     state::{ConnectionInfoMap, LexiWarsLobbies, RedisClient},
 };
 use uuid::Uuid;
+
+pub fn calculate_wars_point(lobby: &LexiWars, rank: usize, prize: Option<f64>) -> f64 {
+    let base_point = (lobby.connected_players_count - rank + 1) * 2;
+    let mut total_point = base_point as f64;
+
+    // Add pool bonus if there's a pool (prize and entry amount exist)
+    if let (Some(prize_amount), Some(entry_amount)) = (prize, lobby.info.entry_amount) {
+        let pool_bonus =
+            (prize_amount / lobby.connected_players_count as f64) + (entry_amount / 5.0);
+        total_point += pool_bonus;
+    }
+
+    // Cap at 50 points maximum
+    total_point.min(50.0)
+}
+
+async fn send_rank_prize_and_wars_point(
+    player_id: Uuid,
+    lobby_id: Uuid,
+    rank: usize,
+    prize: Option<f64>,
+    lobby: &LexiWars,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let rank_msg = LexiWarsServerMessage::Rank {
+        rank: rank.to_string(),
+    };
+    broadcast_to_player(player_id, lobby_id, &rank_msg, connections, redis).await;
+
+    // Send prize if applicable
+    if let Some(amount) = prize {
+        let prize_msg = LexiWarsServerMessage::Prize { amount };
+        broadcast_to_player(player_id, lobby_id, &prize_msg, connections, redis).await;
+    }
+
+    // Calculate and send wars point
+    let wars_point = calculate_wars_point(lobby, rank, prize);
+
+    // Update wars point in database
+    match increase_wars_point(player_id, wars_point, redis.clone()).await {
+        Ok(new_total) => {
+            let wars_point_msg = LexiWarsServerMessage::WarsPoint { wars_point };
+            broadcast_to_player(player_id, lobby_id, &wars_point_msg, connections, redis).await;
+
+            tracing::info!(
+                "Player {} earned {} wars points (rank: {}, new total: {})",
+                player_id,
+                wars_point,
+                rank,
+                new_total
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to update wars point for player {}: {}",
+                player_id,
+                e
+            );
+        }
+    }
+}
 
 fn get_prize(lobby: &LexiWars, position: usize) -> Option<f64> {
     if lobby.info.contract_address.is_none() || lobby.info.entry_amount.is_none() {
@@ -316,14 +379,26 @@ fn start_turn_timer(
 
                     let position = lobby.connected_players.len() + 1;
 
-                    let rank_msg = LexiWarsServerMessage::Rank {
-                        rank: position.to_string(),
-                    };
-                    broadcast_to_player(player_id, lobby_id, &rank_msg, &connections, &redis).await;
+                    let prize = get_prize(lobby, position);
+
+                    if let Some(amount) = prize {
+                        let prize_msg = LexiWarsServerMessage::Prize { amount };
+                        broadcast_to_player(player_id, lobby_id, &prize_msg, &connections, &redis)
+                            .await;
+                    }
+
+                    send_rank_prize_and_wars_point(
+                        player_id,
+                        lobby_id,
+                        position,
+                        prize,
+                        lobby,
+                        &connections,
+                        &redis,
+                    )
+                    .await;
 
                     let player_used_words = lobby.used_words.remove(&player.id).unwrap_or_default();
-
-                    let prize = get_prize(lobby, position);
 
                     if let Err(e) = update_lexi_wars_player(
                         lobby_id,
@@ -337,12 +412,6 @@ fn start_turn_timer(
                     {
                         tracing::error!("Error updating player in Redis: {}", e);
                     }
-
-                    if let Some(amount) = prize {
-                        let prize_msg = LexiWarsServerMessage::Prize { amount };
-                        broadcast_to_player(player_id, lobby_id, &prize_msg, &connections, &redis)
-                            .await;
-                    }
                 }
 
                 // check game over
@@ -354,15 +423,26 @@ fn start_turn_timer(
                     }
 
                     let winner = lobby.connected_players.remove(0);
+                    let prize = get_prize(lobby, 1);
 
-                    let rank_msg = LexiWarsServerMessage::Rank {
-                        rank: "1".to_string(),
-                    };
-                    broadcast_to_player(winner.id, lobby_id, &rank_msg, &connections, &redis).await;
+                    if let Some(amount) = prize {
+                        let prize_msg = LexiWarsServerMessage::Prize { amount };
+                        broadcast_to_player(winner.id, lobby_id, &prize_msg, &connections, &redis)
+                            .await;
+                    }
+
+                    send_rank_prize_and_wars_point(
+                        winner.id,
+                        lobby_id,
+                        1,
+                        prize,
+                        lobby,
+                        &connections,
+                        &redis,
+                    )
+                    .await;
 
                     let player_used_words = lobby.used_words.remove(&winner.id).unwrap_or_default();
-
-                    let prize = get_prize(lobby, 1);
 
                     if let Err(e) = update_lexi_wars_player(
                         lobby_id,
@@ -375,12 +455,6 @@ fn start_turn_timer(
                     .await
                     {
                         tracing::error!("Error updating player in Redis: {}", e);
-                    }
-
-                    if let Some(amount) = prize {
-                        let prize_msg = LexiWarsServerMessage::Prize { amount };
-                        broadcast_to_player(winner.id, lobby_id, &prize_msg, &connections, &redis)
-                            .await;
                     }
 
                     // Move winner to eliminated_players

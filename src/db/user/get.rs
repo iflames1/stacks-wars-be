@@ -36,8 +36,8 @@ pub async fn get_user_by_id(user_id: Uuid, redis: RedisClient) -> Result<User, A
         display_name: data.get("display_name").cloned(),
         wars_point: data
             .get("wars_point")
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(0),
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0),
         username: data.get("username").cloned(),
     };
 
