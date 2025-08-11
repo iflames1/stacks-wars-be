@@ -385,6 +385,7 @@ pub async fn update_claim_state_handler(
 
 #[derive(Deserialize)]
 pub struct PlayerLobbyQuery {
+    pub lobby_state: Option<String>,
     pub claim_state: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,
@@ -400,15 +401,23 @@ pub async fn get_player_lobbies_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
     let claim_filter = parse_claim_state(query.claim_state);
+    let lobby_filters = parse_lobby_states(query.lobby_state);
     let page = query.page.unwrap_or(1);
     let limit = query.limit.unwrap_or(10).min(100); // Cap at 100
 
-    let lobbies = get_player_lobbies(user_id, claim_filter, page, limit, state.redis)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get player lobbies for {}: {}", user_id, e);
-            e.to_response()
-        })?;
+    let lobbies = get_player_lobbies(
+        user_id,
+        claim_filter,
+        lobby_filters,
+        page,
+        limit,
+        state.redis,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to get player lobbies for {}: {}", user_id, e);
+        e.to_response()
+    })?;
 
     Ok(Json(lobbies))
 }

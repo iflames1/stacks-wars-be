@@ -405,6 +405,7 @@ pub async fn get_all_lobbies_extended(
 pub async fn get_player_lobbies(
     user_id: Uuid,
     claim_filter: Option<ClaimState>,
+    lobby_filters: Option<Vec<LobbyState>>,
     page: u32,
     limit: u32,
     redis: RedisClient,
@@ -444,19 +445,19 @@ pub async fn get_player_lobbies(
         if let Ok(player) = Player::from_redis_hash(player_data) {
             // Skip lobbies without prizes when filtering by claim state
             if claim_filter.is_some() && player.prize.is_none() {
-                continue; // No prize = no claim state relevant
+                continue;
             }
 
             // Apply claim filter if specified
-            let passes_filter = match (&claim_filter, &player.claim) {
+            let passes_claim_filter = match (&claim_filter, &player.claim) {
                 (Some(ClaimState::NotClaimed), Some(ClaimState::NotClaimed)) => true,
-                (Some(ClaimState::NotClaimed), None) => player.prize.is_some(), // Only include if has prize
+                (Some(ClaimState::NotClaimed), None) => player.prize.is_some(),
                 (Some(ClaimState::Claimed { .. }), Some(ClaimState::Claimed { .. })) => true,
-                (None, _) => true, // No filter = include all
+                (None, _) => true,
                 _ => false,
             };
 
-            if passes_filter {
+            if passes_claim_filter {
                 if let Some(lobby_id) = RedisKey::extract_lobby_id_from_player_key(key) {
                     filtered_data.push((lobby_id, player.prize, player.rank, player.claim));
                 }
@@ -491,14 +492,22 @@ pub async fn get_player_lobbies(
         if let Ok((partial_lobby, creator_id, game_id)) =
             LobbyInfo::from_redis_hash_partial(lobby_data)
         {
-            lobbies_with_data.push((
-                partial_lobby,
-                creator_id,
-                game_id,
-                *prize,
-                *rank,
-                claim.clone(),
-            ));
+            // Apply lobby state filter here
+            let passes_lobby_filter = match &lobby_filters {
+                Some(states) => states.contains(&partial_lobby.state),
+                None => true,
+            };
+
+            if passes_lobby_filter {
+                lobbies_with_data.push((
+                    partial_lobby,
+                    creator_id,
+                    game_id,
+                    *prize,
+                    *rank,
+                    claim.clone(),
+                ));
+            }
         }
     }
 
