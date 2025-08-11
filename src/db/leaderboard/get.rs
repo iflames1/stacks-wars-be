@@ -1,5 +1,8 @@
 use crate::{
-    db::{lobby::get::get_lobby_info, user::get::get_all_users},
+    db::{
+        lobby::get::get_lobby_info,
+        user::get::{get_all_users, get_user_by_id},
+    },
     errors::AppError,
     models::{
         leaderboard::LeaderBoard,
@@ -63,6 +66,44 @@ pub async fn get_leaderboard(redis: RedisClient) -> Result<Vec<LeaderBoard>, App
     }
 
     Ok(leaderboards)
+}
+
+pub async fn get_user_stat(user_id: Uuid, redis: RedisClient) -> Result<LeaderBoard, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    // Get the specific user
+    let user = get_user_by_id(user_id, redis.clone()).await?;
+
+    // Calculate stats for this user
+    let (total_matches, total_wins) = calculate_match_stats(user.id, &mut conn).await?;
+    let win_rate = if total_matches > 0 {
+        (total_wins as f64 / total_matches as f64) * 100.0
+    } else {
+        0.0
+    };
+    let pnl = calculate_pnl(user.id, redis.clone()).await?;
+
+    // To get the rank, we need to get all users and sort them
+    let all_leaderboards = get_leaderboard(redis.clone()).await?;
+
+    // Find this user's rank in the global leaderboard
+    let rank = all_leaderboards
+        .iter()
+        .find(|lb| lb.user.id == user_id)
+        .map(|lb| lb.rank)
+        .unwrap_or(0); // If user not found, rank is 0
+
+    Ok(LeaderBoard {
+        user,
+        win_rate,
+        rank,
+        total_match: total_matches,
+        total_wins,
+        pnl,
+    })
 }
 
 async fn calculate_match_stats(
