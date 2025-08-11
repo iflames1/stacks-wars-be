@@ -139,6 +139,24 @@ pub enum ClaimState {
     NotClaimed,
 }
 
+impl ClaimState {
+    pub fn matches_filter(&self, filter: &ClaimState) -> bool {
+        match (self, filter) {
+            (ClaimState::NotClaimed, ClaimState::NotClaimed) => true,
+            (ClaimState::Claimed { .. }, ClaimState::Claimed { .. }) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_claimed(&self) -> bool {
+        matches!(self, ClaimState::Claimed { .. })
+    }
+
+    pub fn is_not_claimed(&self) -> bool {
+        matches!(self, ClaimState::NotClaimed)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Player {

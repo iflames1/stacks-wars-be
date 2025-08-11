@@ -11,7 +11,7 @@ use crate::{
     db::lobby::{
         get::{
             get_all_lobbies_extended, get_all_lobbies_info, get_lobbies_by_game_id,
-            get_lobby_extended, get_lobby_info, get_lobby_players,
+            get_lobby_extended, get_lobby_info, get_lobby_players, get_player_lobbies,
         },
         patch::{
             join_lobby, leave_lobby, update_claim_state, update_lobby_state, update_player_state,
@@ -381,4 +381,47 @@ pub async fn update_claim_state_handler(
 
     tracing::info!("Claim state updated for lobby {lobby_id}");
     Ok(Json("success"))
+}
+
+#[derive(Deserialize)]
+pub struct PlayerLobbyQuery {
+    pub claim_state: Option<String>,
+    pub page: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+pub async fn get_player_lobbies_handler(
+    AuthClaims(claims): AuthClaims,
+    Query(query): Query<PlayerLobbyQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
+        tracing::error!("Unauthorized access attempt");
+        AppError::Unauthorized("Invalid user ID in token".into()).to_response()
+    })?;
+    let claim_filter = parse_claim_state(query.claim_state);
+    let page = query.page.unwrap_or(1);
+    let limit = query.limit.unwrap_or(10).min(100); // Cap at 100
+
+    let lobbies = get_player_lobbies(user_id, claim_filter, page, limit, state.redis)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get player lobbies for {}: {}", user_id, e);
+            e.to_response()
+        })?;
+
+    Ok(Json(lobbies))
+}
+
+fn parse_claim_state(claim_param: Option<String>) -> Option<ClaimState> {
+    claim_param.and_then(|s| match s.to_lowercase().as_str() {
+        "claimed" => Some(ClaimState::Claimed {
+            tx_id: String::new(),
+        }), // We'll match any claimed state
+        "notclaimed" | "not_claimed" => Some(ClaimState::NotClaimed),
+        other => {
+            tracing::warn!("Invalid claim_state filter: {}", other);
+            None
+        }
+    })
 }

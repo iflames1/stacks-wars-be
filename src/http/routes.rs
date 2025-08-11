@@ -10,8 +10,9 @@ use crate::{
         lobby::{
             create_lobby_handler, get_all_lobbies_extended_handler, get_all_lobbies_info_handler,
             get_lobbies_by_game_id_handler, get_lobby_extended_handler, get_lobby_info_handler,
-            get_players_handler, join_lobby_handler, kick_player_handler, leave_lobby_handler,
-            update_claim_state_handler, update_lobby_state_handler, update_player_state_handler,
+            get_player_lobbies_handler, get_players_handler, join_lobby_handler,
+            kick_player_handler, leave_lobby_handler, update_claim_state_handler,
+            update_lobby_state_handler, update_player_state_handler,
         },
         user::{
             create_user_handler, get_user_handler, update_display_name_handler,
@@ -28,6 +29,7 @@ pub fn create_http_routes(state: AppState) -> Router {
         .route("/lobby", post(create_lobby_handler))
         .route("/user/stat", get(get_user_stat_handler))
         .route("/user/{user_id}", get(get_user_handler))
+        .route("/user/lobbies", get(get_player_lobbies_handler))
         .route("/game", get(get_all_games_handler))
         .route("/game/{game_id}", get(get_game_handler))
         .route(
