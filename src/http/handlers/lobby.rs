@@ -21,7 +21,7 @@ use crate::{
     errors::AppError,
     models::game::{
         ClaimState, LobbyExtended, LobbyInfo, LobbyPoolInput, LobbyQuery, LobbyState, Player,
-        PlayerQuery, PlayerState, parse_lobby_states, parse_player_state,
+        PlayerLobbyInfo, PlayerQuery, PlayerState, parse_lobby_states, parse_player_state,
     },
     state::AppState,
 };
@@ -394,7 +394,7 @@ pub async fn get_player_lobbies_handler(
     AuthClaims(claims): AuthClaims,
     Query(query): Query<PlayerLobbyQuery>,
     State(state): State<AppState>,
-) -> Result<Json<Vec<LobbyInfo>>, (StatusCode, String)> {
+) -> Result<Json<Vec<PlayerLobbyInfo>>, (StatusCode, String)> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
         tracing::error!("Unauthorized access attempt");
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()

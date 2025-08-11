@@ -282,6 +282,16 @@ impl FromStr for LobbyState {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct PlayerLobbyInfo {
+    #[serde(flatten)]
+    pub lobby: LobbyInfo,
+    pub prize_amount: Option<f64>,
+    pub rank: Option<usize>,
+    pub claim_state: Option<ClaimState>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct LobbyInfo {
     pub id: Uuid,
     pub name: String,
