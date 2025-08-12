@@ -161,94 +161,120 @@ impl ClaimState {
 #[serde(rename_all = "camelCase")]
 pub struct Player {
     pub id: Uuid,
-    pub wallet_address: String,
     pub state: PlayerState,
-    pub wars_point: f64,
 
-    pub username: Option<String>,
-    pub display_name: Option<String>,
+    // Game-specific fields only
     pub rank: Option<usize>,
     pub used_words: Option<Vec<String>>,
     pub tx_id: Option<String>,
     pub claim: Option<ClaimState>,
     pub prize: Option<f64>,
+
+    // Hydrated user data (not stored in Redis)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<User>,
 }
 
 impl Player {
     pub fn to_redis_hash(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
         map.insert("id".into(), self.id.to_string());
-        map.insert("wallet_address".into(), self.wallet_address.clone());
         map.insert("state".into(), format!("{:?}", self.state));
-        map.insert("wars_point".into(), self.wars_point.to_string());
-        if let Some(ref username) = self.username {
-            map.insert("username".into(), username.clone());
-        }
-        if let Some(ref display_name) = self.display_name {
-            map.insert("display_name".into(), display_name.clone());
+
+        if let Some(ref rank) = self.rank {
+            map.insert("rank".into(), rank.to_string());
         }
         if let Some(ref used_words) = self.used_words {
-            map.insert(
-                "used_words".into(),
-                serde_json::to_string(used_words).unwrap(),
-            );
-        }
-        if let Some(rank) = self.rank {
-            map.insert("rank".into(), rank.to_string());
+            if let Ok(json) = serde_json::to_string(used_words) {
+                map.insert("used_words".into(), json);
+            }
         }
         if let Some(ref tx_id) = self.tx_id {
             map.insert("tx_id".into(), tx_id.clone());
         }
-        if let Some(prize) = self.prize {
+        if let Some(ref claim) = self.claim {
+            if let Ok(json) = serde_json::to_string(claim) {
+                map.insert("claim".into(), json);
+            }
+        }
+        if let Some(ref prize) = self.prize {
             map.insert("prize".into(), prize.to_string());
         }
-        if let Some(ref claim) = self.claim {
-            map.insert("claim".into(), serde_json::to_string(claim).unwrap());
-        }
+
         map
     }
 
-    pub fn from_redis_hash(map: &HashMap<String, String>) -> Result<Self, AppError> {
-        Ok(Self {
-            id: map
-                .get("id")
-                .ok_or_else(|| AppError::Deserialization("Missing id".into()))?
-                .parse()
-                .map_err(|_| AppError::Deserialization("Invalid UUID for id".into()))?,
+    pub fn from_redis_hash(data: &HashMap<String, String>) -> Result<Self, AppError> {
+        let id = data
+            .get("id")
+            .ok_or_else(|| AppError::Deserialization("Missing player id".into()))?
+            .parse::<Uuid>()
+            .map_err(|e| AppError::Deserialization(format!("Invalid player id: {}", e)))?;
 
-            wallet_address: map
-                .get("wallet_address")
-                .ok_or_else(|| AppError::Deserialization("Missing wallet_address".into()))?
-                .clone(),
+        let state = data
+            .get("state")
+            .ok_or_else(|| AppError::Deserialization("Missing player state".into()))?
+            .parse::<PlayerState>()
+            .map_err(|e| AppError::Deserialization(format!("Invalid player state: {}", e)))?;
 
-            state: map
-                .get("state")
-                .ok_or_else(|| AppError::Deserialization("Missing state".into()))?
-                .parse::<PlayerState>()
-                .map_err(|_| AppError::Deserialization("Invalid PlayerState".into()))?,
+        let rank = data.get("rank").and_then(|v| v.parse::<usize>().ok());
 
-            wars_point: map
-                .get("wars_point")
-                .ok_or_else(|| AppError::Deserialization("Missing wars_point".into()))?
-                .parse()
-                .map_err(|_| AppError::Deserialization("Invalid wars_point".into()))?,
+        let used_words = data
+            .get("used_words")
+            .and_then(|v| serde_json::from_str::<Vec<String>>(v).ok());
 
-            username: map.get("username").cloned(),
-            display_name: map.get("display_name").cloned(),
+        let tx_id = data.get("tx_id").cloned();
 
-            rank: map.get("rank").and_then(|s| s.parse().ok()),
-            used_words: map
-                .get("used_words")
-                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok()),
+        let claim = data
+            .get("claim")
+            .and_then(|v| serde_json::from_str::<ClaimState>(v).ok());
 
-            tx_id: map.get("tx_id").cloned(),
+        let prize = data.get("prize").and_then(|v| v.parse::<f64>().ok());
 
-            claim: map
-                .get("claim")
-                .and_then(|s| serde_json::from_str::<ClaimState>(s).ok()),
-
-            prize: map.get("prize").and_then(|s| s.parse().ok()),
+        Ok(Player {
+            id,
+            state,
+            rank,
+            used_words,
+            tx_id,
+            claim,
+            prize,
+            user: None, // Will be hydrated separately
         })
+    }
+
+    // Helper to create a new player with minimal data
+    pub fn new(user_id: Uuid, tx_id: Option<String>) -> Self {
+        Player {
+            id: user_id,
+            state: PlayerState::Ready,
+            rank: None,
+            used_words: None,
+            tx_id,
+            claim: None,
+            prize: None,
+            user: None,
+        }
+    }
+
+    pub fn into_user(self) -> User {
+        self.user.unwrap_or_else(|| {
+            tracing::warn!(
+                "Player {} is missing user data, creating minimal User",
+                self.id
+            );
+            User {
+                id: self.id,
+                wallet_address: String::new(),
+                wars_point: 0.0,
+                username: None,
+                display_name: None,
+            }
+        })
+    }
+
+    pub fn get_user(&self) -> Option<&User> {
+        self.user.as_ref()
     }
 }
 

@@ -307,45 +307,86 @@ pub async fn get_all_lobbies_info(
     Ok(out)
 }
 
+pub async fn hydrate_player(mut player: Player, redis: RedisClient) -> Result<Player, AppError> {
+    if player.user.is_none() {
+        match get_user_by_id(player.id, redis).await {
+            Ok(user) => player.user = Some(user),
+            Err(e) => {
+                tracing::warn!("Failed to hydrate user {} for player: {}", player.id, e);
+                // Continue without user data rather than failing
+            }
+        }
+    }
+    Ok(player)
+}
+
+pub async fn hydrate_players(players: Vec<Player>, redis: RedisClient) -> Vec<Player> {
+    let mut hydrated = Vec::new();
+
+    for player in players {
+        match hydrate_player(player, redis.clone()).await {
+            Ok(hydrated_player) => hydrated.push(hydrated_player),
+            Err(e) => {
+                tracing::error!("Failed to hydrate player: {}", e);
+                // Skip this player rather than failing the entire request
+            }
+        }
+    }
+
+    hydrated
+}
+
 pub async fn get_lobby_players(
     lobby_id: Uuid,
     players_filter: Option<PlayerState>,
     redis: RedisClient,
 ) -> Result<Vec<Player>, AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
+    let redis_clone = redis.clone();
+    let mut conn = redis_clone.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    // find all player hashes for this lobby
     let pattern = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Wildcard);
-    let keys: Vec<String> = redis::cmd("KEYS")
+    let player_keys: Vec<String> = redis::cmd("KEYS")
         .arg(&pattern)
         .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let mut players = Vec::with_capacity(keys.len());
-    for key in keys {
-        let pmap: HashMap<String, String> = redis::cmd("HGETALL")
-            .arg(&key)
-            .query_async(&mut *conn)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-
-        let player = Player::from_redis_hash(&pmap)?;
-
-        // apply optional state filter
-        if let Some(ref state_filter) = players_filter {
-            if &player.state != state_filter {
-                continue;
-            }
-        }
-
-        players.push(player);
+    if player_keys.is_empty() {
+        return Ok(Vec::new());
     }
 
-    Ok(players)
+    // Batch fetch all player data
+    let mut pipe = redis::pipe();
+    for key in &player_keys {
+        pipe.cmd("HGETALL").arg(key);
+    }
+
+    let player_results: Vec<HashMap<String, String>> = pipe
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    // Parse players without user data and apply filter
+    let mut players = Vec::new();
+    for player_data in player_results {
+        if let Ok(player) = Player::from_redis_hash(&player_data) {
+            // Apply player state filter if specified
+            let passes_filter = match &players_filter {
+                Some(filter_state) => player.state == *filter_state,
+                None => true,
+            };
+
+            if passes_filter {
+                players.push(player);
+            }
+        }
+    }
+
+    // Hydrate all players with user data
+    Ok(hydrate_players(players, redis).await)
 }
 
 pub async fn get_lobby_extended(

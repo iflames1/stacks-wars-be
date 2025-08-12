@@ -18,10 +18,7 @@ pub async fn request_join(
     match request_to_join(lobby_id, player.clone().into(), &join_requests).await {
         Ok(_) => {
             if let Ok(pending_players) = get_pending_players(lobby_id, &join_requests).await {
-                tracing::info!(
-                    "Success Adding {} to pending players",
-                    player.wallet_address
-                );
+                tracing::info!("Success Adding {} to pending players", player.id);
                 let msg = LobbyServerMessage::Pending;
                 send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
 

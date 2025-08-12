@@ -38,10 +38,7 @@ pub async fn update_game_state(
     };
 
     if lobby_info.creator.id != player.id {
-        tracing::warn!(
-            "Unauthorized game state update attempt by {}",
-            player.wallet_address
-        );
+        tracing::warn!("Unauthorized game state update attempt by {}", player.id);
         send_error_to_player(
             player.id,
             lobby_id,

@@ -72,17 +72,12 @@ async fn setup_player_and_lobby(
     let already_exists = lobby.players.iter().any(|p| p.id == player.id);
 
     if !already_exists {
-        tracing::info!(
-            "Adding player {} ({}) to lobby {}",
-            player.wallet_address,
-            player.id,
-            lobby.info.id
-        );
+        tracing::info!("Adding player ({}) to lobby {}", player.id, lobby.info.id);
         lobby.players.push(player.clone());
     } else {
         tracing::info!(
             "Player {} already exists in lobby {}, skipping re-add",
-            player.wallet_address,
+            player.id,
             lobby.info.id
         );
     }
@@ -97,7 +92,7 @@ async fn setup_player_and_lobby(
 
     tracing::info!(
         "Player {} connected to lobby {}. Connected: {}/{}",
-        player.wallet_address,
+        player.id,
         lobby.info.id,
         lobby.connected_players.len(),
         lobby.players.len()
@@ -246,7 +241,7 @@ pub async fn lexi_wars_handler(
 
     tracing::info!(
         "Player {} allowed to join lobby {}",
-        matched_player.wallet_address,
+        matched_player.id,
         lobby_id
     );
 
@@ -353,10 +348,7 @@ async fn handle_lexi_wars_socket(
                 broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
             }
 
-            tracing::info!(
-                "Sent reconnection state to player {}",
-                player.wallet_address
-            );
+            tracing::info!("Sent reconnection state to player {}", player.id);
         }
     }
 
@@ -384,7 +376,7 @@ async fn handle_lexi_wars_socket(
                     lobby.connected_players.remove(pos);
                     tracing::info!(
                         "Player {} disconnected from lobby {} (pre-game). Connected: {}/{}",
-                        player.wallet_address,
+                        player.id,
                         lobby_id,
                         lobby.connected_players.len(),
                         lobby.players.len()
@@ -401,7 +393,7 @@ async fn handle_lexi_wars_socket(
                 } else {
                     tracing::info!(
                         "Player {} disconnected from lobby {} (during game). Keeping in connected_players for game continuity.",
-                        player.wallet_address,
+                        player.id,
                         lobby_id
                     );
                 }

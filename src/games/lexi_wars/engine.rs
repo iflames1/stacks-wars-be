@@ -570,7 +570,7 @@ pub async fn handle_incoming_messages(
                                     if !lobby.game_started {
                                         tracing::info!(
                                             "Game not started yet, ignoring word entry from {}",
-                                            player.wallet_address
+                                            player.id
                                         );
                                         continue;
                                     }
@@ -592,7 +592,7 @@ pub async fn handle_incoming_messages(
 
                                 // check turn
                                 if player.id != lobby.current_turn_id {
-                                    tracing::info!("Not {}'s turn", player.wallet_address);
+                                    tracing::info!("Not {}'s turn", player.id);
                                     continue;
                                 }
 
@@ -681,7 +681,7 @@ pub async fn handle_incoming_messages(
                                     .await;
                                     tracing::info!(
                                         "invalid word from {}: {}",
-                                        player.wallet_address,
+                                        player.id,
                                         cleaned_word
                                     );
                                     continue;
@@ -785,17 +785,13 @@ pub async fn handle_incoming_messages(
                     tracing::debug!("Received pong from player {}", player.id);
                 }
                 Message::Close(_) => {
-                    tracing::info!("Player {} closed connection", player.wallet_address);
+                    tracing::info!("Player {} closed connection", player.id);
                     break;
                 }
                 _ => {}
             },
             Err(e) => {
-                tracing::error!(
-                    "WebSocket error for player {}: {}",
-                    player.wallet_address,
-                    e
-                );
+                tracing::error!("WebSocket error for player {}: {}", player.id, e);
                 break;
             }
         }

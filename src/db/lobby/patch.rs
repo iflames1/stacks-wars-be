@@ -72,25 +72,14 @@ pub async fn join_lobby(
             .map_err(AppError::RedisCommandError)?;
     }
 
-    let user = get_user_by_id(user_id, redis.clone()).await?;
-    let new_player = Player {
-        id: user.id,
-        wallet_address: user.wallet_address,
-        state: PlayerState::Ready,
-        display_name: user.display_name,
-        username: user.username,
-        wars_point: user.wars_point,
-        used_words: None,
-        rank: None,
-        tx_id,
-        claim: None,
-        prize: None,
-    };
+    // Create player with minimal data (just ID and tx_id)
+    let new_player = Player::new(user_id, tx_id);
     let player_hash = new_player.to_redis_hash();
     let player_fields: Vec<(&str, &str)> = player_hash
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
+
     let _: () = conn
         .hset_multiple(&player_key, &player_fields)
         .await
