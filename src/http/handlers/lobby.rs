@@ -11,7 +11,7 @@ use crate::{
     db::lobby::{
         get::{
             get_all_lobbies_extended, get_all_lobbies_info, get_lobbies_by_game_id,
-            get_lobby_extended, get_lobby_info, get_lobby_players,
+            get_lobby_extended, get_lobby_info, get_lobby_players, get_player_lobbies,
         },
         patch::{
             join_lobby, leave_lobby, update_claim_state, update_lobby_state, update_player_state,
@@ -21,7 +21,7 @@ use crate::{
     errors::AppError,
     models::game::{
         ClaimState, LobbyExtended, LobbyInfo, LobbyPoolInput, LobbyQuery, LobbyState, Player,
-        PlayerQuery, PlayerState, parse_lobby_states, parse_player_state,
+        PlayerLobbyInfo, PlayerQuery, PlayerState, parse_lobby_states, parse_player_state,
     },
     state::AppState,
 };
@@ -381,4 +381,80 @@ pub async fn update_claim_state_handler(
 
     tracing::info!("Claim state updated for lobby {lobby_id}");
     Ok(Json("success"))
+}
+
+#[derive(Deserialize)]
+pub struct PlayerLobbyQuery {
+    pub user_id: Option<Uuid>,
+    pub identifier: Option<String>,
+    pub lobby_state: Option<String>,
+    pub claim_state: Option<String>,
+    pub page: Option<u32>,
+    pub limit: Option<u32>,
+}
+
+#[axum::debug_handler]
+pub async fn get_player_lobbies_handler(
+    Query(query): Query<PlayerLobbyQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PlayerLobbyInfo>>, (StatusCode, String)> {
+    // Determine the user_id from either direct user_id or identifier
+    let user_id = match (query.user_id, query.identifier) {
+        (Some(id), _) => {
+            // If user_id is provided, use it directly
+            id
+        }
+        (None, Some(identifier)) => {
+            // If identifier is provided, look up the user_id
+            crate::db::user::get::get_user_id(identifier, state.redis.clone())
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to get user ID from identifier: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to get user ID from identifier: {}", e),
+                    )
+                })?
+        }
+        (None, None) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Either user_id or identifier must be provided".to_string(),
+            ));
+        }
+    };
+
+    let claim_filter = parse_claim_state(query.claim_state);
+    let lobby_filters = parse_lobby_states(query.lobby_state);
+    let page = query.page.unwrap_or(1);
+    let limit = query.limit.unwrap_or(10).min(100);
+
+    let lobbies = get_player_lobbies(
+        user_id,
+        claim_filter,
+        lobby_filters,
+        page,
+        limit,
+        state.redis,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to get player lobbies for {}: {}", user_id, e);
+        e.to_response()
+    })?;
+
+    Ok(Json(lobbies))
+}
+
+fn parse_claim_state(claim_param: Option<String>) -> Option<ClaimState> {
+    claim_param.and_then(|s| match s.to_lowercase().as_str() {
+        "claimed" => Some(ClaimState::Claimed {
+            tx_id: String::new(),
+        }), // We'll match any claimed state
+        "notclaimed" | "not_claimed" => Some(ClaimState::NotClaimed),
+        other => {
+            tracing::warn!("Invalid claim_state filter: {}", other);
+            None
+        }
+    })
 }

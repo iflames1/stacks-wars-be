@@ -139,6 +139,24 @@ pub enum ClaimState {
     NotClaimed,
 }
 
+impl ClaimState {
+    pub fn matches_filter(&self, filter: &ClaimState) -> bool {
+        match (self, filter) {
+            (ClaimState::NotClaimed, ClaimState::NotClaimed) => true,
+            (ClaimState::Claimed { .. }, ClaimState::Claimed { .. }) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_claimed(&self) -> bool {
+        matches!(self, ClaimState::Claimed { .. })
+    }
+
+    pub fn is_not_claimed(&self) -> bool {
+        matches!(self, ClaimState::NotClaimed)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Player {
@@ -260,6 +278,16 @@ impl FromStr for LobbyState {
             other => Err(format!("Unknown LobbyState: {}", other)),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerLobbyInfo {
+    #[serde(flatten)]
+    pub lobby: LobbyInfo,
+    pub prize_amount: Option<f64>,
+    pub rank: Option<usize>,
+    pub claim_state: Option<ClaimState>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

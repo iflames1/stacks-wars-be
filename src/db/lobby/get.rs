@@ -8,7 +8,9 @@ use crate::{
     db::{game::get::get_game, user::get::get_user_by_id},
     errors::AppError,
     models::{
-        game::{LobbyExtended, LobbyInfo, LobbyState, Player, PlayerState},
+        game::{
+            ClaimState, LobbyExtended, LobbyInfo, LobbyState, Player, PlayerLobbyInfo, PlayerState,
+        },
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -398,6 +400,176 @@ pub async fn get_all_lobbies_extended(
     }
 
     Ok(out)
+}
+
+pub async fn get_player_lobbies(
+    user_id: Uuid,
+    claim_filter: Option<ClaimState>,
+    lobby_filters: Option<Vec<LobbyState>>,
+    page: u32,
+    limit: u32,
+    redis: RedisClient,
+) -> Result<Vec<PlayerLobbyInfo>, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    // Get all lobby player keys for this user
+    let player_pattern = RedisKey::lobby_player(KeyPart::Wildcard, KeyPart::Id(user_id));
+    let player_keys: Vec<String> = redis::cmd("KEYS")
+        .arg(&player_pattern)
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if player_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Batch fetch all player data using pipeline
+    let mut pipe = redis::pipe();
+    for key in &player_keys {
+        pipe.cmd("HGETALL").arg(key);
+    }
+
+    let player_results: Vec<HashMap<String, String>> = pipe
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    // Filter by claim state and collect player data with lobby IDs
+    let mut filtered_data = Vec::new();
+
+    for (key, player_data) in player_keys.iter().zip(player_results.iter()) {
+        if let Ok(player) = Player::from_redis_hash(player_data) {
+            // Skip lobbies without prizes when filtering by claim state
+            if claim_filter.is_some() && player.prize.is_none() {
+                continue;
+            }
+
+            // Apply claim filter if specified
+            let passes_claim_filter = match (&claim_filter, &player.claim) {
+                (Some(ClaimState::NotClaimed), Some(ClaimState::NotClaimed)) => true,
+                (Some(ClaimState::NotClaimed), None) => player.prize.is_some(),
+                (Some(ClaimState::Claimed { .. }), Some(ClaimState::Claimed { .. })) => true,
+                (None, _) => true,
+                _ => false,
+            };
+
+            if passes_claim_filter {
+                if let Some(lobby_id) = RedisKey::extract_lobby_id_from_player_key(key) {
+                    filtered_data.push((lobby_id, player.prize, player.rank, player.claim));
+                }
+            }
+        }
+    }
+
+    if filtered_data.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Extract unique lobby IDs for fetching lobby info
+    let lobby_ids: Vec<Uuid> = filtered_data.iter().map(|(id, _, _, _)| *id).collect();
+
+    // Batch fetch lobby info
+    let mut pipe = redis::pipe();
+    for lobby_id in &lobby_ids {
+        let key = RedisKey::lobby(KeyPart::Id(*lobby_id));
+        pipe.cmd("HGETALL").arg(key);
+    }
+
+    let lobby_results: Vec<HashMap<String, String>> = pipe
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    // Parse and collect with timestamps and player data
+    let mut lobbies_with_data = Vec::new();
+    for ((_lobby_id, prize, rank, claim), lobby_data) in
+        filtered_data.iter().zip(lobby_results.iter())
+    {
+        if let Ok((partial_lobby, creator_id, game_id)) =
+            LobbyInfo::from_redis_hash_partial(lobby_data)
+        {
+            // Apply lobby state filter here
+            let passes_lobby_filter = match &lobby_filters {
+                Some(states) => states.contains(&partial_lobby.state),
+                None => true,
+            };
+
+            if passes_lobby_filter {
+                lobbies_with_data.push((
+                    partial_lobby,
+                    creator_id,
+                    game_id,
+                    *prize,
+                    *rank,
+                    claim.clone(),
+                ));
+            }
+        }
+    }
+
+    // Sort by created_at (newest first)
+    lobbies_with_data.sort_by(|a, b| b.0.created_at.cmp(&a.0.created_at));
+
+    // Apply pagination
+    let offset = ((page.saturating_sub(1)) as usize).saturating_mul(limit as usize);
+    let paginated_lobbies: Vec<_> = lobbies_with_data
+        .into_iter()
+        .skip(offset)
+        .take(limit as usize)
+        .collect();
+
+    if paginated_lobbies.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Collect unique creator and game IDs for batch fetching
+    let mut creator_ids = HashSet::new();
+    let mut game_ids = HashSet::new();
+
+    for (_, creator_id, game_id, _, _, _) in &paginated_lobbies {
+        creator_ids.insert(*creator_id);
+        game_ids.insert(*game_id);
+    }
+
+    // Batch fetch creators and games
+    let mut creators = HashMap::new();
+    let mut games = HashMap::new();
+
+    // Fetch creators
+    for creator_id in creator_ids {
+        if let Ok(creator) = get_user_by_id(creator_id, redis.clone()).await {
+            creators.insert(creator_id, creator);
+        }
+    }
+
+    // Fetch games
+    for game_id in game_ids {
+        if let Ok(game) = get_game(game_id, redis.clone()).await {
+            games.insert(game_id, game);
+        }
+    }
+
+    // Hydrate and build final result with player data
+    let mut result = Vec::new();
+    for (mut lobby, creator_id, game_id, prize, rank, claim) in paginated_lobbies {
+        if let (Some(creator), Some(game)) = (creators.get(&creator_id), games.get(&game_id)) {
+            lobby.creator = creator.clone();
+            lobby.game = game.clone();
+
+            result.push(PlayerLobbyInfo {
+                lobby,
+                prize_amount: prize,
+                rank,
+                claim_state: claim,
+            });
+        }
+    }
+
+    Ok(result)
 }
 
 async fn fetch_lobby_uuids(
