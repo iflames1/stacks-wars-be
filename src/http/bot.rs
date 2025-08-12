@@ -1,3 +1,4 @@
+use html_escape::encode_text;
 use reqwest::Url;
 use teloxide::{
     Bot,
@@ -25,22 +26,32 @@ pub async fn broadcast_lobby_created(
     chat_id: i64,
     payload: BotNewLobbyPayload,
 ) -> Result<(), teloxide::RequestError> {
-    let wallet = payload.wallet_address;
+    let wallet = payload.wallet_address.clone();
     let truncated_wallet = format!("{}...{}", &wallet[0..4], &wallet[wallet.len() - 4..]);
 
-    let lobby_name = format!("🏷 *Lobby Name:* {}\n", payload.lobby_name);
+    let lobby_name = format!(
+        "🏷 <b>Lobby Name:</b> {}\n",
+        encode_text(&payload.lobby_name)
+    );
 
-    let game_name = format!("🎮 *Game:* {}\n", payload.game.name);
+    let game_name = format!("🎮 <b>Game:</b> {}\n", encode_text(&payload.game.name));
 
     let creator = payload
         .creator_name
-        .map(|name| format!("🧑‍🚀 *Creator:* {name} ({truncated_wallet})\n"))
-        .unwrap_or(format!("🧑‍🚀 *Creator:* {wallet}\n"));
+        .as_ref()
+        .map(|name| {
+            format!(
+                "🧑‍🚀 <b>Creator:</b> {} ({})\n",
+                encode_text(name),
+                encode_text(&truncated_wallet)
+            )
+        })
+        .unwrap_or_else(|| format!("🧑‍🚀 <b>Creator:</b> {}\n", encode_text(&wallet)));
 
     let description = payload
         .description
         .as_ref()
-        .map(|desc| format!("📝 *Description:* {}\n", desc))
+        .map(|desc| format!("📝 <b>Description:</b> {}\n", encode_text(desc)))
         .unwrap_or_default();
 
     let contract_line = payload
@@ -48,7 +59,7 @@ pub async fn broadcast_lobby_created(
         .as_ref()
         .map(|addr| {
             format!(
-                "💰 *Pool Contract:* [View on Hiro](https://explorer.hiro.so/txid/{}?chain=testnet)\n",
+                "💰 <b>Pool Contract:</b> <a href=\"https://explorer.hiro.so/txid/{}?chain=testnet\">View on Hiro</a>\n",
                 addr
             )
         })
@@ -56,17 +67,16 @@ pub async fn broadcast_lobby_created(
 
     let entry_fee_line = payload
         .entry_amount
-        .map(|amount| format!("💵 *Entry Fee:* {} STX\n", amount))
+        .map(|amount| format!("💵 <b>Entry Fee:</b> {} STX\n", amount))
         .unwrap_or_default();
 
     let lobby_link = format!(
-        "\n🔗 *Link:* https://stackswars.com/lobby/{}",
+        "\n🔗 <b>Link:</b> <code>https://stackswars.com/lobby/{}</code>",
         payload.lobby_id
     );
-    let lobby_url: Url = Url::parse(&lobby_link).unwrap();
 
     let caption = format!(
-        "🆕 *New Lobby Created*\n\n\
+        "🆕 <b>New Lobby Created</b>\n\n\
         {lobby_name}\
         {game_name}\
         {creator}\
@@ -76,7 +86,14 @@ pub async fn broadcast_lobby_created(
         {lobby_link}",
     );
 
-    // Create keyboard with join button only
+    tracing::info!("Telegram caption (HTML): {}", caption);
+
+    let lobby_url: Url = Url::parse(&format!(
+        "https://stackswars.com/lobby/{}",
+        payload.lobby_id
+    ))
+    .unwrap();
+
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
         "🚀 Join Now",
         lobby_url,
@@ -87,7 +104,7 @@ pub async fn broadcast_lobby_created(
         InputFile::url(payload.game.image_url.parse().unwrap()),
     )
     .caption(caption)
-    .parse_mode(ParseMode::MarkdownV2)
+    .parse_mode(ParseMode::Html) // ✅ Switched to HTML
     .reply_markup(keyboard)
     .send()
     .await?;
