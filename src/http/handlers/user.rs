@@ -53,8 +53,6 @@ pub async fn get_user_handler(
             e.to_response()
         })?;
 
-    tracing::info!("Retrieved user: {:?}", user);
-
     Ok(Json(user))
 }
 
