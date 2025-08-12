@@ -28,7 +28,7 @@ pub async fn update_player_state(
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         tracing::info!(
             "Player {} updated state to {:?} in lobby {}",
-            player.wallet_address,
+            player.id,
             new_state,
             lobby_id
         );

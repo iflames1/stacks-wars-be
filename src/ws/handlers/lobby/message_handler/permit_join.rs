@@ -31,7 +31,7 @@ pub async fn permit_join(
     };
 
     if lobby_info.creator.id != player.id {
-        tracing::error!("Unauthorized permit attempt by {}", player.wallet_address);
+        tracing::error!("Unauthorized permit attempt by {}", player.id);
         send_error_to_player(
             player.id,
             lobby_id,
@@ -95,9 +95,9 @@ pub async fn permit_join(
 
     tracing::info!(
         "Player {} {} user {} for lobby {}",
-        player.wallet_address,
+        player.id,
         if allow { "allowed" } else { "rejected" },
-        user.wallet_address,
+        user.id,
         lobby_id
     );
 }

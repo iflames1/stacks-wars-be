@@ -64,16 +64,13 @@ pub async fn chat_handler(
 
     let player = Player {
         id: user.id,
-        wallet_address: user.wallet_address.clone(),
-        display_name: user.display_name.clone(),
-        username: user.username.clone(),
-        wars_point: user.wars_point,
         state: PlayerState::NotReady,
         rank: None,
         used_words: None,
         tx_id: None,
         claim: None,
         prize: None,
+        user: Some(user.clone()),
     };
 
     Ok(ws.on_upgrade(move |socket| {

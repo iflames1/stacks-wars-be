@@ -27,14 +27,14 @@ pub async fn leave_lobby(
         tracing::error!("Failed to leave lobby: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
-        tracing::info!("Player {} left lobby {}", player.wallet_address, lobby_id);
+        tracing::info!("Player {} left lobby {}", player.id, lobby_id);
 
         // Subtract 10 wars points for leaving the lobby
         match decrease_wars_point(player.id, 10.0, redis.clone()).await {
             Ok(new_total) => {
                 tracing::info!(
                     "Subtracted 10 wars points from player {} for leaving lobby. New total: {}",
-                    player.wallet_address,
+                    player.id,
                     new_total
                 );
 
@@ -49,7 +49,7 @@ pub async fn leave_lobby(
             Err(e) => {
                 tracing::error!(
                     "Failed to subtract wars points from player {} for leaving lobby: {}",
-                    player.wallet_address,
+                    player.id,
                     e
                 );
             }

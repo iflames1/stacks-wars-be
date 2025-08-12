@@ -16,13 +16,7 @@ pub struct User {
 
 impl From<Player> for User {
     fn from(player: Player) -> Self {
-        User {
-            id: player.id,
-            wallet_address: player.wallet_address,
-            display_name: player.display_name,
-            username: player.username,
-            wars_point: player.wars_point,
-        }
+        player.into_user()
     }
 }
 

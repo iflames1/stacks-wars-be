@@ -18,16 +18,29 @@ pub fn generate_random_letter() -> char {
     (b'a' + letter as u8) as char
 }
 
-pub fn get_next_player_and_wrap(lobby: &mut LexiWars, current_id: Uuid) -> Option<Uuid> {
-    // Use connected_players instead of all players
-    let connected_players = &lobby.connected_players;
-
-    connected_players
+pub fn get_next_player_id_and_wrap(lobby: &LexiWars, current_player_id: Uuid) -> Option<Uuid> {
+    if let Some(current_index) = lobby
+        .connected_player_ids
         .iter()
-        .position(|p| p.id == current_id)
+        .position(|&id| id == current_player_id)
+    {
+        let next_index = (current_index + 1) % lobby.connected_player_ids.len();
+        lobby.connected_player_ids.get(next_index).copied()
+    } else {
+        lobby.connected_player_ids.first().copied()
+    }
+}
+
+pub fn get_next_player_and_wrap(lobby: &mut LexiWars, current_id: Uuid) -> Option<Uuid> {
+    // Use connected_player_ids instead of connected_players
+    let connected_player_ids = &lobby.connected_player_ids;
+
+    connected_player_ids
+        .iter()
+        .position(|&id| id == current_id) // Fixed: compare UUIDs directly
         .map(|i| {
-            let next_index = (i + 1) % connected_players.len();
-            let next_id = connected_players[next_index].id;
+            let next_index = (i + 1) % connected_player_ids.len();
+            let next_id = connected_player_ids[next_index]; // Fixed: get UUID, not .id
             let wrapped = next_index == 0;
 
             if wrapped {
@@ -117,12 +130,16 @@ pub async fn broadcast_to_lobby(
 
     let connection_guard = connections.lock().await;
 
-    // Use connected_players instead of all players
-    for player in lobby
-        .connected_players
+    let all_relevant_players: Vec<&Player> = lobby
+        .players
         .iter()
-        .chain(lobby.eliminated_players.iter())
-    {
+        .filter(|p| {
+            lobby.connected_player_ids.contains(&p.id)
+                || lobby.eliminated_players.iter().any(|ep| ep.id == p.id)
+        })
+        .collect();
+
+    for player in all_relevant_players {
         if let Some(conn_info) = connection_guard.get(&player.id) {
             let mut sender = conn_info.sender.lock().await;
             if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {

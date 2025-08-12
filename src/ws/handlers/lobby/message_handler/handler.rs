@@ -465,17 +465,13 @@ pub async fn handle_incoming_messages(
                     tracing::debug!("Received pong from player {}", player.id);
                 }
                 Message::Close(_) => {
-                    tracing::info!("Player {} closed connection", player.wallet_address);
+                    tracing::info!("Player {} closed connection", player.id);
                     break;
                 }
                 _ => {}
             },
             Err(e) => {
-                tracing::error!(
-                    "WebSocket error for player {}: {}",
-                    player.wallet_address,
-                    e
-                );
+                tracing::error!("WebSocket error for player {}: {}", player.id, e);
                 break;
             }
         }

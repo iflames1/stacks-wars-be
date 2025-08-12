@@ -40,7 +40,7 @@ pub async fn kick_player(
     };
 
     if lobby_info.creator.id != player.id {
-        tracing::error!("Unauthorized kick attempt by {}", player.wallet_address);
+        tracing::error!("Unauthorized kick attempt by {}", player.id);
         send_error_to_player(
             player.id,
             lobby_id,
@@ -80,11 +80,7 @@ pub async fn kick_player(
         )
         .await;
 
-        tracing::info!(
-            "Success kicking {} from {}",
-            player.wallet_address,
-            lobby_id
-        );
+        tracing::info!("Success kicking {} from {}", player.id, lobby_id);
         let kicked_user = match get_user_by_id(player_id, redis.clone()).await {
             Ok(user) => user,
             Err(e) => {
@@ -98,16 +94,13 @@ pub async fn kick_player(
         // Create a Player struct for the kicked user to mark as idle
         let kicked_player = Player {
             id: kicked_user.id,
-            wallet_address: kicked_user.wallet_address.clone(),
-            display_name: kicked_user.display_name.clone(),
-            username: kicked_user.username.clone(),
-            wars_point: kicked_user.wars_point,
             state: crate::models::game::PlayerState::NotReady,
             used_words: None,
             rank: None,
             tx_id: None,
             claim: None,
             prize: None,
+            user: Some(kicked_user.clone()),
         };
 
         let kicked_msg = LobbyServerMessage::PlayerKicked {

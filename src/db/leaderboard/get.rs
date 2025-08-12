@@ -110,18 +110,30 @@ async fn calculate_match_stats(
     user_id: Uuid,
     conn: &mut bb8::PooledConnection<'_, bb8_redis::RedisConnectionManager>,
 ) -> Result<(u64, u64), AppError> {
-    // Get all connected player keys for this user
-    let connected_pattern =
-        RedisKey::lobby_connected_player(KeyPart::Wildcard, KeyPart::Id(user_id));
+    // Get all lobbies where user was connected (using the new SET structure)
+    let pattern = "lobbies:*:connected_players";
     let connected_keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&connected_pattern)
+        .arg(&pattern)
         .query_async(&mut **conn)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let total_matches = connected_keys.len() as u64;
+    let mut total_matches = 0u64;
 
-    // Get all player keys for this user to check wins
+    // Check each connected players set to see if our user was in it
+    for key in connected_keys {
+        let is_member: bool = redis::cmd("SISMEMBER")
+            .arg(&key)
+            .arg(user_id.to_string())
+            .query_async(&mut **conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        if is_member {
+            total_matches += 1;
+        }
+    }
+
     let player_pattern = RedisKey::lobby_player(KeyPart::Wildcard, KeyPart::Id(user_id));
     let player_keys: Vec<String> = redis::cmd("KEYS")
         .arg(&player_pattern)

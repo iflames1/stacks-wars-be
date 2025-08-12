@@ -11,7 +11,7 @@ use crate::{
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::{
-        game::{LobbyInfo, LobbyPoolInput, LobbyState, Player, PlayerState},
+        game::{LobbyInfo, LobbyPoolInput, LobbyState, Player},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -64,23 +64,13 @@ pub async fn create_lobby(
     let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(creator_user.id));
 
-    let lobby_player = Player {
-        id: creator_user.id,
-        wallet_address: creator_user.wallet_address.clone(),
-        display_name: creator_user.display_name.clone(),
-        username: creator_user.username.clone(),
-        state: PlayerState::Ready,
-        used_words: None,
-        rank: None,
-        tx_id: pool.as_ref().map(|p| p.tx_id.to_owned()),
-        claim: None,
-        prize: None,
-        wars_point: creator_user.wars_point,
-    };
+    // Create player with minimal data
+    let lobby_player = Player::new(creator_user.id, pool.as_ref().map(|p| p.tx_id.to_owned()));
     let player_hash = lobby_player.to_redis_hash();
     let lobby_fields = lobby_info.to_redis_hash();
     let created_score = lobby_info.created_at.timestamp();
 
+    // Rest of the function remains the same...
     let _: () = redis::pipe()
         .cmd("HSET")
         .arg(&lobby_key)
@@ -120,6 +110,7 @@ pub async fn create_lobby(
 
     update_game_active_lobby(game_id, true, redis.clone()).await?;
 
+    // Bot notification code remains the same...
     tokio::spawn(async move {
         let payload = BotNewLobbyPayload {
             lobby_id,

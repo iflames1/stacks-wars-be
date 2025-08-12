@@ -29,11 +29,7 @@ pub async fn join_lobby(
                 send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
                     .await;
             } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
-                tracing::info!(
-                    "{} joined lobby {} successfully",
-                    player.wallet_address,
-                    lobby_id
-                );
+                tracing::info!("{} joined lobby {} successfully", player.id, lobby_id);
                 let msg = LobbyServerMessage::PlayerUpdated { players };
                 broadcast_to_lobby(
                     lobby_id,
@@ -45,10 +41,7 @@ pub async fn join_lobby(
                 .await;
             }
         } else {
-            tracing::warn!(
-                "User {} attempted to join without being allowed",
-                player.wallet_address
-            );
+            tracing::warn!("User {} attempted to join without being allowed", player.id);
             send_error_to_player(
                 player.id,
                 lobby_id,

@@ -82,16 +82,13 @@ pub async fn lobby_ws_handler(
 
     let idle_player = Player {
         id: user.id,
-        wallet_address: user.wallet_address.clone(),
-        username: user.username.clone(),
-        display_name: user.display_name.clone(),
-        wars_point: user.wars_point,
         state: PlayerState::NotReady,
         rank: None,
         used_words: None,
         tx_id: None,
         claim: None,
         prize: None,
+        user: Some(user.clone()),
     };
 
     Ok(ws.on_upgrade(move |socket| {
@@ -187,7 +184,7 @@ async fn handle_lobby_socket(
             if lobby_info.state == LobbyState::InProgress && countdown_time == 0 {
                 tracing::info!(
                     "Player {} trying to connect to lobby while game is in progress (countdown finished) - closing connection",
-                    player.wallet_address
+                    player.id
                 );
 
                 let close_frame = CloseFrame {
