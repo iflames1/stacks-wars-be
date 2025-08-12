@@ -34,8 +34,9 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:player:{player_id}")
     }
 
-    pub fn lobby_connected_player(lobby_id: KeyPart, player_id: KeyPart) -> String {
-        format!("lobbies:{lobby_id}:connected_player:{player_id}")
+    // Change this to store just a set of user IDs instead of full player hashes
+    pub fn lobby_connected_players(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:connected_players")
     }
 
     pub fn lobbies_state(state: &LobbyState) -> String {
@@ -85,30 +86,10 @@ impl RedisKey {
         }
     }
 
-    pub fn _extract_lobby_id_from_connected_player_key(key: &str) -> Option<Uuid> {
-        // Parse "lobbies:{lobby_id}:connected_player:{user_id}" to extract lobby_id
-        let parts: Vec<&str> = key.split(':').collect();
-        if parts.len() >= 2 && parts[0] == "lobbies" {
-            Uuid::parse_str(parts[1]).ok()
-        } else {
-            None
-        }
-    }
-
     pub fn _extract_user_id_from_player_key(key: &str) -> Option<Uuid> {
         // Parse "lobbies:{lobby_id}:player:{user_id}" to extract user_id
         let parts: Vec<&str> = key.split(':').collect();
         if parts.len() >= 4 && parts[0] == "lobbies" && parts[2] == "player" {
-            Uuid::parse_str(parts[3]).ok()
-        } else {
-            None
-        }
-    }
-
-    pub fn _extract_user_id_from_connected_player_key(key: &str) -> Option<Uuid> {
-        // Parse "lobbies:{lobby_id}:connected_player:{user_id}" to extract user_id
-        let parts: Vec<&str> = key.split(':').collect();
-        if parts.len() >= 4 && parts[0] == "lobbies" && parts[2] == "connected_player" {
             Uuid::parse_str(parts[3]).ok()
         } else {
             None
@@ -128,17 +109,14 @@ impl RedisKey {
         None
     }
 
-    pub fn _extract_ids_from_connected_player_key(key: &str) -> Option<(Uuid, Uuid)> {
-        // Parse "lobbies:{lobby_id}:connected_player:{user_id}" to extract (lobby_id, user_id)
+    pub fn _extract_user_ids_from_connected_set(key: &str) -> Option<Uuid> {
+        // Parse "lobbies:{lobby_id}:connected_players" to extract lobby_id if needed
         let parts: Vec<&str> = key.split(':').collect();
-        if parts.len() >= 4 && parts[0] == "lobbies" && parts[2] == "connected_player" {
-            if let (Ok(lobby_id), Ok(user_id)) =
-                (Uuid::parse_str(parts[1]), Uuid::parse_str(parts[3]))
-            {
-                return Some((lobby_id, user_id));
-            }
+        if parts.len() >= 2 && parts[0] == "lobbies" {
+            Uuid::parse_str(parts[1]).ok()
+        } else {
+            None
         }
-        None
     }
 }
 

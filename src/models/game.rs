@@ -100,7 +100,7 @@ pub struct LexiWars {
     pub rule_index: usize,
     pub current_turn_id: Uuid,
     pub eliminated_players: Vec<Player>,
-    pub connected_players: Vec<Player>,
+    pub connected_player_ids: Vec<Uuid>,
     pub connected_players_count: usize,
     pub game_started: bool,
     pub current_rule: Option<String>,

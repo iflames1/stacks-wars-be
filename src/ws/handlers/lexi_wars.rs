@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    db::lobby::get::{get_connected_players, get_lobby_info, get_lobby_players},
+    db::lobby::get::{get_connected_players_ids, get_lobby_info, get_lobby_players},
     games::lexi_wars::{
         engine::start_auto_start_timer,
         utils::{broadcast_to_player, generate_random_letter},
@@ -37,7 +37,7 @@ async fn setup_player_and_lobby(
     player: &Player,
     lobby_info: LobbyInfo,
     players: Vec<Player>,
-    connected_players: Vec<Player>,
+    connected_player_ids: Vec<Uuid>,
     lobbies: &LexiWarsLobbies,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
@@ -62,8 +62,8 @@ async fn setup_player_and_lobby(
                 random_letter: generate_random_letter(),
             },
             rule_index: 0,
-            connected_players: connected_players.clone(),
-            connected_players_count: connected_players.len(),
+            connected_player_ids: connected_player_ids.clone(),
+            connected_players_count: connected_player_ids.len(),
             game_started: false,
             current_rule: None,
         }
@@ -83,18 +83,18 @@ async fn setup_player_and_lobby(
     }
 
     // Track connected player - add to connected_players if not already there
-    let already_connected = lobby.connected_players.iter().any(|p| p.id == player.id);
-    let was_empty = lobby.connected_players.is_empty();
+    let already_connected = lobby.connected_player_ids.contains(&player.id);
+    let was_empty = lobby.connected_player_ids.is_empty();
 
     if !already_connected {
-        lobby.connected_players.push(player.clone());
+        lobby.connected_player_ids.push(player.id);
     }
 
     tracing::info!(
         "Player {} connected to lobby {}. Connected: {}/{}",
         player.id,
         lobby.info.id,
-        lobby.connected_players.len(),
+        lobby.connected_player_ids.len(),
         lobby.players.len()
     );
 
@@ -254,12 +254,12 @@ pub async fn lexi_wars_handler(
         }
     };
 
-    let connected_players = get_connected_players(lobby_id, redis.clone())
+    let connected_player_ids = get_connected_players_ids(lobby_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
     if is_game_started {
-        let is_reconnecting = connected_players.iter().any(|p| p.id == player_id);
+        let is_reconnecting = connected_player_ids.contains(&player_id);
 
         if !is_reconnecting {
             tracing::info!(
@@ -288,7 +288,7 @@ pub async fn lexi_wars_handler(
             lobby_id,
             matched_player,
             players_clone,
-            connected_players,
+            connected_player_ids,
             lexi_wars_lobbies,
             connections,
             lobby_info,
@@ -303,7 +303,7 @@ async fn handle_lexi_wars_socket(
     lobby_id: Uuid,
     player: Player,
     players: Vec<Player>,
-    connected_players: Vec<Player>,
+    connected_player_ids: Vec<Uuid>,
     lexi_wars_lobbies: LexiWarsLobbies,
     connections: ConnectionInfoMap,
     lobby_info: LobbyInfo,
@@ -319,7 +319,7 @@ async fn handle_lexi_wars_socket(
         &player,
         lobby_info,
         players,
-        connected_players,
+        connected_player_ids,
         &lexi_wars_lobbies,
         &connections,
         &redis,
@@ -367,24 +367,25 @@ async fn handle_lexi_wars_socket(
         let mut lobbies_guard = lexi_wars_lobbies.lock().await;
         if let Some(lobby) = lobbies_guard.get_mut(&lobby_id) {
             if let Some(pos) = lobby
-                .connected_players
+                .connected_player_ids
                 .iter()
-                .position(|p| p.id == player.id)
+                .position(|&id| id == player.id)
             {
-                // Only remove from connected_players if game hasn't started
+                // Only remove from connected_player_ids if game hasn't started
                 if !lobby.game_started {
-                    lobby.connected_players.remove(pos);
+                    lobby.connected_player_ids.remove(pos);
                     tracing::info!(
                         "Player {} disconnected from lobby {} (pre-game). Connected: {}/{}",
                         player.id,
                         lobby_id,
-                        lobby.connected_players.len(),
+                        lobby.connected_player_ids.len(),
                         lobby.players.len()
                     );
 
                     // If the disconnected player was the current turn, assign to next connected player
-                    if lobby.current_turn_id == player.id && !lobby.connected_players.is_empty() {
-                        lobby.current_turn_id = lobby.connected_players[0].id;
+                    if lobby.current_turn_id == player.id && !lobby.connected_player_ids.is_empty()
+                    {
+                        lobby.current_turn_id = lobby.connected_player_ids[0];
                         tracing::info!(
                             "Reassigned current turn to player {}",
                             lobby.current_turn_id
@@ -392,7 +393,7 @@ async fn handle_lexi_wars_socket(
                     }
                 } else {
                     tracing::info!(
-                        "Player {} disconnected from lobby {} (during game). Keeping in connected_players for game continuity.",
+                        "Player {} disconnected from lobby {} (during game). Keeping in connected_player_ids for game continuity.",
                         player.id,
                         lobby_id
                     );

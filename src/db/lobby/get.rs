@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use bb8::PooledConnection;
 use bb8_redis::RedisConnectionManager;
+use redis::AsyncCommands;
 use uuid::Uuid;
 
 use crate::{
@@ -200,35 +201,114 @@ pub async fn get_lobby_info(lobby_id: Uuid, redis: RedisClient) -> Result<LobbyI
     Ok(info)
 }
 
-pub async fn get_connected_players(
+pub async fn get_connected_players_ids(
     lobby_id: Uuid,
     redis: RedisClient,
-) -> Result<Vec<Player>, AppError> {
+) -> Result<Vec<Uuid>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let pattern = RedisKey::lobby_connected_player(KeyPart::Id(lobby_id), KeyPart::Wildcard);
-    let keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&pattern)
-        .query_async(&mut *conn)
+    let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
+
+    // Get all connected player IDs from the set
+    let player_id_strings: Vec<String> = conn
+        .smembers(&connected_key)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let mut players = Vec::with_capacity(keys.len());
-    for key in keys {
-        let pmap: HashMap<String, String> = redis::cmd("HGETALL")
-            .arg(&key)
-            .query_async(&mut *conn)
-            .await
-            .map_err(AppError::RedisCommandError)?;
+    // Convert to UUIDs
+    let player_ids: Vec<Uuid> = player_id_strings
+        .into_iter()
+        .filter_map(|id_str| Uuid::parse_str(&id_str).ok())
+        .collect();
 
-        let player = Player::from_redis_hash(&pmap)?;
-        players.push(player);
+    Ok(player_ids)
+}
+
+pub async fn _get_connected_players(
+    lobby_id: Uuid,
+    redis: RedisClient,
+) -> Result<Vec<Player>, AppError> {
+    let redis_clone = redis.clone();
+    let mut conn = redis_clone.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
+
+    // Get all connected player IDs from the set
+    let player_id_strings: Vec<String> = conn
+        .smembers(&connected_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if player_id_strings.is_empty() {
+        return Ok(Vec::new());
     }
 
-    Ok(players)
+    // Convert to UUIDs and get the actual player data
+    let mut players = Vec::new();
+    for id_str in player_id_strings {
+        if let Ok(player_id) = Uuid::parse_str(&id_str) {
+            // Get player data from the main player hash
+            let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(player_id));
+            let player_data: std::collections::HashMap<String, String> = conn
+                .hgetall(&player_key)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+
+            if !player_data.is_empty() {
+                if let Ok(player) = Player::from_redis_hash(&player_data) {
+                    players.push(player);
+                }
+            }
+        }
+    }
+
+    // Hydrate all players with user data
+    Ok(hydrate_players(players, redis).await)
+}
+
+pub async fn _get_connected_players_count(
+    lobby_id: Uuid,
+    redis: RedisClient,
+) -> Result<usize, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
+
+    let count: usize = conn
+        .scard(&connected_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(count)
+}
+
+pub async fn _is_player_connected(
+    lobby_id: Uuid,
+    player_id: Uuid,
+    redis: RedisClient,
+) -> Result<bool, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
+
+    let is_member: bool = conn
+        .sismember(&connected_key, player_id.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(is_member)
 }
 
 pub async fn get_all_lobbies_info(

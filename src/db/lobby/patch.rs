@@ -337,6 +337,46 @@ pub async fn update_claim_state(
     Ok(())
 }
 
+pub async fn _add_connected_player(
+    lobby_id: Uuid,
+    player_id: Uuid,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
+
+    let _: () = conn
+        .sadd(&connected_key, player_id.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
+pub async fn _remove_connected_player(
+    lobby_id: Uuid,
+    player_id: Uuid,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
+
+    let _: () = conn
+        .srem(&connected_key, player_id.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
 pub async fn update_player_prize(
     lobby_id: Uuid,
     player_id: Uuid,

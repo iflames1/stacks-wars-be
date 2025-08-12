@@ -12,7 +12,7 @@ use crate::{
                 update_lobby_state, update_player_prize, update_player_rank,
                 update_player_used_words,
             },
-            put::update_connected_players,
+            put::create_connected_players,
         },
         user::patch::increase_wars_point,
     },
@@ -136,7 +136,7 @@ pub fn start_auto_start_timer(
             {
                 let mut lobbies_guard = lobbies.lock().await;
                 if let Some(lobby) = lobbies_guard.get_mut(&lobby_id) {
-                    let connected_count = lobby.connected_players.len();
+                    let connected_count = lobby.connected_player_ids.len();
                     let total_players = lobby.players.len();
 
                     tracing::info!(
@@ -151,17 +151,17 @@ pub fn start_auto_start_timer(
                         tracing::info!("All players connected, starting game immediately");
 
                         // Set current_turn_id to first connected player
-                        if let Some(first_connected) = lobby.connected_players.first() {
-                            lobby.current_turn_id = first_connected.id;
+                        if let Some(&first_connected_id) = lobby.connected_player_ids.first() {
+                            lobby.current_turn_id = first_connected_id;
                         }
 
                         // Store the fixed count for prize calculation
-                        lobby.connected_players_count = lobby.connected_players.len();
+                        lobby.connected_players_count = lobby.connected_player_ids.len();
 
                         // Update connected players in Redis
-                        if let Err(e) = update_connected_players(
+                        if let Err(e) = create_connected_players(
                             lobby_id,
-                            lobby.connected_players.clone(),
+                            lobby.connected_player_ids.clone(),
                             redis.clone(),
                         )
                         .await
@@ -169,7 +169,7 @@ pub fn start_auto_start_timer(
                             tracing::error!("Failed to update connected players in Redis: {}", e);
                         }
 
-                        lobby.game_started = true; // after update_connected_players
+                        lobby.game_started = true; // after create_connected_players
 
                         let start_msg = LexiWarsServerMessage::Start {
                             time: i,
@@ -188,10 +188,8 @@ pub fn start_auto_start_timer(
                         }
 
                         // Start the first turn
-                        if let Some(current_player) = lobby
-                            .connected_players
-                            .iter()
-                            .find(|p| p.id == lobby.current_turn_id)
+                        if let Some(current_player) =
+                            lobby.players.iter().find(|p| p.id == lobby.current_turn_id)
                         {
                             let turn_msg = LexiWarsServerMessage::Turn {
                                 current_turn: current_player.clone(),
@@ -233,7 +231,7 @@ pub fn start_auto_start_timer(
         // Timer expired, check if we have at least 50% of players and minimum 2 players
         let mut lobbies_guard = lobbies.lock().await;
         if let Some(lobby) = lobbies_guard.get_mut(&lobby_id) {
-            let connected_count = lobby.connected_players.len();
+            let connected_count = lobby.connected_player_ids.len();
             let total_players = lobby.players.len();
             let required_players = std::cmp::max(2, (total_players + 1) / 2); // At least 2 players and 50% (rounded up)
 
@@ -251,17 +249,17 @@ pub fn start_auto_start_timer(
                 );
 
                 // Set current_turn_id to first connected player
-                if let Some(first_connected) = lobby.connected_players.first() {
-                    lobby.current_turn_id = first_connected.id;
+                if let Some(&first_connected_id) = lobby.connected_player_ids.first() {
+                    lobby.current_turn_id = first_connected_id;
                 }
 
                 // Store the fixed count for prize calculation
-                lobby.connected_players_count = lobby.connected_players.len();
+                lobby.connected_players_count = lobby.connected_player_ids.len();
 
                 // Update connected players in Redis
-                if let Err(e) = update_connected_players(
+                if let Err(e) = create_connected_players(
                     lobby_id,
-                    lobby.connected_players.clone(),
+                    lobby.connected_player_ids.clone(),
                     redis.clone(),
                 )
                 .await
@@ -269,7 +267,7 @@ pub fn start_auto_start_timer(
                     tracing::error!("Failed to update connected players in Redis: {}", e);
                 }
 
-                lobby.game_started = true; // after update_connected_players
+                lobby.game_started = true; // after create_connected_players
 
                 let start_msg = LexiWarsServerMessage::Start {
                     time: 0,
@@ -287,10 +285,8 @@ pub fn start_auto_start_timer(
                 }
 
                 // Start the first turn
-                if let Some(current_player) = lobby
-                    .connected_players
-                    .iter()
-                    .find(|p| p.id == lobby.current_turn_id)
+                if let Some(current_player) =
+                    lobby.players.iter().find(|p| p.id == lobby.current_turn_id)
                 {
                     let turn_msg = LexiWarsServerMessage::Turn {
                         current_turn: current_player.clone(),
@@ -321,7 +317,7 @@ pub fn start_auto_start_timer(
 
                 // Reset lobby state
                 lobby.game_started = false;
-                lobby.connected_players.clear();
+                lobby.connected_player_ids.clear();
 
                 if let Err(e) =
                     update_lobby_state(lobby_id, LobbyState::Waiting, redis.clone()).await
@@ -381,14 +377,18 @@ fn start_turn_timer(
                 let next_player_id = get_next_player_and_wrap(lobby, player_id);
 
                 if let Some(pos) = lobby
-                    .connected_players
+                    .connected_player_ids
                     .iter()
-                    .position(|p| p.id == player_id)
+                    .position(|&id| id == player_id)
                 {
-                    let player = lobby.connected_players.remove(pos);
-                    lobby.eliminated_players.push(player.clone());
+                    lobby.connected_player_ids.remove(pos);
 
-                    let position = lobby.connected_players.len() + 1;
+                    if let Some(player) = lobby.players.iter().find(|p| p.id == player_id).cloned()
+                    {
+                        lobby.eliminated_players.push(player);
+                    }
+
+                    let position = lobby.connected_player_ids.len() + 1;
 
                     let prize = get_prize(lobby, position);
 
@@ -403,7 +403,7 @@ fn start_turn_timer(
                     )
                     .await;
 
-                    let player_used_words = lobby.used_words.remove(&player.id).unwrap_or_default();
+                    let player_used_words = lobby.used_words.remove(&player_id).unwrap_or_default();
 
                     if let Err(e) = update_player_used_words(
                         lobby_id,
@@ -418,42 +418,39 @@ fn start_turn_timer(
                 }
 
                 // check game over
-                if lobby.connected_players.len() == 1 {
-                    // Check if game is already finished to prevent double execution
-                    if lobby.info.state == LobbyState::Finished {
-                        tracing::warn!("Game already finished for lobby {}", lobby_id);
-                        return;
-                    }
+                if lobby.connected_player_ids.len() == 1 {
+                    let winner_id = lobby.connected_player_ids.remove(0);
 
-                    let winner = lobby.connected_players.remove(0);
-                    let prize = get_prize(lobby, 1);
-
-                    send_rank_prize_and_wars_point(
-                        winner.id,
-                        lobby_id,
-                        1,
-                        prize,
-                        lobby,
-                        &connections,
-                        &redis,
-                    )
-                    .await;
-
-                    let player_used_words = lobby.used_words.remove(&winner.id).unwrap_or_default();
-
-                    if let Err(e) = update_player_used_words(
-                        lobby_id,
-                        winner.id,
-                        player_used_words,
-                        redis.clone(),
-                    )
-                    .await
+                    if let Some(winner) = lobby.players.iter().find(|p| p.id == winner_id).cloned()
                     {
-                        tracing::error!("Error updating player used words in Redis: {}", e);
-                    }
+                        let prize = get_prize(lobby, 1);
+                        send_rank_prize_and_wars_point(
+                            winner.id,
+                            lobby_id,
+                            1,
+                            prize,
+                            lobby,
+                            &connections,
+                            &redis,
+                        )
+                        .await;
+                        let player_used_words =
+                            lobby.used_words.remove(&winner.id).unwrap_or_default();
 
-                    // Move winner to eliminated_players
-                    lobby.eliminated_players.push(winner.clone());
+                        if let Err(e) = update_player_used_words(
+                            lobby_id,
+                            winner.id,
+                            player_used_words,
+                            redis.clone(),
+                        )
+                        .await
+                        {
+                            tracing::error!("Error updating player used words in Redis: {}", e);
+                        }
+
+                        // Move winner to eliminated_players
+                        lobby.eliminated_players.push(winner.clone());
+                    }
 
                     // Update game state first to prevent race conditions
                     lobby.info.state = LobbyState::Finished;
@@ -499,7 +496,7 @@ fn start_turn_timer(
 
                     return;
                 }
-                if lobby.connected_players.is_empty() {
+                if lobby.connected_player_ids.is_empty() {
                     tracing::warn!("fix: lobby {} is now empty", lobby.info.id); // never really gets here
                     return;
                 }
@@ -509,7 +506,7 @@ fn start_turn_timer(
                     lobby.current_turn_id = next_id;
 
                     if let Some(current_player) =
-                        lobby.connected_players.iter().find(|p| p.id == next_id)
+                        lobby.players.iter().find(|p| p.id == lobby.current_turn_id)
                     {
                         let next_turn_msg = LexiWarsServerMessage::Turn {
                             current_turn: current_player.clone(),
