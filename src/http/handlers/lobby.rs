@@ -385,25 +385,49 @@ pub async fn update_claim_state_handler(
 
 #[derive(Deserialize)]
 pub struct PlayerLobbyQuery {
+    pub user_id: Option<Uuid>,
+    pub identifier: Option<String>,
     pub lobby_state: Option<String>,
     pub claim_state: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,
 }
 
+#[axum::debug_handler]
 pub async fn get_player_lobbies_handler(
-    AuthClaims(claims): AuthClaims,
     Query(query): Query<PlayerLobbyQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PlayerLobbyInfo>>, (StatusCode, String)> {
-    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| {
-        tracing::error!("Unauthorized access attempt");
-        AppError::Unauthorized("Invalid user ID in token".into()).to_response()
-    })?;
+    // Determine the user_id from either direct user_id or identifier
+    let user_id = match (query.user_id, query.identifier) {
+        (Some(id), _) => {
+            // If user_id is provided, use it directly
+            id
+        }
+        (None, Some(identifier)) => {
+            // If identifier is provided, look up the user_id
+            crate::db::user::get::get_user_id(identifier, state.redis.clone())
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to get user ID from identifier: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to get user ID from identifier: {}", e),
+                    )
+                })?
+        }
+        (None, None) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Either user_id or identifier must be provided".to_string(),
+            ));
+        }
+    };
+
     let claim_filter = parse_claim_state(query.claim_state);
     let lobby_filters = parse_lobby_states(query.lobby_state);
     let page = query.page.unwrap_or(1);
-    let limit = query.limit.unwrap_or(10).min(100); // Cap at 100
+    let limit = query.limit.unwrap_or(10).min(100);
 
     let lobbies = get_player_lobbies(
         user_id,
