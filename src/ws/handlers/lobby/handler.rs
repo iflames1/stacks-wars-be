@@ -7,15 +7,18 @@ use std::net::SocketAddr;
 
 use crate::{
     db::{
-        lobby::get::{get_lobby_info, get_lobby_players},
+        lobby::{
+            get::{get_lobby_info, get_lobby_players},
+            join_requests::get_player_join_request,
+        },
         user::get::get_user_by_id,
     },
     models::{
         game::{LobbyState, Player, PlayerState, WsQueryParams},
-        lobby::{JoinRequest, JoinState, LobbyServerMessage},
+        lobby::{JoinState, LobbyServerMessage},
     },
-    state::{AppState, ChatConnectionInfoMap, LobbyJoinRequests, RedisClient},
-    ws::handlers::lobby::message_handler::handler,
+    state::{AppState, ChatConnectionInfoMap, RedisClient},
+    ws::handlers::lobby::message_handler::handler::{self, get_pending_players},
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
 use crate::{
@@ -41,7 +44,6 @@ pub async fn lobby_ws_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
     let chat_connections = state.chat_connections.clone();
-    let join_requests = state.lobby_join_requests.clone();
     let countdowns = state.lobby_countdowns.clone();
 
     let players = get_lobby_players(lobby_id, None, redis.clone())
@@ -57,7 +59,6 @@ pub async fn lobby_ws_handler(
                 connections,
                 chat_connections,
                 redis,
-                join_requests,
                 countdowns,
             )
         }));
@@ -66,19 +67,6 @@ pub async fn lobby_ws_handler(
     let user = get_user_by_id(player_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
-
-    {
-        let mut guard = join_requests.lock().await;
-        let lobby_requests = guard.entry(lobby_id).or_default();
-
-        let already_requested = lobby_requests.iter().any(|req| req.user.id == user.id);
-        if !already_requested {
-            lobby_requests.push(JoinRequest {
-                user: user.clone(),
-                state: JoinState::Idle,
-            });
-        }
-    }
 
     let idle_player = Player {
         id: user.id,
@@ -99,7 +87,6 @@ pub async fn lobby_ws_handler(
             connections,
             chat_connections,
             redis,
-            join_requests,
             countdowns,
         )
     }))
@@ -112,7 +99,6 @@ async fn handle_lobby_socket(
     connections: ConnectionInfoMap,
     chat_connections: ChatConnectionInfoMap,
     redis: RedisClient,
-    join_requests: LobbyJoinRequests,
     countdowns: LobbyCountdowns,
 ) {
     let (mut sender, receiver) = socket.split();
@@ -180,6 +166,105 @@ async fn handle_lobby_socket(
                 return;
             }
 
+            // Check if player has a join request and broadcast their status
+            match get_player_join_request(lobby_id, player.id, redis.clone()).await {
+                Ok(Some(join_request)) => {
+                    // Player has a join request - send their current state
+                    let join_state_msg = match join_request.state {
+                        JoinState::Pending => LobbyServerMessage::Pending,
+                        JoinState::Allowed => LobbyServerMessage::Allowed,
+                        JoinState::Rejected => LobbyServerMessage::Rejected,
+                    };
+
+                    let serialized = match serde_json::to_string(&join_state_msg) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            tracing::error!("Failed to serialize join state message: {}", e);
+                            return;
+                        }
+                    };
+
+                    if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                        tracing::error!("Failed to send join state to player {}: {}", player.id, e);
+                        return;
+                    }
+
+                    tracing::info!(
+                        "Sent join state {:?} to player {} in lobby {}",
+                        join_request.state,
+                        player.id,
+                        lobby_id
+                    );
+                }
+                Ok(None) => {
+                    // No join request found - player might be already in the lobby or never requested
+                    tracing::debug!(
+                        "No join request found for player {} in lobby {}",
+                        player.id,
+                        lobby_id
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get join request for player {} in lobby {}: {}",
+                        player.id,
+                        lobby_id,
+                        e
+                    );
+                }
+            }
+
+            match get_pending_players(lobby_id, redis.clone()).await {
+                Ok(pending_players) => {
+                    if !pending_players.is_empty() {
+                        let pending_count = pending_players.len();
+                        let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
+                        let serialized = match serde_json::to_string(&pending_msg) {
+                            Ok(json) => json,
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to serialize pending players message: {}",
+                                    e
+                                );
+                                return;
+                            }
+                        };
+
+                        if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                            tracing::error!(
+                                "Failed to send pending players to player {}: {}",
+                                player.id,
+                                e
+                            );
+                            return;
+                        }
+
+                        if lobby_info.creator.id == player.id {
+                            tracing::info!(
+                                "Sent {} pending players to lobby creator {} in lobby {}",
+                                pending_count,
+                                player.id,
+                                lobby_id
+                            );
+                        } else {
+                            tracing::info!(
+                                "Sent {} pending players to player {} in lobby {}",
+                                pending_count,
+                                player.id,
+                                lobby_id
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get pending players for lobby {}: {}",
+                        lobby_id,
+                        e
+                    );
+                }
+            }
+
             // If game is in progress and countdown is 0, close the connection immediately
             if lobby_info.state == LobbyState::InProgress && countdown_time == 0 {
                 tracing::info!(
@@ -229,7 +314,6 @@ async fn handle_lobby_socket(
         &connections,
         &chat_connections,
         redis.clone(),
-        join_requests,
         countdowns,
     )
     .await;

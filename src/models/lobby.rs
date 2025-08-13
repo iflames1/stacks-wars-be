@@ -8,7 +8,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum JoinState {
-    Idle,
     Pending,
     Allowed,
     Rejected,
@@ -89,6 +88,7 @@ pub enum LobbyServerMessage {
         player: User,
     },
     NotifyKicked,
+    Left,
     Countdown {
         time: u32,
     },
@@ -142,6 +142,7 @@ impl LobbyServerMessage {
             LobbyServerMessage::Rejected { .. } => true,
             LobbyServerMessage::PendingPlayers { .. } => true,
             LobbyServerMessage::NotifyKicked => true,
+            LobbyServerMessage::Left => true,
             LobbyServerMessage::PlayerUpdated { .. } => true,
             LobbyServerMessage::Pending { .. } => true,
             LobbyServerMessage::WarsPointDeduction { .. } => true,

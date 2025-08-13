@@ -4,17 +4,18 @@ use futures::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 use crate::{
-    db::lobby::get::get_lobby_players,
+    db::lobby::{
+        get::get_lobby_players,
+        join_requests::{get_lobby_join_requests, get_player_join_request, update_join_request},
+    },
     errors::AppError,
     models::{
         User,
         chat::ChatServerMessage,
         game::Player,
-        lobby::{JoinRequest, JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
+        lobby::{JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
     },
-    state::{
-        ChatConnectionInfoMap, ConnectionInfoMap, LobbyCountdowns, LobbyJoinRequests, RedisClient,
-    },
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, LobbyCountdowns, RedisClient},
     ws::handlers::{
         chat::utils::send_chat_message_to_player,
         lobby::message_handler::{
@@ -191,142 +192,36 @@ pub async fn send_to_player(
     }
 }
 
-pub async fn get_join_requests(
-    lobby_id: Uuid,
-    join_requests: &LobbyJoinRequests,
-) -> Vec<JoinRequest> {
-    let map = join_requests.lock().await;
-    map.get(&lobby_id).cloned().unwrap_or_default()
-}
-
 pub async fn request_to_join(
     lobby_id: Uuid,
     user: User,
-    join_requests: &LobbyJoinRequests,
+    redis: RedisClient,
 ) -> Result<(), AppError> {
-    let mut map = join_requests.lock().await;
-    let lobby_requests = map.entry(lobby_id).or_default();
-
-    if let Some(existing) = lobby_requests.iter_mut().find(|r| r.user.id == user.id) {
+    if let Ok(Some(existing)) = get_player_join_request(lobby_id, user.id, redis.clone()).await {
         if existing.state == JoinState::Pending {
-            return Ok(());
+            return Ok(()); // Already pending
         }
-
-        existing.state = JoinState::Pending;
-        return Ok(());
     }
 
-    lobby_requests.push(JoinRequest {
-        user,
-        state: JoinState::Pending,
-    });
-
-    Ok(())
+    update_join_request(lobby_id, user, JoinState::Pending, redis).await
 }
 
 pub async fn set_join_state(
     lobby_id: Uuid,
     user: User,
     state: JoinState,
-    join_requests: &LobbyJoinRequests,
+    redis: RedisClient,
 ) -> Result<(), AppError> {
-    let mut map = join_requests.lock().await;
-    let lobby_requests = map.entry(lobby_id).or_default();
-
-    if let Some(existing) = lobby_requests.iter_mut().find(|r| r.user.id == user.id) {
-        existing.state = state;
-        return Ok(());
-    }
-
-    // If user doesn't exist in requests, add them with the specified state
-    lobby_requests.push(JoinRequest { user, state });
-
-    Ok(())
-}
-
-pub async fn mark_player_as_idle(
-    lobby_id: Uuid,
-    player: &Player,
-    join_requests: &LobbyJoinRequests,
-    connections: &ConnectionInfoMap,
-    redis: &RedisClient,
-) {
-    if let Err(e) = set_join_state(
-        lobby_id,
-        player.clone().into(),
-        JoinState::Idle,
-        join_requests,
-    )
-    .await
-    {
-        tracing::error!("Failed to mark player {} as idle: {}", player.id, e);
-        return;
-    }
-
-    if let Ok(pending_players) = get_pending_players(lobby_id, join_requests).await {
-        let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
-
-        send_to_player(player.id, lobby_id, connections, &pending_msg, redis).await;
-
-        broadcast_to_lobby(lobby_id, &pending_msg, connections, None, redis.clone()).await;
-    }
-}
-
-pub async fn accept_join_request(
-    lobby_id: Uuid,
-    user_id: Uuid,
-    join_requests: &LobbyJoinRequests,
-) -> Result<(), AppError> {
-    let mut map = join_requests.lock().await;
-
-    if let Some(requests) = map.get_mut(&lobby_id) {
-        tracing::info!("Join requests for lobby {}: {:?}", lobby_id, requests);
-
-        if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
-            tracing::info!("Found join request for user {}", user_id);
-            req.state = JoinState::Allowed;
-            return Ok(());
-        } else {
-            tracing::warn!("User {} not found in join requests", user_id);
-        }
-    } else {
-        tracing::warn!("No join requests found for lobby {}", lobby_id);
-    }
-
-    Err(AppError::NotFound("User not found in join requests".into()))
-}
-
-pub async fn reject_join_request(
-    lobby_id: Uuid,
-    user_id: Uuid,
-    join_requests: &LobbyJoinRequests,
-) -> Result<(), AppError> {
-    let mut map = join_requests.lock().await;
-
-    if let Some(requests) = map.get_mut(&lobby_id) {
-        tracing::info!("Join requests for lobby {}: {:?}", lobby_id, requests);
-
-        if let Some(req) = requests.iter_mut().find(|r| r.user.id == user_id) {
-            tracing::info!("Found join request for user {}", user_id);
-            req.state = JoinState::Rejected;
-            return Ok(());
-        } else {
-            tracing::warn!("User {} not found in join requests", user_id);
-        }
-    } else {
-        tracing::warn!("No join requests found for lobby {}", lobby_id);
-    }
-
-    Err(AppError::NotFound("User not found in join requests".into()))
+    update_join_request(lobby_id, user, state, redis).await
 }
 
 pub async fn get_pending_players(
     lobby_id: Uuid,
-    join_requests: &LobbyJoinRequests,
+    redis: RedisClient,
 ) -> Result<Vec<PendingJoin>, AppError> {
-    let map = get_join_requests(lobby_id, join_requests).await;
+    let join_requests = get_lobby_join_requests(lobby_id, None, redis).await?;
 
-    let pending_players = map
+    let pending_players = join_requests
         .into_iter()
         .map(|req| PendingJoin {
             user: req.user,
@@ -344,7 +239,6 @@ pub async fn handle_incoming_messages(
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
-    join_requests: LobbyJoinRequests,
     countdowns: LobbyCountdowns,
 ) {
     while let Some(msg_result) = receiver.next().await {
@@ -360,7 +254,6 @@ pub async fn handle_incoming_messages(
                                 join_lobby(
                                     tx_id,
                                     lobby_id,
-                                    &join_requests,
                                     player,
                                     connections,
                                     chat_connections,
@@ -369,14 +262,12 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::RequestJoin => {
-                                request_join(player, lobby_id, &join_requests, connections, &redis)
-                                    .await
+                                request_join(player, lobby_id, connections, &redis).await
                             }
                             LobbyClientMessage::PermitJoin { user_id, allow } => {
                                 permit_join(
                                     allow,
                                     user_id,
-                                    &join_requests,
                                     player.clone(),
                                     lobby_id,
                                     connections,
@@ -396,15 +287,8 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::LeaveLobby => {
-                                leave_lobby(
-                                    lobby_id,
-                                    player,
-                                    connections,
-                                    chat_connections,
-                                    &join_requests,
-                                    &redis,
-                                )
-                                .await
+                                leave_lobby(lobby_id, player, connections, chat_connections, &redis)
+                                    .await
                             }
                             LobbyClientMessage::KickPlayer { player_id } => {
                                 kick_player(
@@ -413,7 +297,6 @@ pub async fn handle_incoming_messages(
                                     player,
                                     connections,
                                     chat_connections,
-                                    &join_requests,
                                     &redis,
                                 )
                                 .await
