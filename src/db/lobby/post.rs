@@ -118,6 +118,7 @@ pub async fn create_lobby(
             description: lobby_info.description.clone(),
             game: lobby_info.game,
             entry_amount: pool.as_ref().and_then(|p| Some(p.entry_amount)),
+            current_amount: pool.as_ref().map(|p| p.current_amount),
             contract_address: lobby_info.contract_address.clone(),
             creator_name: creator_user.display_name.or(creator_user.username),
             wallet_address: creator_user.wallet_address.clone(),

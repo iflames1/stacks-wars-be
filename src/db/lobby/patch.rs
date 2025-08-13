@@ -47,30 +47,25 @@ pub async fn join_lobby(
         return Err(AppError::BadRequest("User already in lobby".into()));
     }
 
-    // If there's a pool, validate tx and update it
+    // Only validate transaction and update pool if entry amount > 0 (not sponsored)
     if let Some(addr) = &lobby.contract_address {
-        let tx = tx_id
-            .clone()
-            .ok_or_else(|| AppError::BadRequest("Missing transaction ID for pool".into()))?;
+        let entry_amount = lobby.entry_amount.unwrap_or(0.0);
 
-        let user = get_user_by_id(user_id, redis.clone()).await?;
-        validate_payment_tx(
-            &tx,
-            &user.wallet_address,
-            addr,
-            lobby.entry_amount.unwrap_or(0.0),
-        )
-        .await?;
+        if entry_amount > 0.0 {
+            let tx = tx_id.clone().ok_or_else(|| {
+                AppError::BadRequest("Missing transaction ID for paid lobby".into())
+            })?;
 
-        // Increment pool current amount
-        let _: () = conn
-            .hincr(
-                &lobby_key,
-                "current_amount",
-                lobby.entry_amount.unwrap_or(0.0) as i64,
-            )
-            .await
-            .map_err(AppError::RedisCommandError)?;
+            let user = get_user_by_id(user_id, redis.clone()).await?;
+            validate_payment_tx(&tx, &user.wallet_address, addr, entry_amount).await?;
+
+            // Increment pool current amount
+            let _: () = conn
+                .hincr(&lobby_key, "current_amount", entry_amount as i64)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+        }
+        // For sponsored lobbies (entry_amount = 0), no transaction validation or pool update needed
     }
 
     // Create player with minimal data (just ID and tx_id)
@@ -115,21 +110,22 @@ pub async fn leave_lobby(
     let (info, creator_id, _game_id) = LobbyInfo::from_redis_hash_partial(&m)?;
 
     if creator_id == user_id {
-        // delete lobby hash
+        // Creator leaving - delete entire lobby
         let pattern = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Wildcard);
         let keys: Vec<String> = redis::cmd("KEYS")
             .arg(&pattern)
             .query_async(&mut *conn)
             .await
             .map_err(AppError::RedisCommandError)?;
+
         if keys.len() == 1 {
+            // Only creator left - delete lobby
             let _: () = conn
                 .del(&lobby_key)
                 .await
                 .map_err(AppError::RedisCommandError)?;
 
-            // delete all player hashes
-
+            // Delete all player hashes
             for key in keys {
                 let _: () = conn.del(key).await.map_err(AppError::RedisCommandError)?;
             }
@@ -142,6 +138,7 @@ pub async fn leave_lobby(
         return Ok(());
     }
 
+    // Regular player leaving
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
     if !conn
         .exists(&player_key)
@@ -150,11 +147,13 @@ pub async fn leave_lobby(
     {
         return Err(AppError::BadRequest("User not in lobby".into()));
     }
+
     let pm: HashMap<String, String> = conn
         .hgetall(&player_key)
         .await
         .map_err(AppError::RedisCommandError)?;
     let player = Player::from_redis_hash(&pm)?;
+
     let _: () = conn
         .del(&player_key)
         .await
@@ -165,17 +164,19 @@ pub async fn leave_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
+    // Only update pool amount for paid lobbies (entry_amount > 0) where player actually paid
     if let Some(_addr) = &info.contract_address {
-        if player.tx_id.is_some() && info.entry_amount.is_some() {
+        let entry_amount = info.entry_amount.unwrap_or(0.0);
+
+        if entry_amount > 0.0 && player.tx_id.is_some() {
+            // Regular paid lobby - refund player by decreasing pool
             let _: () = conn
-                .hincr(
-                    &lobby_key,
-                    "current_amount",
-                    -(info.entry_amount.unwrap() as i64),
-                )
+                .hincr(&lobby_key, "current_amount", -(entry_amount as i64))
                 .await
                 .map_err(AppError::RedisCommandError)?;
         }
+        // For sponsored lobbies (entry_amount = 0), no pool adjustment needed
+        // Players joined for free, so no refund needed
     }
 
     Ok(())
