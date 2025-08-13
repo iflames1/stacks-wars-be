@@ -7,12 +7,15 @@ use std::net::SocketAddr;
 
 use crate::{
     db::{
-        lobby::get::{get_lobby_info, get_lobby_players},
+        lobby::{
+            get::{get_lobby_info, get_lobby_players},
+            join_requests::get_player_join_request,
+        },
         user::get::get_user_by_id,
     },
     models::{
         game::{LobbyState, Player, PlayerState, WsQueryParams},
-        lobby::LobbyServerMessage,
+        lobby::{JoinState, LobbyServerMessage},
     },
     state::{AppState, ChatConnectionInfoMap, RedisClient},
     ws::handlers::lobby::message_handler::handler,
@@ -161,6 +164,54 @@ async fn handle_lobby_socket(
             if let Err(e) = sender.send(Message::Text(serialized.into())).await {
                 tracing::error!("Failed to send countdown to player {}: {}", player.id, e);
                 return;
+            }
+
+            // Check if player has a join request and broadcast their status
+            match get_player_join_request(lobby_id, player.id, redis.clone()).await {
+                Ok(Some(join_request)) => {
+                    // Player has a join request - send their current state
+                    let join_state_msg = match join_request.state {
+                        JoinState::Pending => LobbyServerMessage::Pending,
+                        JoinState::Allowed => LobbyServerMessage::Allowed,
+                        JoinState::Rejected => LobbyServerMessage::Rejected,
+                    };
+
+                    let serialized = match serde_json::to_string(&join_state_msg) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            tracing::error!("Failed to serialize join state message: {}", e);
+                            return;
+                        }
+                    };
+
+                    if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                        tracing::error!("Failed to send join state to player {}: {}", player.id, e);
+                        return;
+                    }
+
+                    tracing::info!(
+                        "Sent join state {:?} to player {} in lobby {}",
+                        join_request.state,
+                        player.id,
+                        lobby_id
+                    );
+                }
+                Ok(None) => {
+                    // No join request found - player might be already in the lobby or never requested
+                    tracing::debug!(
+                        "No join request found for player {} in lobby {}",
+                        player.id,
+                        lobby_id
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get join request for player {} in lobby {}: {}",
+                        player.id,
+                        lobby_id,
+                        e
+                    );
+                }
             }
 
             // If game is in progress and countdown is 0, close the connection immediately
