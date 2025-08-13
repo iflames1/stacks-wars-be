@@ -102,12 +102,26 @@ async fn send_rank_prize_and_wars_point(
 }
 
 fn get_prize(lobby: &LexiWars, position: usize) -> Option<f64> {
-    if lobby.info.contract_address.is_none() || lobby.info.entry_amount.is_none() {
+    if lobby.info.contract_address.is_none() {
         return None;
     }
 
-    let entry_amount = lobby.info.entry_amount.unwrap();
-    let total_pool = entry_amount * lobby.connected_players_count as f64;
+    let entry_amount = lobby.info.entry_amount.unwrap_or(0.0);
+    let current_amount = lobby.info.current_amount.unwrap_or(0.0);
+
+    // Calculate total pool based on lobby type
+    let total_pool = if entry_amount == 0.0 {
+        // Sponsored lobby - use current_amount as the pre-funded pool
+        current_amount
+    } else {
+        // Regular paid lobby - calculate from entry amount * connected players
+        entry_amount * lobby.connected_players_count as f64
+    };
+
+    // No prizes if there's no pool
+    if total_pool <= 0.0 {
+        return None;
+    }
 
     let prize = match position {
         1 => {
