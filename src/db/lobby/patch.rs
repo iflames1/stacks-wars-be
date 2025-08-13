@@ -6,7 +6,8 @@ use uuid::Uuid;
 use crate::{
     db::{
         chat::delete::delete_lobby_chat, game::patch::update_game_active_lobby,
-        tx::validate_payment_tx, user::get::get_user_by_id,
+        lobby::join_requests::remove_all_lobby_join_requests, tx::validate_payment_tx,
+        user::get::get_user_by_id,
     },
     errors::AppError,
     models::{
@@ -250,6 +251,18 @@ pub async fn update_lobby_state(
             tracing::error!(
                 "Failed to delete lobby chat history when setting state to Finished: {}",
                 e
+            );
+        }
+
+        if let Err(e) = remove_all_lobby_join_requests(lobby_id, redis.clone()).await {
+            tracing::error!(
+                "Failed to delete lobby join requests when setting state to Finished: {}",
+                e
+            );
+        } else {
+            tracing::info!(
+                "Cleaned up all join requests for finished lobby {}",
+                lobby_id
             );
         }
     }

@@ -51,6 +51,10 @@ impl RedisKey {
         format!("lobbies:{}:join_requests", lobby_id)
     }
 
+    pub fn lobby_join_request_user(lobby_id: KeyPart, user_id: KeyPart) -> String {
+        format!("lobbies:{}:join_requests:{}", lobby_id, user_id)
+    }
+
     // temp keys
     pub fn temp_union() -> String {
         let id = Uuid::new_v4();
