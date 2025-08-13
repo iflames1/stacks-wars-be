@@ -18,7 +18,7 @@ use crate::{
         lobby::{JoinState, LobbyServerMessage},
     },
     state::{AppState, ChatConnectionInfoMap, RedisClient},
-    ws::handlers::lobby::message_handler::handler,
+    ws::handlers::lobby::message_handler::handler::{self, get_pending_players},
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
 use crate::{
@@ -208,6 +208,57 @@ async fn handle_lobby_socket(
                     tracing::error!(
                         "Failed to get join request for player {} in lobby {}: {}",
                         player.id,
+                        lobby_id,
+                        e
+                    );
+                }
+            }
+
+            match get_pending_players(lobby_id, redis.clone()).await {
+                Ok(pending_players) => {
+                    if !pending_players.is_empty() {
+                        let pending_count = pending_players.len();
+                        let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
+                        let serialized = match serde_json::to_string(&pending_msg) {
+                            Ok(json) => json,
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to serialize pending players message: {}",
+                                    e
+                                );
+                                return;
+                            }
+                        };
+
+                        if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                            tracing::error!(
+                                "Failed to send pending players to player {}: {}",
+                                player.id,
+                                e
+                            );
+                            return;
+                        }
+
+                        if lobby_info.creator.id == player.id {
+                            tracing::info!(
+                                "Sent {} pending players to lobby creator {} in lobby {}",
+                                pending_count,
+                                player.id,
+                                lobby_id
+                            );
+                        } else {
+                            tracing::info!(
+                                "Sent {} pending players to player {} in lobby {}",
+                                pending_count,
+                                player.id,
+                                lobby_id
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get pending players for lobby {}: {}",
                         lobby_id,
                         e
                     );
