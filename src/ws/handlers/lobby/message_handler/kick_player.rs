@@ -2,6 +2,7 @@ use crate::{
     db::{
         lobby::{
             get::{get_lobby_info, get_lobby_players},
+            join_requests::remove_join_request,
             patch::leave_lobby,
         },
         user::get::get_user_by_id,
@@ -10,11 +11,11 @@ use crate::{
         game::{LobbyState, Player},
         lobby::LobbyServerMessage,
     },
-    state::{ChatConnectionInfoMap, ConnectionInfoMap, LobbyJoinRequests, RedisClient},
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             broadcast_to_lobby,
-            handler::{mark_player_as_idle, send_error_to_player, send_to_player},
+            handler::{send_error_to_player, send_to_player},
         },
         utils::remove_connection,
     },
@@ -27,7 +28,6 @@ pub async fn kick_player(
     player: &Player,
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
-    join_requests: &LobbyJoinRequests,
     redis: &RedisClient,
 ) {
     let lobby_info = match get_lobby_info(lobby_id, redis.clone()).await {
@@ -70,6 +70,13 @@ pub async fn kick_player(
         tracing::error!("Failed to kick player: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+        if let Err(e) = remove_join_request(lobby_id, player_id, redis.clone()).await {
+            tracing::warn!(
+                "Failed to remove join request for kicked player {}: {}",
+                player_id,
+                e
+            );
+        }
         let player_updated_msg = LobbyServerMessage::PlayerUpdated { players };
         broadcast_to_lobby(
             lobby_id,
@@ -89,18 +96,6 @@ pub async fn kick_player(
                     .await;
                 return;
             }
-        };
-
-        // Create a Player struct for the kicked user to mark as idle
-        let kicked_player = Player {
-            id: kicked_user.id,
-            state: crate::models::game::PlayerState::NotReady,
-            used_words: None,
-            rank: None,
-            tx_id: None,
-            claim: None,
-            prize: None,
-            user: Some(kicked_user.clone()),
         };
 
         let kicked_msg = LobbyServerMessage::PlayerKicked {
@@ -125,8 +120,6 @@ pub async fn kick_player(
             &redis,
         )
         .await;
-
-        mark_player_as_idle(lobby_id, &kicked_player, join_requests, connections, redis).await;
     }
 
     remove_connection(player_id, &connections).await;

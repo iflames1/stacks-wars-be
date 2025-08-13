@@ -15,7 +15,7 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
 
-use crate::{games::init::initialize_games, state::LobbyJoinRequests};
+use crate::games::init::initialize_games;
 
 pub async fn start_server() {
     dotenvy::dotenv().ok();
@@ -38,14 +38,12 @@ pub async fn start_server() {
     let lexi_wars_lobbies: LexiWarsLobbies = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let chat_connections: ChatConnectionInfoMap = Default::default();
-    let lobby_join_requests: LobbyJoinRequests = Arc::new(Mutex::new(HashMap::new()));
     let lobby_countdowns: LobbyCountdowns = Arc::new(Mutex::new(HashMap::new()));
     let state = AppState {
         lexi_wars_lobbies,
         connections,
         chat_connections,
         redis: redis_pool,
-        lobby_join_requests,
         bot,
         lobby_countdowns,
     };

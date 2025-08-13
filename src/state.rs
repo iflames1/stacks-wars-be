@@ -13,12 +13,11 @@ pub struct AppState {
     pub connections: ConnectionInfoMap,
     pub chat_connections: ChatConnectionInfoMap,
     pub redis: RedisClient,
-    pub lobby_join_requests: LobbyJoinRequests,
     pub bot: Bot,
     pub lobby_countdowns: LobbyCountdowns,
 }
 
-use crate::models::{game::LexiWars, lobby::JoinRequest};
+use crate::models::game::LexiWars;
 
 #[derive(Debug)]
 pub struct ConnectionInfo {
@@ -49,7 +48,5 @@ pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 pub type ChatConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ChatConnectionInfo>>>>;
 
 pub type RedisClient = Pool<RedisConnectionManager>;
-
-pub type LobbyJoinRequests = Arc<Mutex<HashMap<Uuid, Vec<JoinRequest>>>>;
 
 pub type LobbyCountdowns = Arc<Mutex<HashMap<Uuid, CountdownState>>>;

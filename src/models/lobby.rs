@@ -8,7 +8,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum JoinState {
-    Idle,
     Pending,
     Allowed,
     Rejected,

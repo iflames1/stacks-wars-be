@@ -1,14 +1,14 @@
 use crate::{
     db::{
-        lobby::{get::get_lobby_players, patch},
+        lobby::{get::get_lobby_players, join_requests::remove_join_request, patch},
         user::patch::decrease_wars_point,
     },
     models::{game::Player, lobby::LobbyServerMessage},
-    state::{ChatConnectionInfoMap, ConnectionInfoMap, LobbyJoinRequests, RedisClient},
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             broadcast_to_lobby,
-            handler::{mark_player_as_idle, send_error_to_player, send_to_player},
+            handler::{send_error_to_player, send_to_player},
         },
         utils::remove_connection,
     },
@@ -20,7 +20,6 @@ pub async fn leave_lobby(
     player: &Player,
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
-    join_requests: &LobbyJoinRequests,
     redis: &RedisClient,
 ) {
     if let Err(e) = patch::leave_lobby(lobby_id, player.id, redis.clone()).await {
@@ -28,6 +27,15 @@ pub async fn leave_lobby(
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
         tracing::info!("Player {} left lobby {}", player.id, lobby_id);
+
+        // Remove join request when leaving
+        if let Err(e) = remove_join_request(lobby_id, player.id, redis.clone()).await {
+            tracing::warn!(
+                "Failed to remove join request for player {}: {}",
+                player.id,
+                e
+            );
+        }
 
         // Subtract 10 wars points for leaving the lobby
         match decrease_wars_point(player.id, 10.0, redis.clone()).await {
@@ -38,7 +46,6 @@ pub async fn leave_lobby(
                     new_total
                 );
 
-                // Optionally notify the player about the point deduction
                 let wars_point_msg = LobbyServerMessage::WarsPointDeduction {
                     amount: 10.0,
                     new_total,
@@ -65,9 +72,6 @@ pub async fn leave_lobby(
         )
         .await;
         send_to_player(player.id, lobby_id, &connections, &msg, redis).await;
-
-        // add to idle
-        mark_player_as_idle(lobby_id, player, join_requests, connections, redis).await;
     }
     remove_connection(player.id, &connections).await;
 }

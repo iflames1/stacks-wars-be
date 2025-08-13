@@ -12,9 +12,9 @@ use crate::{
     },
     models::{
         game::{LobbyState, Player, PlayerState, WsQueryParams},
-        lobby::{JoinRequest, JoinState, LobbyServerMessage},
+        lobby::LobbyServerMessage,
     },
-    state::{AppState, ChatConnectionInfoMap, LobbyJoinRequests, RedisClient},
+    state::{AppState, ChatConnectionInfoMap, RedisClient},
     ws::handlers::lobby::message_handler::handler,
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
@@ -41,7 +41,6 @@ pub async fn lobby_ws_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
     let chat_connections = state.chat_connections.clone();
-    let join_requests = state.lobby_join_requests.clone();
     let countdowns = state.lobby_countdowns.clone();
 
     let players = get_lobby_players(lobby_id, None, redis.clone())
@@ -57,7 +56,6 @@ pub async fn lobby_ws_handler(
                 connections,
                 chat_connections,
                 redis,
-                join_requests,
                 countdowns,
             )
         }));
@@ -66,19 +64,6 @@ pub async fn lobby_ws_handler(
     let user = get_user_by_id(player_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
-
-    {
-        let mut guard = join_requests.lock().await;
-        let lobby_requests = guard.entry(lobby_id).or_default();
-
-        let already_requested = lobby_requests.iter().any(|req| req.user.id == user.id);
-        if !already_requested {
-            lobby_requests.push(JoinRequest {
-                user: user.clone(),
-                state: JoinState::Idle,
-            });
-        }
-    }
 
     let idle_player = Player {
         id: user.id,
@@ -99,7 +84,6 @@ pub async fn lobby_ws_handler(
             connections,
             chat_connections,
             redis,
-            join_requests,
             countdowns,
         )
     }))
@@ -112,7 +96,6 @@ async fn handle_lobby_socket(
     connections: ConnectionInfoMap,
     chat_connections: ChatConnectionInfoMap,
     redis: RedisClient,
-    join_requests: LobbyJoinRequests,
     countdowns: LobbyCountdowns,
 ) {
     let (mut sender, receiver) = socket.split();
@@ -229,7 +212,6 @@ async fn handle_lobby_socket(
         &connections,
         &chat_connections,
         redis.clone(),
-        join_requests,
         countdowns,
     )
     .await;
