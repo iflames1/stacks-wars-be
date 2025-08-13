@@ -25,6 +25,7 @@ pub async fn request_join(
 
                 let msg = LobbyServerMessage::PendingPlayers { pending_players };
                 broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
+                send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
             }
         }
         Err(e) => {

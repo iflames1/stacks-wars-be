@@ -72,6 +72,8 @@ pub async fn leave_lobby(
         )
         .await;
         send_to_player(player.id, lobby_id, &connections, &msg, redis).await;
+        let left_msg = LobbyServerMessage::Left;
+        send_to_player(player.id, lobby_id, &connections, &left_msg, redis).await;
     }
     remove_connection(player.id, &connections).await;
 }

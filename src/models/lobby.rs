@@ -88,6 +88,7 @@ pub enum LobbyServerMessage {
         player: User,
     },
     NotifyKicked,
+    Left,
     Countdown {
         time: u32,
     },
@@ -141,6 +142,7 @@ impl LobbyServerMessage {
             LobbyServerMessage::Rejected { .. } => true,
             LobbyServerMessage::PendingPlayers { .. } => true,
             LobbyServerMessage::NotifyKicked => true,
+            LobbyServerMessage::Left => true,
             LobbyServerMessage::PlayerUpdated { .. } => true,
             LobbyServerMessage::Pending { .. } => true,
             LobbyServerMessage::WarsPointDeduction { .. } => true,

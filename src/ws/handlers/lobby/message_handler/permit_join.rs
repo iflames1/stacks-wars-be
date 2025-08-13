@@ -107,6 +107,7 @@ pub async fn permit_join(
     if let Ok(pending_players) = get_pending_players(lobby_id, redis.clone()).await {
         let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
         broadcast_to_lobby(lobby_id, &pending_msg, &connections, None, redis.clone()).await;
+        send_to_player(user_id, lobby_id, &connections, &pending_msg, &redis).await;
     }
 
     tracing::info!(

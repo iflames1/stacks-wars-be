@@ -5,7 +5,10 @@ use crate::{
         lobby::{JoinState, LobbyServerMessage},
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
-    ws::handlers::lobby::message_handler::{broadcast_to_lobby, handler::send_error_to_player},
+    ws::handlers::lobby::message_handler::{
+        broadcast_to_lobby,
+        handler::{get_pending_players, send_error_to_player},
+    },
 };
 use uuid::Uuid;
 
@@ -37,6 +40,11 @@ pub async fn join_lobby(
                         redis.clone(),
                     )
                     .await;
+                }
+
+                if let Ok(pending_players) = get_pending_players(lobby_id, redis.clone()).await {
+                    let msg = LobbyServerMessage::PendingPlayers { pending_players };
+                    broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
                 }
             } else {
                 // Player has a request but it's not allowed
