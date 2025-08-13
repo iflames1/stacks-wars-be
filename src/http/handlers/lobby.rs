@@ -31,6 +31,7 @@ pub struct CreateLobbyPayload {
     pub name: String,
     pub description: Option<String>,
     pub entry_amount: Option<f64>,
+    pub current_amount: Option<f64>,
     pub contract_address: Option<String>,
     pub tx_id: Option<String>,
     pub game_id: Uuid,
@@ -48,14 +49,18 @@ pub async fn create_lobby_handler(
 
     let pool = match (
         payload.entry_amount,
+        payload.current_amount,
         payload.contract_address.clone(),
         payload.tx_id.clone(),
     ) {
-        (Some(entry_amount), Some(contract_address), Some(tx_id)) => Some(LobbyPoolInput {
-            entry_amount,
-            contract_address,
-            tx_id,
-        }),
+        (Some(entry_amount), Some(current_amount), Some(contract_address), Some(tx_id)) => {
+            Some(LobbyPoolInput {
+                entry_amount,
+                current_amount,
+                contract_address,
+                tx_id,
+            })
+        }
         _ => None,
     };
 
