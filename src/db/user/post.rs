@@ -18,11 +18,11 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    let wallet_key = RedisKey::wallet(KeyPart::Str(wallet_address.clone()));
+    let wallets_hash = RedisKey::users_wallets();
 
-    // Check if wallet is already registered
+    // Check if wallet is already registered using hash lookup
     if let Some(existing_id) = conn
-        .get::<_, Option<String>>(&wallet_key)
+        .hget::<_, _, Option<String>>(&wallets_hash, &wallet_address)
         .await
         .map_err(AppError::RedisCommandError)?
     {
@@ -80,9 +80,9 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    // Store wallet -> user ID mapping
+    // Store wallet -> user ID mapping in hash (more memory efficient)
     let _: () = conn
-        .set(&wallet_key, user.id.to_string())
+        .hset(&wallets_hash, &wallet_address, user.id.to_string())
         .await
         .map_err(AppError::RedisCommandError)?;
 

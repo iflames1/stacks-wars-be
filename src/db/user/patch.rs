@@ -25,21 +25,10 @@ pub async fn update_username(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    // Check if new username is taken by someone else
+    // Normalize and validate the new username
     let normalized = new_username.trim().to_lowercase();
     if !is_valid_username(&normalized) {
         return Err(AppError::BadRequest("Invalid username".into()));
-    }
-    let new_username_key = RedisKey::username(KeyPart::Str(normalized));
-    let existing_user_id: Option<String> = conn
-        .get(&new_username_key)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    if let Some(existing) = existing_user_id {
-        if existing != user_id.to_string() {
-            return Err(AppError::BadRequest("Username already taken".into()));
-        }
     }
 
     // Get the user's current username, if any
@@ -49,15 +38,37 @@ pub async fn update_username(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    // Delete the old username key if it exists
-    if let Some(old_username) = current_username {
-        if old_username != new_username {
-            let old_username_key = RedisKey::username(KeyPart::Str(old_username));
-            let _: () = conn
-                .del(&old_username_key)
-                .await
-                .map_err(AppError::RedisCommandError)?;
+    // Early return if the username is the same (case-insensitive)
+    if let Some(ref current) = current_username {
+        if current.to_lowercase() == normalized {
+            tracing::info!(
+                "Username '{}' is already set for user {}, no changes needed",
+                new_username,
+                user_id
+            );
+            return Ok(new_username);
         }
+    }
+
+    // Check if new username is taken by someone else
+    let usernames_hash = RedisKey::users_usernames();
+    let existing_user_id: Option<String> = conn
+        .hget(&usernames_hash, &normalized)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if let Some(existing) = existing_user_id {
+        if existing != user_id.to_string() {
+            return Err(AppError::BadRequest("Username already taken".into()));
+        }
+    }
+
+    // Delete the old username from hash if it exists
+    if let Some(old_username) = current_username {
+        let _: () = conn
+            .hdel(&usernames_hash, old_username.to_lowercase())
+            .await
+            .map_err(AppError::RedisCommandError)?;
     }
 
     // Set the new username in user's hash
@@ -66,9 +77,9 @@ pub async fn update_username(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    // Create the new username → user_id mapping
+    // Create the new username → user_id mapping in hash
     let _: () = conn
-        .set(&new_username_key, user_id.to_string())
+        .hset(&usernames_hash, &normalized, user_id.to_string())
         .await
         .map_err(AppError::RedisCommandError)?;
 
