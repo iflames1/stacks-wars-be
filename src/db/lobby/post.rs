@@ -47,7 +47,7 @@ pub async fn create_lobby(
         contract_address: pool.as_ref().map(|p| p.contract_address.clone()),
         created_at: Utc::now(),
         entry_amount: pool.as_ref().map(|p| p.entry_amount),
-        current_amount: pool.as_ref().map(|p| p.entry_amount),
+        current_amount: pool.as_ref().map(|p| p.current_amount),
     };
 
     // Store pool if it exists
@@ -56,7 +56,7 @@ pub async fn create_lobby(
             &pool_input.tx_id,
             &creator_user.wallet_address,
             &pool_input.contract_address,
-            pool_input.entry_amount,
+            pool_input.current_amount,
         )
         .await?;
     }
@@ -118,6 +118,7 @@ pub async fn create_lobby(
             description: lobby_info.description.clone(),
             game: lobby_info.game,
             entry_amount: pool.as_ref().and_then(|p| Some(p.entry_amount)),
+            current_amount: pool.as_ref().map(|p| p.current_amount),
             contract_address: lobby_info.contract_address.clone(),
             creator_name: creator_user.display_name.or(creator_user.username),
             wallet_address: creator_user.wallet_address.clone(),

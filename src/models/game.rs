@@ -281,6 +281,7 @@ impl Player {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LobbyPoolInput {
     pub entry_amount: f64,
+    pub current_amount: f64,
     pub contract_address: String,
     pub tx_id: String,
 }

@@ -52,22 +52,48 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
 
     // Try wallet lookup first
     let wallet_key = RedisKey::wallet(KeyPart::Str(identifier.clone()));
-    if let Ok(Some(user_id_str)) = conn.get::<_, Option<String>>(&wallet_key).await {
-        return Uuid::parse_str(&user_id_str)
-            .map_err(|e| AppError::Deserialization(format!("Invalid UUID: {}", e)));
+    tracing::debug!("Checking wallet key: {}", wallet_key);
+
+    match conn.get::<_, Option<String>>(&wallet_key).await {
+        Ok(Some(user_id_str)) => {
+            tracing::info!("Found user ID via wallet lookup: {}", user_id_str);
+            return Uuid::parse_str(&user_id_str).map_err(|e| {
+                AppError::Deserialization(format!("Invalid UUID from wallet lookup: {}", e))
+            });
+        }
+        Ok(None) => {
+            tracing::debug!("No user found for wallet address: {}", identifier);
+        }
+        Err(e) => {
+            tracing::error!("Error during wallet lookup: {}", e);
+        }
     }
 
-    // Fallback to username
-    let username_key = RedisKey::username(KeyPart::Str(identifier));
-    let user_id_str: String = conn
-        .get(&username_key)
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    let username_key = RedisKey::username(KeyPart::Str(identifier.clone()));
+    tracing::debug!("Checking username key: {}", username_key);
 
-    let user_id = Uuid::parse_str(&user_id_str)
-        .map_err(|e| AppError::Deserialization(format!("Invalid UUID: {}", e)))?;
-
-    Ok(user_id)
+    match conn.get::<_, Option<String>>(&username_key).await {
+        Ok(Some(user_id_str)) => {
+            tracing::info!("Found user ID via username lookup: {}", user_id_str);
+            Uuid::parse_str(&user_id_str).map_err(|e| {
+                AppError::Deserialization(format!("Invalid UUID from username lookup: {}", e))
+            })
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "User not found for identifier '{}' in both wallet and username lookups",
+                identifier
+            );
+            Err(AppError::NotFound(format!(
+                "User not found for identifier: {}",
+                identifier
+            )))
+        }
+        Err(e) => {
+            tracing::error!("Error during username lookup for '{}': {}", identifier, e);
+            Err(AppError::RedisCommandError(e))
+        }
+    }
 }
 
 pub async fn get_all_users(redis: RedisClient) -> Result<Vec<User>, AppError> {
