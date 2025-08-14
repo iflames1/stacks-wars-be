@@ -6,16 +6,15 @@ pub struct RedisKey;
 
 impl RedisKey {
     pub fn user(user_id: KeyPart) -> String {
-        format!("users:{user_id}")
+        format!("users:data:{user_id}")
     }
 
-    pub fn wallet(wallet_address: KeyPart) -> String {
-        format!("user_wallets:{wallet_address}")
+    pub fn users_wallets() -> String {
+        "users:wallets".to_string()
     }
 
-    pub fn username(username: KeyPart) -> String {
-        let username = username.to_string().to_lowercase();
-        format!("usernames:{username}")
+    pub fn users_usernames() -> String {
+        "users:usernames".to_string()
     }
 
     pub fn game(game_id: KeyPart) -> String {
@@ -77,7 +76,7 @@ impl RedisKey {
     // Key parsing utilities
     pub fn extract_user_id_from_user_key(key: &str) -> Option<Uuid> {
         // Parse "users:{uuid}" to extract user_id
-        if let Some(user_id_str) = key.strip_prefix("users:") {
+        if let Some(user_id_str) = key.strip_prefix("users:data:") {
             Uuid::parse_str(user_id_str).ok()
         } else {
             None

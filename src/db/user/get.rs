@@ -50,13 +50,17 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    // Try wallet lookup first
-    let wallet_key = RedisKey::wallet(KeyPart::Str(identifier.clone()));
-    tracing::debug!("Checking wallet key: {}", wallet_key);
+    tracing::info!("Looking up user ID for identifier: '{}'", identifier);
 
-    match conn.get::<_, Option<String>>(&wallet_key).await {
+    // Try wallet lookup first using hash
+    let wallets_hash = RedisKey::users_wallets();
+
+    match conn
+        .hget::<_, _, Option<String>>(&wallets_hash, &identifier)
+        .await
+    {
         Ok(Some(user_id_str)) => {
-            tracing::info!("Found user ID via wallet lookup: {}", user_id_str);
+            tracing::info!("Found user ID via wallet hash lookup: {}", user_id_str);
             return Uuid::parse_str(&user_id_str).map_err(|e| {
                 AppError::Deserialization(format!("Invalid UUID from wallet lookup: {}", e))
             });
@@ -69,19 +73,28 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
         }
     }
 
-    let username_key = RedisKey::username(KeyPart::Str(identifier.clone()));
-    tracing::debug!("Checking username key: {}", username_key);
+    // Fallback to username lookup using hash
+    let usernames_hash = RedisKey::users_usernames();
+    let normalized_username = identifier.to_lowercase();
+    tracing::debug!(
+        "Checking username '{}' in hash: {}",
+        normalized_username,
+        usernames_hash
+    );
 
-    match conn.get::<_, Option<String>>(&username_key).await {
+    match conn
+        .hget::<_, _, Option<String>>(&usernames_hash, &normalized_username)
+        .await
+    {
         Ok(Some(user_id_str)) => {
-            tracing::info!("Found user ID via username lookup: {}", user_id_str);
+            tracing::info!("Found user ID via username hash lookup: {}", user_id_str);
             Uuid::parse_str(&user_id_str).map_err(|e| {
                 AppError::Deserialization(format!("Invalid UUID from username lookup: {}", e))
             })
         }
         Ok(None) => {
             tracing::warn!(
-                "User not found for identifier '{}' in both wallet and username lookups",
+                "User not found for identifier '{}' in both wallet and username hashes",
                 identifier
             );
             Err(AppError::NotFound(format!(
