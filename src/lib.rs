@@ -3,13 +3,15 @@ mod db;
 pub mod errors;
 pub mod games;
 mod http;
+mod middleware;
 mod models;
 mod state;
 pub mod ws;
 
-use axum::Router;
+use axum::{Router, middleware as axum_middleware};
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
+use middleware::{cors_layer, create_global_rate_limiter, rate_limit_middleware};
 use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap, LexiWarsLobbies, LobbyCountdowns};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use teloxide::Bot;
@@ -48,9 +50,16 @@ pub async fn start_server() {
         lobby_countdowns,
     };
 
+    // Create rate limiters
+    let global_rate_limiter = create_global_rate_limiter();
+
     let app = Router::new()
         .merge(http::create_http_routes(state.clone()))
         .merge(ws::create_ws_routes(state))
+        .layer(axum_middleware::from_fn(move |req, next| {
+            rate_limit_middleware(global_rate_limiter.clone(), req, next)
+        }))
+        .layer(cors_layer())
         .fallback(|| async { "404 Not Found" });
 
     let port = std::env::var("PORT")
