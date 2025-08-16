@@ -1,5 +1,5 @@
 use axum::{
-    Router,
+    Router, middleware as axum_middleware,
     routing::{get, patch, post},
 };
 
@@ -19,14 +19,39 @@ use crate::{
             update_username_handler,
         },
     },
+    middleware::{create_api_rate_limiter, create_auth_rate_limiter, rate_limit_middleware},
     state::AppState,
 };
 
 pub fn create_http_routes(state: AppState) -> Router {
-    Router::new()
+    let api_rate_limiter = create_api_rate_limiter();
+    let auth_rate_limiter = create_auth_rate_limiter();
+
+    // Routes that need stricter rate limiting (user creation, lobby join/leave)
+    let auth_routes = Router::new()
         .route("/user", post(create_user_handler))
         .route("/game", post(create_game_handler))
         .route("/lobby", post(create_lobby_handler))
+        .route("/lobby/{lobby_id}/join", patch(join_lobby_handler))
+        .route("/lobby/{lobby_id}/leave", patch(leave_lobby_handler))
+        .route("/user/username", patch(update_username_handler))
+        .route("/user/display_name", patch(update_display_name_handler))
+        .route("/lobby/{lobby_id}/kick", patch(kick_player_handler))
+        .route("/lobby/{lobby_id}/state", patch(update_lobby_state_handler))
+        .route(
+            "/lobby/{lobby_id}/player-state",
+            patch(update_player_state_handler),
+        )
+        .route(
+            "/lobby/{lobby_id}/claim-state",
+            patch(update_claim_state_handler),
+        )
+        .layer(axum_middleware::from_fn(move |req, next| {
+            rate_limit_middleware(auth_rate_limiter.clone(), req, next)
+        }));
+
+    // Regular API routes with moderate rate limiting
+    let api_routes = Router::new()
         .route("/user/stat", get(get_user_stat_handler))
         .route("/user/{user_id}", get(get_user_handler))
         .route("/user/lobbies", get(get_player_lobbies_handler))
@@ -44,20 +69,13 @@ pub fn create_http_routes(state: AppState) -> Router {
             get(get_lobby_extended_handler),
         )
         .route("/lobby/players/{lobby_id}", get(get_players_handler))
-        .route("/user/username", patch(update_username_handler))
-        .route("/user/display_name", patch(update_display_name_handler))
-        .route("/lobby/{lobby_id}/join", patch(join_lobby_handler))
-        .route("/lobby/{lobby_id}/leave", patch(leave_lobby_handler))
-        .route("/lobby/{lobby_id}/kick", patch(kick_player_handler))
-        .route("/lobby/{lobby_id}/state", patch(update_lobby_state_handler))
-        .route(
-            "/lobby/{lobby_id}/player-state",
-            patch(update_player_state_handler),
-        )
-        .route(
-            "/lobby/{lobby_id}/claim-state",
-            patch(update_claim_state_handler),
-        )
         .route("/leaderboard", get(get_leaderboard_handler))
+        .layer(axum_middleware::from_fn(move |req, next| {
+            rate_limit_middleware(api_rate_limiter.clone(), req, next)
+        }));
+
+    Router::new()
+        .merge(auth_routes)
+        .merge(api_routes)
         .with_state(state)
 }
