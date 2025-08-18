@@ -14,6 +14,7 @@ use crate::{
             kick_player_handler, leave_lobby_handler, update_claim_state_handler,
             update_lobby_state_handler, update_player_state_handler,
         },
+        token_info::get_token_info_handler,
         user::{
             create_user_handler, get_user_handler, update_display_name_handler,
             update_username_handler,
@@ -70,6 +71,10 @@ pub fn create_http_routes(state: AppState) -> Router {
         )
         .route("/lobby/players/{lobby_id}", get(get_players_handler))
         .route("/leaderboard", get(get_leaderboard_handler))
+        .route(
+            "/token_info/{contract_address}",
+            get(get_token_info_handler),
+        )
         .layer(axum_middleware::from_fn(move |req, next| {
             rate_limit_middleware(api_rate_limiter.clone(), req, next)
         }));
