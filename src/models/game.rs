@@ -284,6 +284,12 @@ pub struct LobbyPoolInput {
     pub current_amount: f64,
     pub contract_address: String,
     pub tx_id: String,
+    #[serde(default = "default_token_symbol")]
+    pub token_symbol: Option<String>,
+}
+
+fn default_token_symbol() -> Option<String> {
+    Some("STX".to_string())
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -333,6 +339,7 @@ pub struct LobbyInfo {
     pub contract_address: Option<String>,
     pub entry_amount: Option<f64>,
     pub current_amount: Option<f64>,
+    pub token_symbol: Option<String>,
 }
 
 impl LobbyInfo {
@@ -357,6 +364,9 @@ impl LobbyInfo {
         }
         if let Some(current) = self.current_amount {
             fields.push(("current_amount".into(), current.to_string()));
+        }
+        if let Some(token) = &self.token_symbol {
+            fields.push(("token_symbol".into(), token.clone()));
         }
         fields
     }
@@ -426,6 +436,7 @@ impl LobbyInfo {
             contract_address: map.get("contract_address").cloned(),
             entry_amount: map.get("entry_amount").and_then(|s| s.parse().ok()),
             current_amount: map.get("current_amount").and_then(|s| s.parse().ok()),
+            token_symbol: map.get("token_symbol").cloned(),
         };
 
         Ok((lobby, creator_id, game_id))
