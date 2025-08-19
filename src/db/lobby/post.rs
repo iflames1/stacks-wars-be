@@ -49,6 +49,7 @@ pub async fn create_lobby(
         entry_amount: pool.as_ref().map(|p| p.entry_amount),
         current_amount: pool.as_ref().map(|p| p.current_amount),
         token_symbol: pool.as_ref().and_then(|p| p.token_symbol.clone()),
+        token_id: pool.as_ref().and_then(|p| p.token_id.clone()),
     };
 
     // Store pool if it exists
