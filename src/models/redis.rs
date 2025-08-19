@@ -33,13 +33,16 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:player:{player_id}")
     }
 
-    // Change this to store just a set of user IDs instead of full player hashes
     pub fn lobby_connected_players(lobby_id: KeyPart) -> String {
         format!("lobbies:{lobby_id}:connected_players")
     }
 
     pub fn lobbies_state(state: &LobbyState) -> String {
         format!("lobbies:{}:state", format!("{state:?}").to_lowercase())
+    }
+
+    pub fn lobbies_all() -> String {
+        "lobbies:all".to_string()
     }
 
     pub fn lobby_chat(lobby_id: KeyPart) -> String {

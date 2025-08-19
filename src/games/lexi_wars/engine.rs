@@ -37,8 +37,11 @@ pub fn calculate_wars_point(lobby: &LexiWars, rank: usize, prize: Option<f64>) -
 
     // Add pool bonus if there's a pool (prize and entry amount exist)
     if let (Some(prize_amount), Some(entry_amount)) = (prize, lobby.info.entry_amount) {
-        let pool_bonus =
-            (prize_amount / lobby.connected_players_count as f64) + (entry_amount / 5.0);
+        let pool_bonus = if entry_amount != 0.0 {
+            (prize_amount / lobby.connected_players_count as f64) + (entry_amount / 5.0)
+        } else {
+            0.0
+        };
         total_point += pool_bonus;
     }
 

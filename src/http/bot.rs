@@ -18,6 +18,7 @@ pub struct BotNewLobbyPayload {
     pub contract_address: Option<String>,
     pub entry_amount: Option<f64>,
     pub current_amount: Option<f64>,
+    pub token_symbol: Option<String>,
     pub creator_name: Option<String>,
     pub wallet_address: String,
 }
@@ -70,11 +71,13 @@ pub async fn broadcast_lobby_created(
         Some(amount) if amount == 0.0 => {
             // Sponsored lobby - show pool size instead of entry fee
             let pool_size = payload.current_amount.unwrap_or(0.0);
-            format!("🎁 <b>Pool Size:</b> {} STX (Sponsored)\n", pool_size)
+            let token = payload.token_symbol.as_deref().unwrap_or("STX");
+            format!("🎁 <b>Pool Size:</b> {} {} (Sponsored)\n", pool_size, token)
         }
         Some(amount) => {
             // Regular paid lobby - show entry fee
-            format!("💵 <b>Entry Fee:</b> {} STX\n", amount)
+            let token = payload.token_symbol.as_deref().unwrap_or("STX");
+            format!("💵 <b>Entry Fee:</b> {} {}\n", amount, token)
         }
         None => String::new(), // No pool configured
     };

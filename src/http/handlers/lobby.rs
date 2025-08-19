@@ -34,6 +34,8 @@ pub struct CreateLobbyPayload {
     pub current_amount: Option<f64>,
     pub contract_address: Option<String>,
     pub tx_id: Option<String>,
+    pub token_symbol: Option<String>,
+    pub token_id: Option<String>,
     pub game_id: Uuid,
 }
 
@@ -59,6 +61,8 @@ pub async fn create_lobby_handler(
                 current_amount,
                 contract_address,
                 tx_id,
+                token_symbol: payload.token_symbol.clone().or(Some("STX".to_string())),
+                token_id: payload.token_id.clone(),
             })
         }
         _ => None,
