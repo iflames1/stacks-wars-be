@@ -1,6 +1,8 @@
 use axum::{extract::Path, http::StatusCode, response::Json};
 use serde::{Deserialize, Serialize};
 
+use crate::errors::AppError;
+
 #[derive(Debug, Deserialize)]
 struct TokenApiResponse {
     contract_id: String,
@@ -26,35 +28,27 @@ pub struct TokenInfo {
     pub minimum_amount: f64,
 }
 
-pub async fn get_token_info_handler(
-    Path(contract_address): Path<String>,
-) -> Result<Json<TokenInfo>, (StatusCode, String)> {
+pub async fn get_token_info(contract_address: String) -> Result<TokenInfo, AppError> {
     let url = format!("https://api.stxtools.io/tokens/{}", contract_address);
 
     let res = reqwest::get(&url).await.map_err(|e| {
         tracing::error!("Failed to fetch token info: {}", e);
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Failed to fetch token info: {}", e),
-        )
+        AppError::BadRequest(format!("Failed to fetch token info: {}", e))
     })?;
 
     if !res.status().is_success() {
         let error_msg = format!("Token not found or API error: {}", contract_address);
         tracing::error!("{}", error_msg);
-        return Err((StatusCode::NOT_FOUND, error_msg));
+        return Err(AppError::BadRequest(format!("{}", error_msg)));
     }
 
     let token_data: TokenApiResponse = res.json().await.map_err(|e| {
         tracing::error!("Invalid JSON response: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Invalid JSON response: {}", e),
-        )
+        AppError::BadRequest(format!("Invalid JSON response: {}", e))
     })?;
 
     // Calculate minimum amount for $30 worth of tokens
-    let minimum_usd_value = 0.1;
+    let minimum_usd_value = 30.0;
     let minimum_amount = if token_data.metrics.price_usd > 0.0 {
         let min_token_amount = minimum_usd_value / token_data.metrics.price_usd;
 
@@ -76,13 +70,42 @@ pub async fn get_token_info_handler(
         0.0
     };
 
-    let token_info = TokenInfo {
+    Ok(TokenInfo {
         contract_id: token_data.contract_id,
         symbol: token_data.symbol,
         name: token_data.name,
         decimals: token_data.decimals,
         price_usd: token_data.metrics.price_usd,
         minimum_amount,
+    })
+}
+
+pub async fn get_token_info_handler(
+    Path(contract_address): Path<String>,
+) -> Result<Json<TokenInfo>, (StatusCode, String)> {
+    get_token_info(contract_address)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+pub async fn get_testnet_token_info_handler(
+    Path(contract_address): Path<String>,
+) -> Result<Json<TokenInfo>, (StatusCode, String)> {
+    if &contract_address == "stx" {
+        return get_token_info(contract_address)
+            .await
+            .map(Json)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+    }
+    // Return fixed testnet token info for any other contract address
+    let token_info = TokenInfo {
+        contract_id: contract_address.clone(),
+        symbol: "TEST".to_string(),
+        name: "Test Token".to_string(),
+        decimals: 6,
+        price_usd: 0.01,
+        minimum_amount: 3000.0,
     };
 
     Ok(Json(token_info))
