@@ -19,13 +19,13 @@ pub fn create_global_rate_limiter() -> IpRateLimiter {
 
 pub fn create_api_rate_limiter() -> IpRateLimiter {
     // Allow 300 requests per minute per IP for API endpoints
-    let quota = Quota::per_minute(NonZeroU32::new(300).unwrap());
+    let quota = Quota::per_minute(NonZeroU32::new(1000).unwrap());
     Arc::new(RateLimiter::keyed(quota))
 }
 
 pub fn create_auth_rate_limiter() -> IpRateLimiter {
     // Allow 50 requests per minute per IP for auth endpoints (stricter)
-    let quota = Quota::per_minute(NonZeroU32::new(50).unwrap());
+    let quota = Quota::per_minute(NonZeroU32::new(300).unwrap());
     Arc::new(RateLimiter::keyed(quota))
 }
 
