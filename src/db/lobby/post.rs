@@ -93,7 +93,7 @@ pub async fn create_lobby(
         )
         .ignore()
         .cmd("ZADD")
-        .arg("lobbies:all")
+        .arg(RedisKey::lobbies_all())
         .arg(created_score)
         .arg(lobby_id.to_string())
         .ignore()

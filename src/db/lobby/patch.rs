@@ -107,7 +107,7 @@ pub async fn leave_lobby(
     if m.is_empty() {
         return Err(AppError::NotFound(format!("Lobby {} not found", lobby_id)));
     }
-    let (info, creator_id, _game_id) = LobbyInfo::from_redis_hash_partial(&m)?;
+    let (info, creator_id, game_id) = LobbyInfo::from_redis_hash_partial(&m)?;
 
     if creator_id == user_id {
         // Creator leaving - delete entire lobby
@@ -119,7 +119,7 @@ pub async fn leave_lobby(
             .map_err(AppError::RedisCommandError)?;
 
         if keys.len() == 1 {
-            // Only creator left - delete lobby
+            // Only creator left - delete lobby and clean up all references
             let _: () = conn
                 .del(&lobby_key)
                 .await
@@ -129,6 +129,30 @@ pub async fn leave_lobby(
             for key in keys {
                 let _: () = conn.del(key).await.map_err(AppError::RedisCommandError)?;
             }
+
+            // Clean up sorted sets - remove lobby from all relevant sets
+            let lobby_id_str = lobby_id.to_string();
+
+            // Remove from lobbies:all
+            let _: () = conn
+                .zrem(RedisKey::lobbies_all(), &lobby_id_str)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+
+            // Remove from lobbies state set
+            let _: () = conn
+                .zrem(RedisKey::lobbies_state(&info.state), &lobby_id_str)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+
+            // Remove from game lobbies set
+            let _: () = conn
+                .zrem(RedisKey::game_lobbies(KeyPart::Id(game_id)), &lobby_id_str)
+                .await
+                .map_err(AppError::RedisCommandError)?;
+
+            // Update game active lobby count
+            update_game_active_lobby(game_id, false, redis.clone()).await?;
         } else {
             return Err(AppError::BadRequest(
                 "Creator cannot leave lobby with players".into(),
