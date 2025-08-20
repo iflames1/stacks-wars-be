@@ -1,6 +1,10 @@
 use crate::{
     db::{
-        lobby::{get::get_lobby_players, join_requests::remove_join_request, patch},
+        lobby::{
+            get::{get_lobby_info, get_lobby_players},
+            join_requests::remove_join_request,
+            patch,
+        },
         user::patch::decrease_wars_point,
     },
     models::{game::Player, lobby::LobbyServerMessage},
@@ -37,26 +41,50 @@ pub async fn leave_lobby(
             );
         }
 
-        // Subtract 10 wars points for leaving the lobby
-        match decrease_wars_point(player.id, 10.0, redis.clone()).await {
-            Ok(new_total) => {
-                tracing::info!(
-                    "Subtracted 10 wars points from player {} for leaving lobby. New total: {}",
-                    player.id,
-                    new_total
-                );
+        match get_lobby_info(lobby_id, redis.clone()).await {
+            Ok(lobby_info) => {
+                if lobby_info.creator.id != player.id {
+                    // Subtract 10 wars points for leaving the lobby (only for non-creators)
+                    match decrease_wars_point(player.id, 10.0, redis.clone()).await {
+                        Ok(new_total) => {
+                            tracing::info!(
+                                "Subtracted 10 wars points from player {} for leaving lobby. New total: {}",
+                                player.id,
+                                new_total
+                            );
 
-                let wars_point_msg = LobbyServerMessage::WarsPointDeduction {
-                    amount: 10.0,
-                    new_total,
-                    reason: "Left lobby".to_string(),
-                };
-                send_to_player(player.id, lobby_id, connections, &wars_point_msg, redis).await;
+                            let wars_point_msg = LobbyServerMessage::WarsPointDeduction {
+                                amount: 10.0,
+                                new_total,
+                                reason: "Left lobby".to_string(),
+                            };
+                            send_to_player(
+                                player.id,
+                                lobby_id,
+                                connections,
+                                &wars_point_msg,
+                                redis,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to subtract wars points from player {} for leaving lobby: {}",
+                                player.id,
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    tracing::info!(
+                        "Player {} is the lobby creator, no wars points deducted for leaving",
+                        player.id
+                    );
+                }
             }
             Err(e) => {
                 tracing::error!(
-                    "Failed to subtract wars points from player {} for leaving lobby: {}",
-                    player.id,
+                    "Failed to get lobby info to check creator: {}. Proceeding without wars point deduction.",
                     e
                 );
             }

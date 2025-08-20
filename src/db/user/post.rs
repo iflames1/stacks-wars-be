@@ -67,6 +67,9 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
     };
 
     let user_key = RedisKey::user(KeyPart::Id(user.id));
+    let wallets_hash = RedisKey::users_wallets();
+    let points_key = RedisKey::users_points();
+    let user_id_str = user.id.to_string();
 
     let user_hash = vec![
         ("id", user.id.to_string()),
@@ -74,15 +77,22 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
         ("wars_point", user.wars_point.to_string()),
     ];
 
+    let mut pipe = redis::pipe();
+
     // Store user as Redis hash
-    let _: () = conn
-        .hset_multiple(&user_key, &user_hash)
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    pipe.cmd("HSET").arg(&user_key).arg(&user_hash);
 
     // Store wallet -> user ID mapping in hash (more memory efficient)
-    let _: () = conn
-        .hset(&wallets_hash, &wallet_address, user.id.to_string())
+    pipe.cmd("HSET")
+        .arg(&wallets_hash)
+        .arg(&wallet_address)
+        .arg(&user_id_str);
+
+    // Initialize user in wars_points sorted set with 0 points
+    pipe.cmd("ZADD").arg(&points_key).arg(0.0).arg(&user_id_str);
+
+    let _: () = pipe
+        .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
 

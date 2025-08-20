@@ -1,71 +1,97 @@
 use crate::{
-    db::{
-        lobby::get::get_lobby_info,
-        user::get::{get_all_users, get_user_by_id},
-    },
+    db::user::get::get_user_by_id,
     errors::AppError,
-    models::{
-        leaderboard::LeaderBoard,
-        redis::{KeyPart, RedisKey},
-    },
+    models::{leaderboard::LeaderBoard, redis::RedisKey},
     state::RedisClient,
 };
 use redis::AsyncCommands;
-use std::collections::HashMap;
 use uuid::Uuid;
 
-pub async fn get_leaderboard(redis: RedisClient) -> Result<Vec<LeaderBoard>, AppError> {
+pub async fn get_leaderboard(
+    limit: Option<u64>,
+    redis: RedisClient,
+) -> Result<Vec<LeaderBoard>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    // Get all users
-    let users = get_all_users(redis.clone()).await?;
-    let mut leaderboards = Vec::new();
+    let points_key = RedisKey::users_points();
 
-    for user in users {
-        // Calculate stats for each user
-        let (total_matches, total_wins) = calculate_match_stats(user.id, &mut conn).await?;
-        let win_rate = if total_matches > 0 {
-            (total_wins as f64 / total_matches as f64) * 100.0
+    let top_users: Vec<(String, f64)> = if let Some(limit) = limit {
+        conn.zrevrange_withscores(&points_key, 0, limit as isize - 1)
+            .await
+            .map_err(AppError::RedisCommandError)?
+    } else {
+        conn.zrevrange_withscores(&points_key, 0, -1)
+            .await
+            .map_err(AppError::RedisCommandError)?
+    };
+
+    if top_users.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Get user IDs for batch operations
+    let user_ids: Vec<String> = top_users.iter().map(|(id, _)| id.clone()).collect();
+
+    let matches_key = RedisKey::users_matches();
+    let wins_key = RedisKey::users_wins();
+    let pnl_key = RedisKey::users_pnl();
+
+    let mut pipe = redis::pipe();
+    for user_id in &user_ids {
+        pipe.cmd("ZSCORE").arg(&matches_key).arg(user_id);
+        pipe.cmd("ZSCORE").arg(&wins_key).arg(user_id);
+        pipe.cmd("HGET").arg(&pnl_key).arg(user_id);
+    }
+
+    let results: Vec<(Option<f64>, Option<f64>, Option<String>)> = pipe
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    // Process results
+    let mut leaderboard = Vec::new();
+    for (idx, ((user_id, wars_point), (matches_opt, wins_opt, pnl_opt))) in
+        top_users.into_iter().zip(results.into_iter()).enumerate()
+    {
+        let user_uuid = match Uuid::parse_str(&user_id) {
+            Ok(uuid) => uuid,
+            Err(_) => continue,
+        };
+
+        let matches = matches_opt.unwrap_or(0.0) as u64;
+        let wins = wins_opt.unwrap_or(0.0) as u64;
+        let pnl = pnl_opt.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+
+        // Get user details using existing function
+        let user = match get_user_by_id(user_uuid, redis.clone()).await {
+            Ok(mut user) => {
+                // Update wars_point from the sorted set (in case it's more recent)
+                user.wars_point = wars_point;
+                user
+            }
+            Err(_) => continue, // Skip if user doesn't exist
+        };
+
+        let win_rate = if matches > 0 {
+            (wins as f64 / matches as f64) * 100.0
         } else {
             0.0
         };
-        let pnl = calculate_pnl(user.id, redis.clone()).await?;
 
-        leaderboards.push(LeaderBoard {
-            user: user.clone(),
+        leaderboard.push(LeaderBoard {
+            user,
             win_rate,
-            rank: 0, // Will be set after sorting
-            total_match: total_matches,
-            total_wins,
+            rank: (idx + 1) as u64,
+            total_match: matches,
+            total_wins: wins,
             pnl,
         });
     }
 
-    // Sort by wars_point (descending), then by win_rate (descending) as tiebreaker
-    leaderboards.sort_by(|a, b| {
-        let wars_point_cmp = b
-            .user
-            .wars_point
-            .partial_cmp(&a.user.wars_point)
-            .unwrap_or(std::cmp::Ordering::Equal);
-        if wars_point_cmp == std::cmp::Ordering::Equal {
-            b.win_rate
-                .partial_cmp(&a.win_rate)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        } else {
-            wars_point_cmp
-        }
-    });
-
-    // Assign ranks
-    for (index, leaderboard) in leaderboards.iter_mut().enumerate() {
-        leaderboard.rank = (index + 1) as u64;
-    }
-
-    Ok(leaderboards)
+    Ok(leaderboard)
 }
 
 pub async fn get_user_stat(user_id: Uuid, redis: RedisClient) -> Result<LeaderBoard, AppError> {
@@ -74,142 +100,46 @@ pub async fn get_user_stat(user_id: Uuid, redis: RedisClient) -> Result<LeaderBo
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    // Get the specific user
     let user = get_user_by_id(user_id, redis.clone()).await?;
 
-    // Calculate stats for this user
-    let (total_matches, total_wins) = calculate_match_stats(user.id, &mut conn).await?;
-    let win_rate = if total_matches > 0 {
-        (total_wins as f64 / total_matches as f64) * 100.0
+    let user_id_str = user_id.to_string();
+    let matches_key = RedisKey::users_matches();
+    let wins_key = RedisKey::users_wins();
+    let pnl_key = RedisKey::users_pnl();
+    let points_key = RedisKey::users_points();
+
+    // Use pipeline for efficiency
+    let mut pipe = redis::pipe();
+    pipe.cmd("ZSCORE").arg(&matches_key).arg(&user_id_str);
+    pipe.cmd("ZSCORE").arg(&wins_key).arg(&user_id_str);
+    pipe.cmd("HGET").arg(&pnl_key).arg(&user_id_str);
+    pipe.cmd("ZREVRANK").arg(&points_key).arg(&user_id_str); // Get rank by wars_point
+
+    let results: (Option<f64>, Option<f64>, Option<String>, Option<i64>) = pipe
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    let matches = results.0.unwrap_or(0.0) as u64;
+    let wins = results.1.unwrap_or(0.0) as u64;
+    let pnl = results.2.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+
+    // Redis ZREVRANK returns 0-based rank, so add 1 for 1-based rank
+    // If user is not in the sorted set, rank will be 0, hmmm
+    let rank = results.3.map(|r| (r + 1) as u64).unwrap_or(0);
+
+    let win_rate = if matches > 0 {
+        (wins as f64 / matches as f64) * 100.0
     } else {
         0.0
     };
-    let pnl = calculate_pnl(user.id, redis.clone()).await?;
-
-    // To get the rank, we need to get all users and sort them
-    let all_leaderboards = get_leaderboard(redis.clone()).await?;
-
-    // Find this user's rank in the global leaderboard
-    let rank = all_leaderboards
-        .iter()
-        .find(|lb| lb.user.id == user_id)
-        .map(|lb| lb.rank)
-        .unwrap_or(0); // If user not found, rank is 0
 
     Ok(LeaderBoard {
         user,
         win_rate,
         rank,
-        total_match: total_matches,
-        total_wins,
+        total_match: matches,
+        total_wins: wins,
         pnl,
     })
-}
-
-async fn calculate_match_stats(
-    user_id: Uuid,
-    conn: &mut bb8::PooledConnection<'_, bb8_redis::RedisConnectionManager>,
-) -> Result<(u64, u64), AppError> {
-    // Get all lobbies where user was connected (using the new SET structure)
-    let pattern = "lobbies:*:connected_players";
-    let connected_keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&pattern)
-        .query_async(&mut **conn)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    let mut total_matches = 0u64;
-
-    // Check each connected players set to see if our user was in it
-    for key in connected_keys {
-        let is_member: bool = redis::cmd("SISMEMBER")
-            .arg(&key)
-            .arg(user_id.to_string())
-            .query_async(&mut **conn)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-
-        if is_member {
-            total_matches += 1;
-        }
-    }
-
-    let player_pattern = RedisKey::lobby_player(KeyPart::Wildcard, KeyPart::Id(user_id));
-    let player_keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&player_pattern)
-        .query_async(&mut **conn)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    let mut total_wins = 0u64;
-
-    for key in player_keys {
-        let player_data: HashMap<String, String> = conn
-            .hgetall(&key)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-
-        if let Some(rank_str) = player_data.get("rank") {
-            if let Ok(rank) = rank_str.parse::<usize>() {
-                if rank == 1 {
-                    total_wins += 1;
-                }
-            }
-        }
-    }
-
-    Ok((total_matches, total_wins))
-}
-
-async fn calculate_pnl(user_id: Uuid, redis: RedisClient) -> Result<f64, AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
-        bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
-    })?;
-
-    // Get all player keys for this user
-    let player_pattern = RedisKey::lobby_player(KeyPart::Wildcard, KeyPart::Id(user_id));
-    let player_keys: Vec<String> = redis::cmd("KEYS")
-        .arg(&player_pattern)
-        .query_async(&mut *conn)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    let mut total_pnl = 0.0;
-    let mut has_any_prize = false;
-
-    for key in player_keys {
-        let player_data: HashMap<String, String> = conn
-            .hgetall(&key)
-            .await
-            .map_err(AppError::RedisCommandError)?;
-
-        // Check if this player has a prize
-        if let Some(prize_str) = player_data.get("prize") {
-            if let Ok(prize) = prize_str.parse::<f64>() {
-                has_any_prize = true;
-
-                // Use centralized key parsing
-                if let Some(lobby_id) = RedisKey::extract_lobby_id_from_player_key(&key) {
-                    // Get lobby info to get entry_amount
-                    match get_lobby_info(lobby_id, redis.clone()).await {
-                        Ok(lobby_info) => {
-                            let entry_amount = lobby_info.entry_amount.unwrap_or(0.0);
-                            total_pnl += prize - entry_amount;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to get lobby info for {}: {}", lobby_id, e);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Return 0 if no prizes were found across all lobbies
-    if !has_any_prize {
-        Ok(0.0)
-    } else {
-        Ok(total_pnl)
-    }
 }

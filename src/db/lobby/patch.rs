@@ -415,7 +415,7 @@ pub async fn _remove_connected_player(
     Ok(())
 }
 
-pub async fn update_player_prize(
+pub async fn _update_player_prize(
     lobby_id: Uuid,
     player_id: Uuid,
     prize: Option<f64>,
@@ -472,7 +472,7 @@ pub async fn update_player_prize(
     Ok(())
 }
 
-pub async fn update_player_rank(
+pub async fn _update_player_rank(
     lobby_id: Uuid,
     player_id: Uuid,
     rank: usize,
