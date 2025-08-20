@@ -17,6 +17,22 @@ impl RedisKey {
         "users:usernames".to_string()
     }
 
+    pub fn users_matches() -> String {
+        "users:matches".to_string()
+    }
+
+    pub fn users_wins() -> String {
+        "users:wins".to_string()
+    }
+
+    pub fn users_pnl() -> String {
+        "users:pnl".to_string()
+    }
+
+    pub fn users_points() -> String {
+        "users:points".to_string()
+    }
+
     pub fn game(game_id: KeyPart) -> String {
         format!("games:{game_id}:data")
     }
@@ -77,7 +93,7 @@ impl RedisKey {
     }
 
     // Key parsing utilities
-    pub fn extract_user_id_from_user_key(key: &str) -> Option<Uuid> {
+    pub fn _extract_user_id_from_user_key(key: &str) -> Option<Uuid> {
         // Parse "users:{uuid}" to extract user_id
         if let Some(user_id_str) = key.strip_prefix("users:data:") {
             Uuid::parse_str(user_id_str).ok()

@@ -109,7 +109,7 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
     }
 }
 
-pub async fn get_all_users(redis: RedisClient) -> Result<Vec<User>, AppError> {
+pub async fn _get_all_users(redis: RedisClient) -> Result<Vec<User>, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -126,7 +126,7 @@ pub async fn get_all_users(redis: RedisClient) -> Result<Vec<User>, AppError> {
     let mut users = Vec::new();
 
     for key in user_keys {
-        if let Some(user_id) = RedisKey::extract_user_id_from_user_key(&key) {
+        if let Some(user_id) = RedisKey::_extract_user_id_from_user_key(&key) {
             if let Ok(user) = get_user_by_id(user_id, redis.clone()).await {
                 users.push(user);
             }
