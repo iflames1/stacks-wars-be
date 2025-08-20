@@ -20,6 +20,7 @@ pub enum LexiWarsServerMessage {
     #[serde(rename_all = "camelCase")]
     Turn {
         current_turn: Player,
+        countdown: u64,
     },
     Rule {
         rule: String,

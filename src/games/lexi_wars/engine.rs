@@ -199,6 +199,7 @@ pub fn start_auto_start_timer(
                         {
                             let turn_msg = LexiWarsServerMessage::Turn {
                                 current_turn: current_player.clone(),
+                                countdown: 15,
                             };
                             broadcast_to_lobby(&turn_msg, &lobby, &connections, &redis).await;
 
@@ -296,6 +297,7 @@ pub fn start_auto_start_timer(
                 {
                     let turn_msg = LexiWarsServerMessage::Turn {
                         current_turn: current_player.clone(),
+                        countdown: 15,
                     };
                     broadcast_to_lobby(&turn_msg, &lobby, &connections, &redis).await;
 
@@ -322,6 +324,7 @@ pub fn start_auto_start_timer(
                 broadcast_to_lobby(&start_failed_msg, &lobby, &connections, &redis).await;
 
                 // Reset lobby state
+                lobby.info.state = LobbyState::Waiting;
                 lobby.game_started = false;
                 lobby.connected_player_ids.clear();
 
@@ -365,6 +368,16 @@ fn start_turn_timer(
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
                     broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
                         .await;
+
+                    if let Some(current_player) =
+                        lobby.players.iter().find(|p| p.id == lobby.current_turn_id)
+                    {
+                        let turn_msg = LexiWarsServerMessage::Turn {
+                            current_turn: current_player.clone(),
+                            countdown: i,
+                        };
+                        broadcast_to_lobby(&turn_msg, &lobby, &connections, &redis).await;
+                    }
                 } else {
                     tracing::error!("lobby not found, stopping timer");
                     return;
@@ -502,10 +515,6 @@ fn start_turn_timer(
 
                     return;
                 }
-                if lobby.connected_player_ids.is_empty() {
-                    tracing::warn!("fix: lobby {} is now empty", lobby.info.id); // never really gets here
-                    return;
-                }
 
                 //continue game if connected_players > 1
                 if let Some(next_id) = next_player_id {
@@ -516,6 +525,7 @@ fn start_turn_timer(
                     {
                         let next_turn_msg = LexiWarsServerMessage::Turn {
                             current_turn: current_player.clone(),
+                            countdown: 15,
                         };
                         broadcast_to_lobby(&next_turn_msg, &lobby, &connections, &redis).await;
                     }
@@ -714,6 +724,7 @@ pub async fn handle_incoming_messages(
                                     {
                                         let next_turn_msg = LexiWarsServerMessage::Turn {
                                             current_turn: current_player.clone(),
+                                            countdown: 15,
                                         };
                                         broadcast_to_lobby(
                                             &next_turn_msg,

@@ -1,6 +1,9 @@
 use crate::{
     errors::AppError,
-    models::redis::{KeyPart, RedisKey},
+    models::{
+        game::ClaimState,
+        redis::{KeyPart, RedisKey},
+    },
     state::RedisClient,
 };
 use redis::AsyncCommands;
@@ -69,6 +72,13 @@ pub async fn update_user_stats(
                 .arg(&player_key)
                 .arg("prize")
                 .arg(prize_amount.to_string());
+
+            let claim_json = serde_json::to_string(&ClaimState::NotClaimed)
+                .unwrap_or_else(|_| "null".to_string());
+            pipe.cmd("HSET")
+                .arg(&player_key)
+                .arg("claim")
+                .arg(claim_json);
         }
     }
 
@@ -158,6 +168,13 @@ pub async fn _batch_update_user_stats(
                     .arg(&player_key)
                     .arg("prize")
                     .arg(prize_amount.to_string());
+
+                let claim_json = serde_json::to_string(&ClaimState::NotClaimed)
+                    .unwrap_or_else(|_| "null".to_string());
+                pipe.cmd("HSET")
+                    .arg(&player_key)
+                    .arg("claim")
+                    .arg(claim_json);
             }
         }
     }
