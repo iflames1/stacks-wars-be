@@ -322,6 +322,7 @@ pub fn start_auto_start_timer(
                 broadcast_to_lobby(&start_failed_msg, &lobby, &connections, &redis).await;
 
                 // Reset lobby state
+                lobby.info.state = LobbyState::Waiting;
                 lobby.game_started = false;
                 lobby.connected_player_ids.clear();
 
@@ -500,10 +501,6 @@ fn start_turn_timer(
                     );
                     close_connections_for_players(&all_player_ids, &connections).await;
 
-                    return;
-                }
-                if lobby.connected_player_ids.is_empty() {
-                    tracing::warn!("fix: lobby {} is now empty", lobby.info.id); // never really gets here
                     return;
                 }
 
