@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     auth::generate_jwt,
+    db::user::get::_get_all_users,
     errors::AppError,
     models::{
         User,
@@ -98,4 +99,53 @@ pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<S
 
     let token = generate_jwt(&user)?;
     Ok(token)
+}
+
+pub async fn _hydrate_users_points(redis: RedisClient) -> Result<(), AppError> {
+    tracing::info!("Starting users_points hydration...");
+
+    // Get all existing users
+    let users = _get_all_users(redis.clone()).await?;
+
+    if users.is_empty() {
+        tracing::info!("No users found to hydrate");
+        return Ok(());
+    }
+
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let points_key = RedisKey::users_points();
+
+    // Clear existing data in users_points (in case of re-hydration)
+    let _: () = conn
+        .del(&points_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    // Prepare batch data for ZADD
+    let mut zadd_args = Vec::new();
+    for user in &users {
+        zadd_args.push(user.wars_point.to_string());
+        zadd_args.push(user.id.to_string());
+    }
+
+    if !zadd_args.is_empty() {
+        // Use ZADD to batch insert all users with their wars_point scores
+        let _: () = redis::cmd("ZADD")
+            .arg(&points_key)
+            .arg(&zadd_args)
+            .query_async(&mut *conn)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
+
+    tracing::info!(
+        "Successfully hydrated users_points sorted set with {} users",
+        users.len()
+    );
+
+    Ok(())
 }
