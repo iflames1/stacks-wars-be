@@ -336,6 +336,7 @@ async fn handle_lexi_wars_socket(
             {
                 let turn_msg = LexiWarsServerMessage::Turn {
                     current_turn: current_player.clone(),
+                    countdown: 15, // Default countdown for reconnection
                 };
                 broadcast_to_player(player.id, lobby_id, &turn_msg, &connections, &redis).await;
             }
