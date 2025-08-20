@@ -15,13 +15,21 @@ use crate::{
     state::AppState,
 };
 
+#[derive(Deserialize)]
+pub struct LeaderboardQuery {
+    pub limit: Option<u64>,
+}
+
 pub async fn get_leaderboard_handler(
+    Query(query): Query<LeaderboardQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<LeaderBoard>>, (StatusCode, String)> {
-    let leaderboard = get_leaderboard(state.redis).await.map_err(|e| {
-        tracing::error!("Failed to get leaderboard: {}", e);
-        e.to_response()
-    })?;
+    let leaderboard = get_leaderboard(query.limit, state.redis)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to get leaderboard: {}", e);
+            e.to_response()
+        })?;
 
     Ok(Json(leaderboard))
 }
@@ -31,6 +39,7 @@ pub struct GetUserStatPayload {
     pub user_id: Option<Uuid>,
     pub identifier: Option<String>,
 }
+
 pub async fn get_user_stat_handler(
     Query(payload): Query<GetUserStatPayload>,
     State(state): State<AppState>,
@@ -72,6 +81,7 @@ pub async fn get_user_stat_handler(
     };
 
     tracing::info!("Fetching user stat for user_id: {}", user_id);
+
     let user_stat = get_user_stat(user_id, state.redis).await.map_err(|e| {
         tracing::error!("Failed to get user stat for {}: {}", user_id, e);
         e.to_response()
