@@ -7,14 +7,11 @@ use tokio::time::sleep;
 use crate::{
     db::{
         chat::delete::delete_lobby_chat,
+        leaderboard::patch::update_user_stats,
         lobby::{
-            patch::{
-                update_lobby_state, update_player_prize, update_player_rank,
-                update_player_used_words,
-            },
+            patch::{update_lobby_state, update_player_used_words},
             put::create_connected_players,
         },
-        user::patch::increase_wars_point,
     },
     games::lexi_wars::{
         rules::get_rule_by_index,
@@ -69,38 +66,30 @@ async fn send_rank_prize_and_wars_point(
         broadcast_to_player(player_id, lobby_id, &prize_msg, connections, redis).await;
     }
 
-    // Calculate and send wars point
+    // Calculate wars point
     let wars_point = calculate_wars_point(lobby, rank, prize);
 
-    // Update wars point in database
-    match increase_wars_point(player_id, wars_point, redis.clone()).await {
-        Ok(new_total) => {
+    // update: stats, wars point, rank, and prize all in one call
+    match update_user_stats(player_id, lobby_id, rank, prize, wars_point, redis.clone()).await {
+        Ok(()) => {
             let wars_point_msg = LexiWarsServerMessage::WarsPoint { wars_point };
             broadcast_to_player(player_id, lobby_id, &wars_point_msg, connections, redis).await;
 
             tracing::info!(
-                "Player {} earned {} wars points (rank: {}, new total: {})",
+                "Player {} earned {} wars points (rank: {}, prize: {:?})",
                 player_id,
                 wars_point,
                 rank,
-                new_total
+                prize
             );
         }
         Err(e) => {
             tracing::error!(
-                "Failed to update wars point for player {}: {}",
+                "Failed to update user stats for player {}: {}",
                 player_id,
                 e
             );
         }
-    }
-
-    if let Err(e) = update_player_rank(lobby_id, player_id, rank, redis.clone()).await {
-        tracing::error!("Error updating player rank in Redis: {}", e);
-    }
-
-    if let Err(e) = update_player_prize(lobby_id, player_id, prize, redis.clone()).await {
-        tracing::error!("Error updating player prize in Redis: {}", e);
     }
 }
 
