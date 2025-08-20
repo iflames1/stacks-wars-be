@@ -111,7 +111,7 @@ pub async fn update_display_name(
     Ok(())
 }
 
-pub async fn increase_wars_point(
+pub async fn _increase_wars_point(
     user_id: Uuid,
     amount: f64,
     redis: RedisClient,
@@ -122,10 +122,25 @@ pub async fn increase_wars_point(
     })?;
 
     let user_key = RedisKey::user(KeyPart::Id(user_id));
-    let new_total: f64 = conn
-        .hincr(&user_key, "wars_point", amount)
+    let points_key = RedisKey::users_points();
+    let user_id_str = user_id.to_string();
+
+    // Use pipeline to update both the user hash and sorted set atomically
+    let mut pipe = redis::pipe();
+    pipe.cmd("HINCRBYFLOAT")
+        .arg(&user_key)
+        .arg("wars_point")
+        .arg(amount);
+    pipe.cmd("ZINCRBY")
+        .arg(&points_key)
+        .arg(amount)
+        .arg(&user_id_str);
+
+    let results: (f64, f64) = pipe
+        .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
+    let new_total = results.0;
 
     Ok(new_total)
 }
@@ -141,12 +156,25 @@ pub async fn decrease_wars_point(
     })?;
 
     let user_key = RedisKey::user(KeyPart::Id(user_id));
+    let points_key = RedisKey::users_points();
+    let user_id_str = user_id.to_string();
 
-    // Simplified: just subtract the amount, allow negative values
-    let new_total: f64 = conn
-        .hincr(&user_key, "wars_point", -amount)
+    // Use pipeline to update both the user hash and sorted set atomically
+    let mut pipe = redis::pipe();
+    pipe.cmd("HINCRBYFLOAT")
+        .arg(&user_key)
+        .arg("wars_point")
+        .arg(-amount);
+    pipe.cmd("ZINCRBY")
+        .arg(&points_key)
+        .arg(-amount)
+        .arg(&user_id_str);
+
+    let results: (f64, f64) = pipe
+        .query_async(&mut *conn)
         .await
         .map_err(AppError::RedisCommandError)?;
+    let new_total = results.0;
 
     Ok(new_total)
 }
