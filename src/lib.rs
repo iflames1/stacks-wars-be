@@ -12,10 +12,9 @@ use axum::{Router, middleware as axum_middleware};
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use middleware::{cors_layer, create_global_rate_limiter, rate_limit_middleware};
-use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap, LexiWarsLobbies, LobbyCountdowns};
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap, LexiWarsLobbies};
+use std::net::SocketAddr;
 use teloxide::Bot;
-use tokio::sync::Mutex;
 
 use crate::games::init::initialize_games;
 
@@ -40,14 +39,12 @@ pub async fn start_server() {
     let lexi_wars_lobbies: LexiWarsLobbies = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let chat_connections: ChatConnectionInfoMap = Default::default();
-    let lobby_countdowns: LobbyCountdowns = Arc::new(Mutex::new(HashMap::new()));
     let state = AppState {
         lexi_wars_lobbies,
         connections,
         chat_connections,
         redis: redis_pool,
         bot,
-        lobby_countdowns,
     };
 
     // Create rate limiters

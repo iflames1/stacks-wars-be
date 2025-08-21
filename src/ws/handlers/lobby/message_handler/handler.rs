@@ -15,7 +15,7 @@ use crate::{
         game::Player,
         lobby::{JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
     },
-    state::{ChatConnectionInfoMap, ConnectionInfoMap, LobbyCountdowns, RedisClient},
+    state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::{
         chat::utils::send_chat_message_to_player,
         lobby::message_handler::{
@@ -239,7 +239,6 @@ pub async fn handle_incoming_messages(
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
-    countdowns: LobbyCountdowns,
 ) {
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
@@ -308,7 +307,6 @@ pub async fn handle_incoming_messages(
                                     player,
                                     connections,
                                     &redis,
-                                    &countdowns,
                                 )
                                 .await
                             }

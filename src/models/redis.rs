@@ -65,6 +65,10 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:chats")
     }
 
+    pub fn lobby_countdown(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:countdown")
+    }
+
     pub fn lobby_join_requests(lobby_id: KeyPart) -> String {
         format!("lobbies:{}:join_requests", lobby_id)
     }

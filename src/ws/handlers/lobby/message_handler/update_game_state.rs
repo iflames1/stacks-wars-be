@@ -1,5 +1,6 @@
 use crate::{
     db::lobby::{
+        countdown::{clear_lobby_countdown, set_lobby_countdown},
         get::{get_lobby_info, get_lobby_players},
         patch::update_lobby_state,
     },
@@ -7,7 +8,7 @@ use crate::{
         game::{LobbyState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
-    state::{ConnectionInfoMap, CountdownState, LobbyCountdowns, RedisClient},
+    state::{ConnectionInfoMap, RedisClient},
     ws::handlers::{
         lobby::message_handler::{
             broadcast_to_lobby,
@@ -26,7 +27,6 @@ pub async fn update_game_state(
     player: &Player,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
-    countdowns: &LobbyCountdowns,
 ) {
     let lobby_info = match get_lobby_info(lobby_id, redis.clone()).await {
         Ok(info) => info,
@@ -78,7 +78,6 @@ pub async fn update_game_state(
 
             let redis_clone = redis.clone();
             let conns_clone = connections.clone();
-            let countdowns_clone = countdowns.clone();
             let player_clone = player.clone();
             tokio::spawn(async move {
                 start_countdown(
@@ -86,7 +85,6 @@ pub async fn update_game_state(
                     player_clone,
                     redis_clone,
                     conns_clone,
-                    countdowns_clone,
                 )
                 .await;
             });
@@ -107,9 +105,8 @@ pub async fn update_game_state(
             }
         } else {
             // If game state is not InProgress, clear any existing countdown
-            {
-                let mut countdowns_guard = countdowns.lock().await;
-                countdowns_guard.remove(&lobby_id);
+            if let Err(e) = clear_lobby_countdown(lobby_id, redis.clone()).await {
+                tracing::error!("Failed to clear countdown for lobby {}: {}", lobby_id, e);
             }
         }
     }
@@ -150,21 +147,18 @@ async fn start_countdown(
     player: Player,
     redis: RedisClient,
     connections: ConnectionInfoMap,
-    countdowns: LobbyCountdowns,
 ) {
-    // Initialize countdown state
-    {
-        let mut countdowns_guard = countdowns.lock().await;
-        countdowns_guard.insert(lobby_id, CountdownState { current_time: 15 });
+    // Initialize countdown state in Redis
+    if let Err(e) = set_lobby_countdown(lobby_id, 15, redis.clone()).await {
+        tracing::error!("Failed to set countdown for lobby {}: {}", lobby_id, e);
+        return;
     }
 
     for i in (0..=15).rev() {
-        // Update countdown state
-        {
-            let mut countdowns_guard = countdowns.lock().await;
-            if let Some(countdown_state) = countdowns_guard.get_mut(&lobby_id) {
-                countdown_state.current_time = i;
-            }
+        // Update countdown state in Redis
+        if let Err(e) = set_lobby_countdown(lobby_id, i, redis.clone()).await {
+            tracing::error!("Failed to update countdown for lobby {}: {}", lobby_id, e);
+            break;
         }
 
         match get_lobby_info(lobby_id, redis.clone()).await {
@@ -173,9 +167,8 @@ async fn start_countdown(
                     tracing::info!("Countdown interrupted by state change");
 
                     // Clear countdown state
-                    {
-                        let mut countdowns_guard = countdowns.lock().await;
-                        countdowns_guard.remove(&lobby_id);
+                    if let Err(e) = clear_lobby_countdown(lobby_id, redis.clone()).await {
+                        tracing::error!("Failed to clear countdown for lobby {}: {}", lobby_id, e);
                     }
 
                     let msg = LobbyServerMessage::LobbyState {
@@ -193,9 +186,8 @@ async fn start_countdown(
                     .await;
 
                 // Clear countdown state on error
-                {
-                    let mut countdowns_guard = countdowns.lock().await;
-                    countdowns_guard.remove(&lobby_id);
+                if let Err(e) = clear_lobby_countdown(lobby_id, redis.clone()).await {
+                    tracing::error!("Failed to clear countdown for lobby {}: {}", lobby_id, e);
                 }
                 break;
             }
@@ -245,9 +237,8 @@ async fn start_countdown(
             broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
 
             // Clear countdown state since game has officially started
-            {
-                let mut countdowns_guard = countdowns.lock().await;
-                countdowns_guard.remove(&lobby_id);
+            if let Err(e) = clear_lobby_countdown(lobby_id, redis.clone()).await {
+                tracing::error!("Failed to clear countdown for lobby {}: {}", lobby_id, e);
             }
 
             if ready_players.len() > 1 {
