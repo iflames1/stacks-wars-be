@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use crate::{
     db::{
         lobby::{
+            countdown::get_lobby_countdown,
             get::{get_lobby_info, get_lobby_players},
             join_requests::get_player_join_request,
         },
@@ -22,7 +23,6 @@ use crate::{
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
 use crate::{
-    state::LobbyCountdowns,
     ws::handlers::{
         lobby::message_handler::handler::send_error_to_player,
         utils::store_connection_and_send_queued_messages,
@@ -44,7 +44,6 @@ pub async fn lobby_ws_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
     let chat_connections = state.chat_connections.clone();
-    let countdowns = state.lobby_countdowns.clone();
 
     let players = get_lobby_players(lobby_id, None, redis.clone())
         .await
@@ -59,7 +58,6 @@ pub async fn lobby_ws_handler(
                 connections,
                 chat_connections,
                 redis,
-                countdowns,
             )
         }));
     }
@@ -87,7 +85,6 @@ pub async fn lobby_ws_handler(
             connections,
             chat_connections,
             redis,
-            countdowns,
         )
     }))
 }
@@ -99,21 +96,17 @@ async fn handle_lobby_socket(
     connections: ConnectionInfoMap,
     chat_connections: ChatConnectionInfoMap,
     redis: RedisClient,
-    countdowns: LobbyCountdowns,
 ) {
     let (mut sender, receiver) = socket.split();
 
     // Check lobby state immediately upon connection
     match get_lobby_info(lobby_id, redis.clone()).await {
         Ok(lobby_info) => {
-            // Check if there's an active countdown
-            let countdown_time = {
-                let countdowns_guard = countdowns.lock().await;
-                countdowns_guard
-                    .get(&lobby_id)
-                    .map(|state| state.current_time)
-                    .unwrap_or(15)
-            };
+            // Check if there's an active countdown from Redis
+            let countdown_time = get_lobby_countdown(lobby_id, redis.clone())
+                .await
+                .unwrap_or(None)
+                .unwrap_or(15);
 
             // Always broadcast the current game state
             let ready_players =
@@ -314,7 +307,6 @@ async fn handle_lobby_socket(
         &connections,
         &chat_connections,
         redis.clone(),
-        countdowns,
     )
     .await;
 

@@ -5,6 +5,5 @@ pub mod lexi_wars;
 pub mod lobby;
 pub mod redis;
 pub mod user;
-pub mod word_loader;
 
 pub use user::User;
