@@ -121,9 +121,21 @@ pub async fn lexi_wars_handler(
 
                 let _ = socket.close().await;
             }));
+        } else if lobby.state == LobbyState::Waiting {
+            tracing::info!("Player {} trying to connect to waiting lobby", player_id);
+
+            // Send StartFailed message and close connection
+            return Ok(ws.on_upgrade(move |mut socket| async move {
+                let start_failed_msg = LexiWarsServerMessage::StartFailed;
+                let serialized = serde_json::to_string(&start_failed_msg).unwrap();
+                let _ = socket
+                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                    .await;
+                let _ = socket.close().await;
+            }));
         } else {
-            tracing::error!("lobby {} is still in waiting", lobby_id);
-            return Err(AppError::BadRequest("lobby is still in waiting".into()).to_response());
+            tracing::error!("lobby {} has unexpected state: {:?}", lobby_id, lobby.state);
+            return Err(AppError::BadRequest("lobby has unexpected state".into()).to_response());
         }
     }
 
