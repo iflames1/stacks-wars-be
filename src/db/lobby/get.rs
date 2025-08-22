@@ -227,6 +227,32 @@ pub async fn get_connected_players_ids(
     Ok(player_ids)
 }
 
+pub async fn get_current_players_ids(
+    lobby_id: Uuid,
+    redis: RedisClient,
+) -> Result<Vec<Uuid>, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let current_key = RedisKey::lobby_current_players(KeyPart::Id(lobby_id));
+
+    // Get all current player IDs from the set
+    let player_id_strings: Vec<String> = conn
+        .smembers(&current_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    // Convert to UUIDs
+    let player_ids: Vec<Uuid> = player_id_strings
+        .into_iter()
+        .filter_map(|id_str| Uuid::parse_str(&id_str).ok())
+        .collect();
+
+    Ok(player_ids)
+}
+
 pub async fn _get_connected_players(
     lobby_id: Uuid,
     redis: RedisClient,

@@ -9,14 +9,11 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub lexi_wars_lobbies: LexiWarsLobbies,
     pub connections: ConnectionInfoMap,
     pub chat_connections: ChatConnectionInfoMap,
     pub redis: RedisClient,
     pub bot: Bot,
 }
-
-use crate::models::game::LexiWars;
 
 #[derive(Debug)]
 pub struct ConnectionInfo {
@@ -27,8 +24,6 @@ pub struct ConnectionInfo {
 pub struct ChatConnectionInfo {
     pub sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
 }
-
-pub type LexiWarsLobbies = Arc<Mutex<HashMap<Uuid, LexiWars>>>;
 
 pub type ConnectionInfoMap = Arc<Mutex<HashMap<Uuid, Arc<ConnectionInfo>>>>;
 

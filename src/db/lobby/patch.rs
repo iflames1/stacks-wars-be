@@ -512,7 +512,7 @@ pub async fn _update_player_rank(
     Ok(())
 }
 
-pub async fn update_player_used_words(
+pub async fn _update_player_used_words(
     lobby_id: Uuid,
     player_id: Uuid,
     used_words: Vec<String>,

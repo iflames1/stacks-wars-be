@@ -53,6 +53,10 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:connected_players")
     }
 
+    pub fn lobby_current_players(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:current_players")
+    }
+
     pub fn lobbies_state(state: &LobbyState) -> String {
         format!("lobbies:{}:state", format!("{state:?}").to_lowercase())
     }
@@ -65,8 +69,41 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:chats")
     }
 
+    // temporary keys
     pub fn lobby_countdown(lobby_id: KeyPart) -> String {
         format!("lobbies:{lobby_id}:countdown")
+    }
+
+    pub fn lobby_used_words(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:used_words")
+    }
+
+    pub fn lobby_rule_context(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:rule_context")
+    }
+
+    pub fn lobby_rule_index(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:rule_index")
+    }
+
+    pub fn lobby_current_turn(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:current_turn")
+    }
+
+    pub fn lobby_eliminated_players(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:eliminated_players")
+    }
+
+    pub fn lobby_game_started(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:game_started")
+    }
+
+    pub fn lobby_current_rule(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:current_rule")
+    }
+
+    pub fn words_set() -> String {
+        "games:word_set".to_string()
     }
 
     pub fn lobby_join_requests(lobby_id: KeyPart) -> String {
@@ -77,7 +114,6 @@ impl RedisKey {
         format!("lobbies:{}:join_requests:{}", lobby_id, user_id)
     }
 
-    // temp keys
     pub fn temp_union() -> String {
         let id = Uuid::new_v4();
         format!("temp:union:{id}")

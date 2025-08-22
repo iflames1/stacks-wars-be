@@ -12,7 +12,7 @@ use axum::{Router, middleware as axum_middleware};
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use middleware::{cors_layer, create_global_rate_limiter, rate_limit_middleware};
-use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap, LexiWarsLobbies};
+use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap};
 use std::net::SocketAddr;
 use teloxide::Bot;
 
@@ -36,11 +36,9 @@ pub async fn start_server() {
         panic!("Failed to initialize games: {}", e);
     }
 
-    let lexi_wars_lobbies: LexiWarsLobbies = Default::default();
     let connections: ConnectionInfoMap = Default::default();
     let chat_connections: ChatConnectionInfoMap = Default::default();
     let state = AppState {
-        lexi_wars_lobbies,
         connections,
         chat_connections,
         redis: redis_pool,

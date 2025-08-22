@@ -1,23 +1,14 @@
-use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::HashMap, str::FromStr};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{errors::AppError, games::lexi_wars::rules::RuleContext, models::User};
+use crate::{errors::AppError, models::User};
 
 #[derive(Deserialize)]
 pub struct WsQueryParams {
     pub user_id: Uuid,
-}
-
-#[derive(Debug)]
-pub enum GameData {
-    LexiWar { word_list: Arc<HashSet<String>> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,23 +78,6 @@ impl GameType {
                 .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok()),
         })
     }
-}
-
-#[derive(Debug)]
-pub struct LexiWars {
-    pub info: LobbyInfo,
-    pub players: Vec<Player>,
-    pub data: GameData,
-    pub used_words_in_lobby: HashSet<String>,
-    pub used_words: HashMap<Uuid, Vec<String>>,
-    pub rule_context: RuleContext,
-    pub rule_index: usize,
-    pub current_turn_id: Uuid,
-    pub eliminated_players: Vec<Player>,
-    pub connected_player_ids: Vec<Uuid>,
-    pub connected_players_count: usize,
-    pub game_started: bool,
-    pub current_rule: Option<String>,
 }
 
 #[derive(Serialize)]

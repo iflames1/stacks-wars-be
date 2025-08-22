@@ -4,114 +4,34 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-};
+use std::net::SocketAddr;
+use uuid::Uuid;
 
 use crate::{
-    db::lobby::get::{get_connected_players_ids, get_lobby_info, get_lobby_players},
+    db::{
+        game::state::{
+            get_current_rule, get_current_turn, get_game_started, get_rule_context,
+            set_current_turn, set_rule_context, set_rule_index,
+        },
+        lobby::{
+            get::{get_connected_players_ids, get_lobby_info, get_lobby_players},
+            put::add_connected_player,
+        },
+    },
+    errors::AppError,
     games::lexi_wars::{
+        self,
         engine::start_auto_start_timer,
+        rules::RuleContext,
         utils::{broadcast_to_player, generate_random_letter},
     },
     models::{
-        game::{
-            ClaimState, GameData, LexiWars, LobbyInfo, LobbyState, Player, PlayerState,
-            WsQueryParams,
-        },
+        game::{ClaimState, LobbyInfo, LobbyState, Player, PlayerState, WsQueryParams},
         lexi_wars::{LexiWarsServerMessage, PlayerStanding},
-        word_loader::WORD_LIST,
     },
-    state::{AppState, RedisClient},
+    state::{AppState, ConnectionInfoMap, RedisClient},
     ws::handlers::utils::{remove_connection, store_connection_and_send_queued_messages},
 };
-use crate::{errors::AppError, games::lexi_wars};
-use crate::{
-    games::lexi_wars::rules::RuleContext,
-    state::{ConnectionInfoMap, LexiWarsLobbies},
-};
-use uuid::Uuid;
-
-async fn setup_player_and_lobby(
-    player: &Player,
-    lobby_info: LobbyInfo,
-    players: Vec<Player>,
-    connected_player_ids: Vec<Uuid>,
-    lobbies: &LexiWarsLobbies,
-    connections: &ConnectionInfoMap,
-    redis: &RedisClient,
-) {
-    let mut locked_lobbies = lobbies.lock().await;
-
-    // Check if this lobby is already active in memory
-    let lobby = locked_lobbies.entry(lobby_info.id).or_insert_with(|| {
-        tracing::info!("Initializing new in-memory LexiWars for {}", lobby_info.id);
-        let word_list = WORD_LIST.clone();
-
-        LexiWars {
-            info: lobby_info.clone(),
-            players: players.clone(),
-            data: GameData::LexiWar { word_list },
-            eliminated_players: vec![],
-            current_turn_id: lobby_info.creator.id,
-            used_words: HashMap::new(),
-            used_words_in_lobby: HashSet::new(),
-            rule_context: RuleContext {
-                min_word_length: 4,
-                random_letter: generate_random_letter(),
-            },
-            rule_index: 0,
-            connected_player_ids: connected_player_ids.clone(),
-            connected_players_count: connected_player_ids.len(),
-            game_started: false,
-            current_rule: None,
-        }
-    });
-
-    let already_exists = lobby.players.iter().any(|p| p.id == player.id);
-
-    if !already_exists {
-        tracing::info!("Adding player ({}) to lobby {}", player.id, lobby.info.id);
-        lobby.players.push(player.clone());
-    } else {
-        tracing::info!(
-            "Player {} already exists in lobby {}, skipping re-add",
-            player.id,
-            lobby.info.id
-        );
-    }
-
-    // Track connected player - add to connected_players if not already there
-    let already_connected = lobby.connected_player_ids.contains(&player.id);
-    let was_empty = lobby.connected_player_ids.is_empty();
-
-    if !already_connected {
-        lobby.connected_player_ids.push(player.id);
-    }
-
-    tracing::info!(
-        "Player {} connected to lobby {}. Connected: {}/{}",
-        player.id,
-        lobby.info.id,
-        lobby.connected_player_ids.len(),
-        lobby.players.len()
-    );
-
-    // Start auto-start timer when first player connects
-    if was_empty && !lobby.game_started {
-        tracing::info!(
-            "First player connected, starting auto-start timer for lobby {}",
-            lobby.info.id
-        );
-        start_auto_start_timer(
-            lobby.info.id,
-            lobbies.clone(),
-            connections.clone(),
-            redis.clone(),
-        );
-    }
-}
 
 pub async fn lexi_wars_handler(
     ws: WebSocketUpgrade,
@@ -123,10 +43,8 @@ pub async fn lexi_wars_handler(
     tracing::info!("New Lexi-Wars WebSocket connection from {}", addr);
 
     let player_id = query.user_id;
-
     let redis = state.redis.clone();
     let connections = state.connections.clone();
-    let lexi_wars_lobbies = state.lexi_wars_lobbies.clone();
 
     let lobby = get_lobby_info(lobby_id, redis.clone())
         .await
@@ -198,23 +116,6 @@ pub async fn lexi_wars_handler(
                                     .await;
                             }
                         }
-
-                        //let lobbies_guard = lexi_wars_lobbies.lock().await;
-                        //if let Some(lexi_wars_lobby) = lobbies_guard.get(&lobby_id) {
-                        //    if let Some(rank) = connecting_player.rank {
-                        //        let wars_point = calculate_wars_point(
-                        //            lexi_wars_lobby,
-                        //            rank,
-                        //            connecting_player.prize,
-                        //        );
-                        //        let wars_point_msg =
-                        //            LexiWarsServerMessage::WarsPoint { wars_point };
-                        //        let serialized = serde_json::to_string(&wars_point_msg).unwrap();
-                        //        let _ = socket
-                        //            .send(axum::extract::ws::Message::Text(serialized.into()))
-                        //            .await;
-                        //    }
-                        //}
                     }
                 }
 
@@ -245,14 +146,9 @@ pub async fn lexi_wars_handler(
         lobby_id
     );
 
-    let is_game_started = {
-        let lobbies_guard = lexi_wars_lobbies.lock().await;
-        if let Some(game_lobby) = lobbies_guard.get(&lobby_id) {
-            game_lobby.game_started
-        } else {
-            false // If not in memory, game hasn't started yet
-        }
-    };
+    let is_game_started = get_game_started(lobby_id, redis.clone())
+        .await
+        .map_err(|e| e.to_response())?;
 
     let connected_player_ids = get_connected_players_ids(lobby_id, redis.clone())
         .await
@@ -289,7 +185,6 @@ pub async fn lexi_wars_handler(
             matched_player,
             players_clone,
             connected_player_ids,
-            lexi_wars_lobbies,
             connections,
             lobby_info,
             redis,
@@ -304,7 +199,6 @@ async fn handle_lexi_wars_socket(
     player: Player,
     players: Vec<Player>,
     connected_player_ids: Vec<Uuid>,
-    lexi_wars_lobbies: LexiWarsLobbies,
     connections: ConnectionInfoMap,
     lobby_info: LobbyInfo,
     redis: RedisClient,
@@ -320,7 +214,6 @@ async fn handle_lexi_wars_socket(
         lobby_info,
         players,
         connected_player_ids,
-        &lexi_wars_lobbies,
         &connections,
         &redis,
     )
@@ -328,80 +221,135 @@ async fn handle_lexi_wars_socket(
 
     // Send reconnection state if joining an already started game
     if is_reconnecting_to_started_game {
-        let lobbies_guard = lexi_wars_lobbies.lock().await;
-        if let Some(lobby) = lobbies_guard.get(&lobby_id) {
-            // Send current turn
-            if let Some(current_player) =
-                lobby.players.iter().find(|p| p.id == lobby.current_turn_id)
-            {
-                let turn_msg = LexiWarsServerMessage::Turn {
-                    current_turn: current_player.clone(),
-                    countdown: 15, // Default countdown for reconnection
-                };
-                broadcast_to_player(player.id, lobby_id, &turn_msg, &connections, &redis).await;
+        // Send current turn if available
+        if let Ok(Some(current_turn_id)) = get_current_turn(lobby_id, redis.clone()).await {
+            if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+                if let Some(current_player) = players.iter().find(|p| p.id == current_turn_id) {
+                    let turn_msg = LexiWarsServerMessage::Turn {
+                        current_turn: current_player.clone(),
+                        countdown: 15, // Default countdown for reconnection
+                    };
+                    broadcast_to_player(player.id, lobby_id, &turn_msg, &connections, &redis).await;
+                }
             }
-
-            // Send current rule
-            if let Some(current_rule) = &lobby.current_rule {
-                let rule_msg = LexiWarsServerMessage::Rule {
-                    rule: current_rule.clone(),
-                };
-                broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
-            }
-
-            tracing::info!("Sent reconnection state to player {}", player.id);
         }
+
+        // Send current rule if available
+        if let Ok(Some(current_rule)) = get_current_rule(lobby_id, redis.clone()).await {
+            let rule_msg = LexiWarsServerMessage::Rule { rule: current_rule };
+            broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
+        }
+
+        tracing::info!("Sent reconnection state to player {}", player.id);
     }
 
     lexi_wars::engine::handle_incoming_messages(
         &player,
         lobby_id,
         receiver,
-        lexi_wars_lobbies.clone(),
         &connections,
-        redis,
+        redis.clone(),
     )
     .await;
 
     // Handle player disconnection
-    {
-        let mut lobbies_guard = lexi_wars_lobbies.lock().await;
-        if let Some(lobby) = lobbies_guard.get_mut(&lobby_id) {
-            if let Some(pos) = lobby
-                .connected_player_ids
-                .iter()
-                .position(|&id| id == player.id)
-            {
-                // Only remove from connected_player_ids if game hasn't started
-                if !lobby.game_started {
-                    lobby.connected_player_ids.remove(pos);
-                    tracing::info!(
-                        "Player {} disconnected from lobby {} (pre-game). Connected: {}/{}",
-                        player.id,
-                        lobby_id,
-                        lobby.connected_player_ids.len(),
-                        lobby.players.len()
-                    );
-
-                    // If the disconnected player was the current turn, assign to next connected player
-                    if lobby.current_turn_id == player.id && !lobby.connected_player_ids.is_empty()
-                    {
-                        lobby.current_turn_id = lobby.connected_player_ids[0];
-                        tracing::info!(
-                            "Reassigned current turn to player {}",
-                            lobby.current_turn_id
-                        );
-                    }
-                } else {
-                    tracing::info!(
-                        "Player {} disconnected from lobby {} (during game). Keeping in connected_player_ids for game continuity.",
-                        player.id,
-                        lobby_id
-                    );
-                }
-            }
+    let game_started = get_game_started(lobby_id, redis.clone())
+        .await
+        .unwrap_or(false);
+    if !game_started {
+        // If game hasn't started, remove from connected players
+        if let Err(e) =
+            crate::db::lobby::put::remove_connected_player(lobby_id, player.id, redis.clone()).await
+        {
+            tracing::error!("Failed to remove disconnected player: {}", e);
         }
+
+        tracing::info!(
+            "Player {} disconnected from lobby {} (pre-game)",
+            player.id,
+            lobby_id
+        );
+    } else {
+        tracing::info!(
+            "Player {} disconnected from lobby {} (during game). Keeping in connected_player_ids for game continuity.",
+            player.id,
+            lobby_id
+        );
     }
 
     remove_connection(player.id, &connections).await;
+}
+
+async fn setup_player_and_lobby(
+    player: &Player,
+    lobby_info: LobbyInfo,
+    players: Vec<Player>,
+    connected_player_ids: Vec<Uuid>,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let lobby_id = lobby_info.id;
+
+    // Initialize game state if not exists
+    let game_started = get_game_started(lobby_id, redis.clone())
+        .await
+        .unwrap_or(false);
+
+    if !game_started {
+        // Initialize rule context if not set
+        if get_rule_context(lobby_id, redis.clone())
+            .await
+            .unwrap_or(None)
+            .is_none()
+        {
+            let rule_context = RuleContext {
+                min_word_length: 4,
+                random_letter: generate_random_letter(),
+            };
+            let _ = set_rule_context(lobby_id, &rule_context, redis.clone()).await;
+            let _ = set_rule_index(lobby_id, 0, redis.clone()).await;
+        }
+
+        // Set initial current turn if not set
+        if get_current_turn(lobby_id, redis.clone())
+            .await
+            .unwrap_or(None)
+            .is_none()
+        {
+            let _ = set_current_turn(lobby_id, lobby_info.creator.id, redis.clone()).await;
+        }
+    }
+
+    // Track connected player by adding to Redis connected players set
+    if !connected_player_ids.contains(&player.id) {
+        // Add this player to connected players
+        if let Err(e) = add_connected_player(lobby_id, player.id, redis.clone()).await {
+            tracing::error!("Failed to add connected player: {}", e);
+        }
+    }
+
+    // Get updated count for logging and auto-start check
+    let updated_connected_count = connected_player_ids.len()
+        + if connected_player_ids.contains(&player.id) {
+            0
+        } else {
+            1
+        };
+
+    tracing::info!(
+        "Player {} connected to lobby {}. Connected: {}/{}",
+        player.id,
+        lobby_id,
+        updated_connected_count,
+        players.len()
+    );
+
+    // Start auto-start timer when first player connects and game hasn't started
+    if updated_connected_count == 1 && !game_started {
+        tracing::info!(
+            "First player connected, starting auto-start timer for lobby {}",
+            lobby_id
+        );
+        start_auto_start_timer(lobby_id, connections.clone(), redis.clone());
+    }
 }
