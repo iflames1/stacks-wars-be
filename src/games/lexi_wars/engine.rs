@@ -185,10 +185,9 @@ pub async fn handle_incoming_messages(
 
                     match parsed {
                         LexiWarsClientMessage::Ping { ts } => {
-                            let pong_msg = LexiWarsServerMessage::Pong {
-                                ts,
-                                pong: Utc::now().timestamp_millis() as u64,
-                            };
+                            let now = Utc::now().timestamp_millis() as u64;
+                            let pong = now.saturating_sub(ts);
+                            let pong_msg = LexiWarsServerMessage::Pong { ts, pong };
                             broadcast_to_player(
                                 player.id,
                                 lobby_id,
