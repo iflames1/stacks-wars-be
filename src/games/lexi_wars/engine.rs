@@ -729,7 +729,7 @@ fn start_turn_timer(
 
 pub fn start_auto_start_timer(lobby_id: Uuid, connections: ConnectionInfoMap, redis: RedisClient) {
     tokio::spawn(async move {
-        for i in (0..=10).rev() {
+        for i in (0..=15).rev() {
             // Get current lobby state from Redis
             let connected_player_ids =
                 match get_connected_players_ids(lobby_id, redis.clone()).await {
