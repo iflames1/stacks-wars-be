@@ -27,7 +27,7 @@ use crate::{
         },
     },
     games::lexi_wars::{
-        rules::{get_rule_by_index, get_rules},
+        rules::{RuleContext, get_rule_by_index, get_rules},
         utils::{broadcast_to_lobby, broadcast_to_player, generate_random_letter},
     },
     models::{
@@ -37,6 +37,71 @@ use crate::{
     state::{ConnectionInfoMap, RedisClient},
 };
 use uuid::Uuid;
+
+#[derive(Clone)]
+struct GameContext {
+    rule_context: RuleContext,
+    rule_index: usize,
+}
+
+async fn validate_word(
+    lobby_id: Uuid,
+    word: &str,
+    redis: &RedisClient,
+    cached_game_context: Option<&GameContext>,
+) -> Result<(GameContext, bool), Box<dyn std::error::Error + Send + Sync>> {
+    let cleaned_word = word.trim().to_lowercase();
+
+    // Get game context (use cache if available and valid)
+    let game_context = if let Some(cached) = cached_game_context {
+        cached.clone()
+    } else {
+        let (rule_context_result, rule_index_result) = tokio::join!(
+            get_rule_context(lobby_id, redis.clone()),
+            get_rule_index(lobby_id, redis.clone())
+        );
+
+        let rule_context = rule_context_result?.ok_or("No rule context found")?;
+        let rule_index = rule_index_result?.ok_or("No rule index found")?;
+
+        GameContext {
+            rule_context,
+            rule_index,
+        }
+    };
+
+    let (used_in_lobby_result, valid_word_result) = tokio::join!(
+        is_word_used_in_lobby(lobby_id, &cleaned_word, redis.clone()),
+        is_valid_word(&cleaned_word, redis.clone())
+    );
+
+    if used_in_lobby_result? {
+        return Ok((game_context, false));
+    }
+
+    if !valid_word_result? {
+        return Ok((game_context, false));
+    }
+
+    // Apply rule validation
+    if let Some(rule) = get_rule_by_index(game_context.rule_index, &game_context.rule_context) {
+        // Check minimum word length first (unless it's the min_length rule itself)
+        if rule.name != "min_length" {
+            if cleaned_word.len() < game_context.rule_context.min_word_length {
+                return Ok((game_context, false));
+            }
+        }
+
+        // Validate word against rule
+        if (rule.validate)(&cleaned_word, &game_context.rule_context).is_err() {
+            return Ok((game_context, false));
+        }
+    } else {
+        return Err("Invalid rule index".into());
+    }
+
+    Ok((game_context, true))
+}
 
 fn get_prize(
     lobby_info: &crate::models::game::LobbyInfo,
@@ -237,12 +302,26 @@ pub async fn handle_incoming_messages(
                                 continue;
                             }
 
-                            // Check if word is already used in lobby
-                            match is_word_used_in_lobby(lobby_id, &cleaned_word, redis.clone())
-                                .await
+                            let (game_context, is_valid) = match validate_word(
+                                lobby_id,
+                                &cleaned_word,
+                                &redis,
+                                None, // Could cache this per lobby in future optimization
+                            )
+                            .await
                             {
-                                Ok(true) => {
-                                    tracing::info!("This word has been used: {}", cleaned_word);
+                                Ok(result) => result,
+                                Err(e) => {
+                                    tracing::error!("Word validation error: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            if !is_valid {
+                                if is_word_used_in_lobby(lobby_id, &cleaned_word, redis.clone())
+                                    .await
+                                    .unwrap_or(false)
+                                {
                                     let used_word_msg = LexiWarsServerMessage::UsedWord {
                                         word: cleaned_word.clone(),
                                     };
@@ -254,100 +333,10 @@ pub async fn handle_incoming_messages(
                                         &redis,
                                     )
                                     .await;
-                                    continue;
-                                }
-                                Ok(false) => {}
-                                Err(e) => {
-                                    tracing::error!("Failed to check used words: {}", e);
-                                    continue;
-                                }
-                            }
-
-                            // Get rule context and validate word
-                            let rule_context = match get_rule_context(lobby_id, redis.clone()).await
-                            {
-                                Ok(Some(context)) => context,
-                                Ok(None) => {
-                                    tracing::error!("No rule context found");
-                                    continue;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to get rule context: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            let rule_index = match get_rule_index(lobby_id, redis.clone()).await {
-                                Ok(Some(index)) => index,
-                                Ok(None) => {
-                                    tracing::error!("No rule index found");
-                                    continue;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to get rule index: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            // Apply rule validation
-                            if let Some(rule) = get_rule_by_index(rule_index, &rule_context) {
-                                // Update current rule
-                                if let Err(e) = set_current_rule(
-                                    lobby_id,
-                                    Some(rule.description.clone()),
-                                    redis.clone(),
-                                )
-                                .await
+                                } else if !is_valid_word(&cleaned_word, redis.clone())
+                                    .await
+                                    .unwrap_or(false)
                                 {
-                                    tracing::error!("Failed to set current rule: {}", e);
-                                }
-
-                                // Check minimum word length first (unless it's the min_length rule itself)
-                                if rule.name != "min_length" {
-                                    if cleaned_word.len() < rule_context.min_word_length {
-                                        let reason = format!(
-                                            "Word must be at least {} characters!",
-                                            rule_context.min_word_length
-                                        );
-                                        tracing::info!("Rule failed: {}", reason);
-                                        let validation_msg =
-                                            LexiWarsServerMessage::Validate { msg: reason };
-                                        broadcast_to_player(
-                                            player.id,
-                                            lobby_id,
-                                            &validation_msg,
-                                            connections,
-                                            &redis,
-                                        )
-                                        .await;
-                                        continue;
-                                    }
-                                }
-
-                                // Validate word against rule
-                                if let Err(reason) = (rule.validate)(&cleaned_word, &rule_context) {
-                                    tracing::info!("Rule failed: {}", reason);
-                                    let validation_msg =
-                                        LexiWarsServerMessage::Validate { msg: reason };
-                                    broadcast_to_player(
-                                        player.id,
-                                        lobby_id,
-                                        &validation_msg,
-                                        connections,
-                                        &redis,
-                                    )
-                                    .await;
-                                    continue;
-                                }
-                            } else {
-                                tracing::error!("fix invalid rule index {}", rule_index);
-                                continue;
-                            }
-
-                            // Check if word is valid in dictionary
-                            match is_valid_word(&cleaned_word, redis.clone()).await {
-                                Ok(true) => {}
-                                Ok(false) => {
                                     let validation_msg = LexiWarsServerMessage::Validate {
                                         msg: "Invalid word".to_string(),
                                     };
@@ -359,54 +348,94 @@ pub async fn handle_incoming_messages(
                                         &redis,
                                     )
                                     .await;
-
-                                    let used_word_msg = LexiWarsServerMessage::UsedWord {
-                                        word: cleaned_word.clone(),
-                                    };
-                                    broadcast_to_player(
-                                        player.id,
-                                        lobby_id,
-                                        &used_word_msg,
-                                        connections,
-                                        &redis,
-                                    )
-                                    .await;
-                                    continue;
+                                } else {
+                                    // Rule validation failed
+                                    if let Some(rule) = get_rule_by_index(
+                                        game_context.rule_index,
+                                        &game_context.rule_context,
+                                    ) {
+                                        if rule.name != "min_length"
+                                            && cleaned_word.len()
+                                                < game_context.rule_context.min_word_length
+                                        {
+                                            let reason = format!(
+                                                "Word must be at least {} characters!",
+                                                game_context.rule_context.min_word_length
+                                            );
+                                            let validation_msg =
+                                                LexiWarsServerMessage::Validate { msg: reason };
+                                            broadcast_to_player(
+                                                player.id,
+                                                lobby_id,
+                                                &validation_msg,
+                                                connections,
+                                                &redis,
+                                            )
+                                            .await;
+                                        } else if let Err(reason) = (rule.validate)(
+                                            &cleaned_word,
+                                            &game_context.rule_context,
+                                        ) {
+                                            let validation_msg =
+                                                LexiWarsServerMessage::Validate { msg: reason };
+                                            broadcast_to_player(
+                                                player.id,
+                                                lobby_id,
+                                                &validation_msg,
+                                                connections,
+                                                &redis,
+                                            )
+                                            .await;
+                                        }
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::error!("Failed to validate word: {}", e);
-                                    continue;
+                                continue;
+                            }
+
+                            // Update current rule
+                            if let Some(rule) = get_rule_by_index(
+                                game_context.rule_index,
+                                &game_context.rule_context,
+                            ) {
+                                if let Err(e) = set_current_rule(
+                                    lobby_id,
+                                    Some(rule.description.clone()),
+                                    redis.clone(),
+                                )
+                                .await
+                                {
+                                    tracing::error!("Failed to set current rule: {}", e);
                                 }
                             }
 
-                            // Add to used words in lobby and player's words
-                            if let Err(e) =
-                                add_used_word(lobby_id, &cleaned_word, redis.clone()).await
-                            {
+                            let (add_used_result, add_player_result, current_players_result) = tokio::join!(
+                                add_used_word(lobby_id, &cleaned_word, redis.clone()),
+                                add_player_used_word(
+                                    lobby_id,
+                                    player.id,
+                                    &cleaned_word,
+                                    redis.clone()
+                                ),
+                                get_current_players_ids(lobby_id, redis.clone())
+                            );
+
+                            if let Err(e) = add_used_result {
                                 tracing::error!("Failed to add used word: {}", e);
                                 continue;
                             }
 
-                            if let Err(e) = add_player_used_word(
-                                lobby_id,
-                                player.id,
-                                &cleaned_word,
-                                redis.clone(),
-                            )
-                            .await
-                            {
+                            if let Err(e) = add_player_result {
                                 tracing::error!("Failed to add player used word: {}", e);
                             }
 
                             // Get current players to find next player
-                            let current_players_ids =
-                                match get_current_players_ids(lobby_id, redis.clone()).await {
-                                    Ok(ids) => ids,
-                                    Err(e) => {
-                                        tracing::error!("Failed to get current players: {}", e);
-                                        continue;
-                                    }
-                                };
+                            let current_players_ids = match current_players_result {
+                                Ok(ids) => ids,
+                                Err(e) => {
+                                    tracing::error!("Failed to get current players: {}", e);
+                                    continue;
+                                }
+                            };
 
                             // Find next player using current players list
                             let current_index =
@@ -417,13 +446,13 @@ pub async fn handle_incoming_messages(
 
                                 // Check if we wrapped back to the first player (rule progression)
                                 let wrapped = next_index == 0;
-                                let mut new_rule_index = rule_index;
-                                let mut new_rule_context = rule_context.clone();
+                                let mut new_rule_index = game_context.rule_index;
+                                let mut new_rule_context = game_context.rule_context.clone();
 
                                 if wrapped {
                                     // We wrapped back to first player, advance rules
-                                    let total_rules = get_rules(&rule_context).len();
-                                    new_rule_index = (rule_index + 1) % total_rules;
+                                    let total_rules = get_rules(&game_context.rule_context).len();
+                                    new_rule_index = (game_context.rule_index + 1) % total_rules;
 
                                     // If we wrapped to first rule again, increase difficulty
                                     if new_rule_index == 0 {
@@ -593,6 +622,9 @@ fn start_turn_timer(
                 }
                 Ok(Some(_)) => {
                     // Turn has already changed, stop timer
+                    let countdown_msg = LexiWarsServerMessage::Countdown { time: 15 };
+                    broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
+                        .await;
                     tracing::info!("Turn changed, stopping timer for player {}", player_id);
                     return;
                 }
