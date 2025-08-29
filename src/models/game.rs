@@ -324,6 +324,7 @@ pub struct LobbyInfo {
     pub current_amount: Option<f64>,
     pub token_symbol: Option<String>,
     pub token_id: Option<String>,
+    pub creator_last_ping: Option<u64>,
 }
 
 impl LobbyInfo {
@@ -354,6 +355,9 @@ impl LobbyInfo {
         }
         if let Some(token_id) = &self.token_id {
             fields.push(("token_id".into(), token_id.clone()));
+        }
+        if let Some(creator_last_ping) = self.creator_last_ping {
+            fields.push(("creator_last_ping".into(), creator_last_ping.to_string()));
         }
         fields
     }
@@ -425,6 +429,7 @@ impl LobbyInfo {
             current_amount: map.get("current_amount").and_then(|s| s.parse().ok()),
             token_symbol: map.get("token_symbol").cloned(),
             token_id: map.get("token_id").cloned(),
+            creator_last_ping: map.get("creator_last_ping").and_then(|s| s.parse().ok()),
         };
 
         Ok((lobby, creator_id, game_id))

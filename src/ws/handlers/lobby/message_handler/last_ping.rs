@@ -2,7 +2,7 @@ use redis::AsyncCommands;
 use uuid::Uuid;
 
 use crate::{
-    db::lobby::get::get_lobby_players,
+    db::lobby::get::{get_lobby_info, get_lobby_players},
     errors::AppError,
     models::{
         game::Player,
@@ -20,7 +20,15 @@ pub async fn last_ping(
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    match update_player_last_ping(lobby_id, player.id, ts, redis.clone()).await {
+    let is_creator = match get_lobby_info(lobby_id, redis.clone()).await {
+        Ok(lobby_info) => lobby_info.creator.id == player.id,
+        Err(e) => {
+            tracing::error!("Failed to get lobby info for {}: {}", lobby_id, e);
+            false
+        }
+    };
+
+    match update_player_last_ping(lobby_id, player.id, ts, is_creator, redis.clone()).await {
         Ok(()) => {
             if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
                 let msg = LobbyServerMessage::PlayerUpdated { players };
@@ -42,6 +50,7 @@ async fn update_player_last_ping(
     lobby_id: Uuid,
     player_id: Uuid,
     last_ping: u64,
+    is_creator: bool,
     redis: RedisClient,
 ) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -67,6 +76,20 @@ async fn update_player_last_ping(
         .hset(&player_key, "last_ping", last_ping.to_string())
         .await
         .map_err(AppError::RedisCommandError)?;
+
+    if is_creator {
+        let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
+        let _: () = conn
+            .hset(&lobby_key, "creator_last_ping", last_ping.to_string())
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        tracing::debug!(
+            "Updated creator_last_ping for lobby {} to {}",
+            lobby_id,
+            last_ping
+        );
+    }
 
     tracing::debug!(
         "Updated last_ping for player {} in lobby {} to {}",

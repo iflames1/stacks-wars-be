@@ -36,6 +36,10 @@ pub async fn create_lobby(
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
+    // Create player with minimal data
+    let lobby_player = Player::new(creator_user.id, pool.as_ref().map(|p| p.tx_id.to_owned()));
+    let creator_last_ping = lobby_player.last_ping;
+
     let lobby_info = LobbyInfo {
         id: lobby_id,
         name,
@@ -50,6 +54,7 @@ pub async fn create_lobby(
         current_amount: pool.as_ref().map(|p| p.current_amount),
         token_symbol: pool.as_ref().and_then(|p| p.token_symbol.clone()),
         token_id: pool.as_ref().and_then(|p| p.token_id.clone()),
+        creator_last_ping,
     };
 
     // Store pool if it exists
@@ -66,8 +71,6 @@ pub async fn create_lobby(
     let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(creator_user.id));
 
-    // Create player with minimal data
-    let lobby_player = Player::new(creator_user.id, pool.as_ref().map(|p| p.tx_id.to_owned()));
     let player_hash = lobby_player.to_redis_hash();
     let lobby_fields = lobby_info.to_redis_hash();
     let created_score = lobby_info.created_at.timestamp();
