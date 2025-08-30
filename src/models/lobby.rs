@@ -54,6 +54,7 @@ pub enum LobbyClientMessage {
     KickPlayer {
         player_id: Uuid,
     },
+
     RequestJoin,
 
     #[serde(rename_all = "camelCase")]
@@ -68,6 +69,10 @@ pub enum LobbyClientMessage {
     },
 
     Ping {
+        ts: u64,
+    },
+
+    LastPing {
         ts: u64,
     },
 }

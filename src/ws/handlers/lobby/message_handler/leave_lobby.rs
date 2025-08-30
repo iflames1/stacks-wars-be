@@ -9,12 +9,9 @@ use crate::{
     },
     models::{game::Player, lobby::LobbyServerMessage},
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
-    ws::handlers::{
-        lobby::message_handler::{
-            broadcast_to_lobby,
-            handler::{send_error_to_player, send_to_player},
-        },
-        utils::remove_connection,
+    ws::handlers::lobby::message_handler::{
+        broadcast_to_lobby,
+        handler::{send_error_to_player, send_to_player},
     },
 };
 use uuid::Uuid;
@@ -103,5 +100,4 @@ pub async fn leave_lobby(
         let left_msg = LobbyServerMessage::Left;
         send_to_player(player.id, lobby_id, &connections, &left_msg, redis).await;
     }
-    remove_connection(player.id, &connections).await;
 }

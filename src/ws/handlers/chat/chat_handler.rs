@@ -70,6 +70,7 @@ pub async fn chat_handler(
         tx_id: None,
         claim: None,
         prize: None,
+        last_ping: None,
         user: Some(user.clone()),
     };
 

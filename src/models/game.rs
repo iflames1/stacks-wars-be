@@ -143,6 +143,7 @@ pub struct Player {
     pub tx_id: Option<String>,
     pub claim: Option<ClaimState>,
     pub prize: Option<f64>,
+    pub last_ping: Option<u64>,
 
     // Hydrated user data (not stored in Redis)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,6 +174,9 @@ impl Player {
         }
         if let Some(ref prize) = self.prize {
             map.insert("prize".into(), prize.to_string());
+        }
+        if let Some(ref last_ping) = self.last_ping {
+            map.insert("last_ping".into(), last_ping.to_string());
         }
 
         map
@@ -205,6 +209,8 @@ impl Player {
 
         let prize = data.get("prize").and_then(|v| v.parse::<f64>().ok());
 
+        let last_ping = data.get("last_ping").and_then(|v| v.parse::<u64>().ok());
+
         Ok(Player {
             id,
             state,
@@ -213,6 +219,7 @@ impl Player {
             tx_id,
             claim,
             prize,
+            last_ping,
             user: None, // Will be hydrated separately
         })
     }
@@ -227,6 +234,7 @@ impl Player {
             tx_id,
             claim: None,
             prize: None,
+            last_ping: Some(Utc::now().timestamp_millis() as u64),
             user: None,
         }
     }
@@ -316,6 +324,7 @@ pub struct LobbyInfo {
     pub current_amount: Option<f64>,
     pub token_symbol: Option<String>,
     pub token_id: Option<String>,
+    pub creator_last_ping: Option<u64>,
 }
 
 impl LobbyInfo {
@@ -346,6 +355,9 @@ impl LobbyInfo {
         }
         if let Some(token_id) = &self.token_id {
             fields.push(("token_id".into(), token_id.clone()));
+        }
+        if let Some(creator_last_ping) = self.creator_last_ping {
+            fields.push(("creator_last_ping".into(), creator_last_ping.to_string()));
         }
         fields
     }
@@ -417,6 +429,7 @@ impl LobbyInfo {
             current_amount: map.get("current_amount").and_then(|s| s.parse().ok()),
             token_symbol: map.get("token_symbol").cloned(),
             token_id: map.get("token_id").cloned(),
+            creator_last_ping: map.get("creator_last_ping").and_then(|s| s.parse().ok()),
         };
 
         Ok((lobby, creator_id, game_id))

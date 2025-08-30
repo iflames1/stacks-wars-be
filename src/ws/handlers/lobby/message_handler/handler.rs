@@ -19,8 +19,8 @@ use crate::{
     ws::handlers::{
         chat::utils::send_chat_message_to_player,
         lobby::message_handler::{
-            join_lobby::join_lobby, kick_player, leave_lobby, permit_join, ping, request_join,
-            update_game_state, update_player_state,
+            join_lobby::join_lobby, kick_player, last_ping, leave_lobby, permit_join, ping,
+            request_join, update_game_state, update_player_state,
         },
         utils::queue_message_for_player,
     },
@@ -249,6 +249,9 @@ pub async fn handle_incoming_messages(
                             LobbyClientMessage::Ping { ts } => {
                                 ping(ts, player, lobby_id, connections, &redis).await
                             }
+                            LobbyClientMessage::LastPing { ts } => {
+                                last_ping(ts, lobby_id, player, connections, &redis).await
+                            }
                             LobbyClientMessage::JoinLobby { tx_id } => {
                                 join_lobby(
                                     tx_id,
@@ -301,14 +304,8 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::UpdateLobbyState { new_state } => {
-                                update_game_state(
-                                    new_state,
-                                    lobby_id,
-                                    player,
-                                    connections,
-                                    &redis,
-                                )
-                                .await
+                                update_game_state(new_state, lobby_id, player, connections, &redis)
+                                    .await
                             }
                         }
                     } else {

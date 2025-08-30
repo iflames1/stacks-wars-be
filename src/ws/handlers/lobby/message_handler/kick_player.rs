@@ -12,12 +12,9 @@ use crate::{
         lobby::LobbyServerMessage,
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
-    ws::handlers::{
-        lobby::message_handler::{
-            broadcast_to_lobby,
-            handler::{send_error_to_player, send_to_player},
-        },
-        utils::remove_connection,
+    ws::handlers::lobby::message_handler::{
+        broadcast_to_lobby,
+        handler::{send_error_to_player, send_to_player},
     },
 };
 use uuid::Uuid;
@@ -121,6 +118,4 @@ pub async fn kick_player(
         )
         .await;
     }
-
-    remove_connection(player_id, &connections).await;
 }
