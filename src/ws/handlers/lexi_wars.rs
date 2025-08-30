@@ -15,7 +15,7 @@ use crate::{
         },
         lobby::{
             get::{get_connected_players_ids, get_lobby_info, get_lobby_players},
-            put::add_connected_player,
+            patch::{add_connected_player, remove_connected_player},
         },
     },
     errors::AppError,
@@ -270,9 +270,7 @@ async fn handle_lexi_wars_socket(
         .unwrap_or(false);
     if !game_started {
         // If game hasn't started, remove from connected players
-        if let Err(e) =
-            crate::db::lobby::put::remove_connected_player(lobby_id, player.id, redis.clone()).await
-        {
+        if let Err(e) = remove_connected_player(lobby_id, player.id, redis.clone()).await {
             tracing::error!("Failed to remove disconnected player: {}", e);
         }
 

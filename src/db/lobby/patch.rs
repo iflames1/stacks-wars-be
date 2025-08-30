@@ -375,7 +375,7 @@ pub async fn update_claim_state(
     Ok(())
 }
 
-pub async fn _add_connected_player(
+pub async fn add_connected_player(
     lobby_id: Uuid,
     player_id: Uuid,
     redis: RedisClient,
@@ -386,7 +386,6 @@ pub async fn _add_connected_player(
     })?;
 
     let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
-
     let _: () = conn
         .sadd(&connected_key, player_id.to_string())
         .await
@@ -395,7 +394,7 @@ pub async fn _add_connected_player(
     Ok(())
 }
 
-pub async fn _remove_connected_player(
+pub async fn remove_connected_player(
     lobby_id: Uuid,
     player_id: Uuid,
     redis: RedisClient,
@@ -406,7 +405,6 @@ pub async fn _remove_connected_player(
     })?;
 
     let connected_key = RedisKey::lobby_connected_players(KeyPart::Id(lobby_id));
-
     let _: () = conn
         .srem(&connected_key, player_id.to_string())
         .await

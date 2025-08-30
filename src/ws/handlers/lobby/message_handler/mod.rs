@@ -6,6 +6,7 @@ pub mod leave_lobby;
 pub mod permit_join;
 pub mod ping;
 pub mod request_join;
+pub mod request_leave;
 pub mod update_game_state;
 pub mod update_player_state;
 
@@ -18,5 +19,6 @@ pub use leave_lobby::leave_lobby;
 pub use permit_join::permit_join;
 pub use ping::ping;
 pub use request_join::request_join;
+pub use request_leave::request_leave;
 pub use update_game_state::update_game_state;
 pub use update_player_state::update_player_state;
