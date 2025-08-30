@@ -5,6 +5,10 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 
+use crate::ws::handlers::{
+    lobby::message_handler::handler::send_error_to_player,
+    utils::store_connection_and_send_queued_messages,
+};
 use crate::{
     db::{
         lobby::{
@@ -22,12 +26,6 @@ use crate::{
     ws::handlers::lobby::message_handler::handler::{self, get_pending_players},
 };
 use crate::{state::ConnectionInfoMap, ws::handlers::utils::remove_connection};
-use crate::{
-    ws::handlers::{
-        lobby::message_handler::handler::send_error_to_player,
-        utils::store_connection_and_send_queued_messages,
-    },
-};
 use axum::extract::ws::{CloseFrame, Message};
 use uuid::Uuid;
 
@@ -107,7 +105,13 @@ async fn handle_lobby_socket(
             let countdown_time = get_lobby_countdown(lobby_id, redis.clone())
                 .await
                 .unwrap_or(None)
-                .unwrap_or(15);
+                .unwrap_or_else(|| {
+                    if lobby_info.state == LobbyState::InProgress {
+                        0
+                    } else {
+                        15
+                    }
+                });
 
             // Always broadcast the current game state
             let ready_players =
