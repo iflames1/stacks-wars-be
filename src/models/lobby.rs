@@ -75,6 +75,8 @@ pub enum LobbyClientMessage {
     LastPing {
         ts: u64,
     },
+
+    RequestLeave,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -128,6 +130,11 @@ pub enum LobbyServerMessage {
         new_total: f64,
         reason: String,
     },
+
+    #[serde(rename_all = "camelCase")]
+    IsConnectedPlayer {
+        response: bool,
+    },
 }
 
 impl LobbyServerMessage {
@@ -151,6 +158,7 @@ impl LobbyServerMessage {
             LobbyServerMessage::PlayerUpdated { .. } => true,
             LobbyServerMessage::Pending { .. } => true,
             LobbyServerMessage::WarsPointDeduction { .. } => true,
+            LobbyServerMessage::IsConnectedPlayer { .. } => true,
         }
     }
 }

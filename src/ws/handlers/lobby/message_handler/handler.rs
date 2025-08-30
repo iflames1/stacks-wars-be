@@ -20,7 +20,7 @@ use crate::{
         chat::utils::send_chat_message_to_player,
         lobby::message_handler::{
             join_lobby::join_lobby, kick_player, last_ping, leave_lobby, permit_join, ping,
-            request_join, update_game_state, update_player_state,
+            request_join, request_leave, update_game_state, update_player_state,
         },
         utils::queue_message_for_player,
     },
@@ -265,6 +265,9 @@ pub async fn handle_incoming_messages(
                             }
                             LobbyClientMessage::RequestJoin => {
                                 request_join(player, lobby_id, connections, &redis).await
+                            }
+                            LobbyClientMessage::RequestLeave => {
+                                request_leave(player, lobby_id, connections, &redis).await
                             }
                             LobbyClientMessage::PermitJoin { user_id, allow } => {
                                 permit_join(
