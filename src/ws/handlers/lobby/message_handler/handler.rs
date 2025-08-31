@@ -346,7 +346,7 @@ pub async fn handle_incoming_messages(
                     tracing::debug!("Received pong from player {}", player.id);
                 }
                 Message::Close(_) => {
-                    tracing::info!("Player {} closed connection", player.id);
+                    tracing::debug!("Player {} closed connection", player.id);
                     break;
                 }
                 _ => {}

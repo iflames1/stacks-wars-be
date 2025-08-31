@@ -50,8 +50,6 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
-    tracing::info!("Looking up user ID for identifier: '{}'", identifier);
-
     // Try wallet lookup first using hash
     let wallets_hash = RedisKey::users_wallets();
 
@@ -66,7 +64,7 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
             });
         }
         Ok(None) => {
-            tracing::debug!("No user found for wallet address: {}", identifier);
+            tracing::warn!("No user found for wallet address: {}", identifier);
         }
         Err(e) => {
             tracing::error!("Error during wallet lookup: {}", e);
@@ -76,11 +74,6 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
     // Fallback to username lookup using hash
     let usernames_hash = RedisKey::users_usernames();
     let normalized_username = identifier.to_lowercase();
-    tracing::debug!(
-        "Checking username '{}' in hash: {}",
-        normalized_username,
-        usernames_hash
-    );
 
     match conn
         .hget::<_, _, Option<String>>(&usernames_hash, &normalized_username)

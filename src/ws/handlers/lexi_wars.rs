@@ -40,11 +40,12 @@ pub async fn lexi_wars_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    tracing::info!("New Lexi-Wars WebSocket connection from {}", addr);
+    tracing::debug!("New Lexi-Wars WebSocket connection from {}", addr);
 
     let player_id = query.user_id;
     let redis = state.redis.clone();
     let connections = state.connections.clone();
+    let bot = state.bot.clone();
 
     let lobby = get_lobby_info(lobby_id, redis.clone())
         .await
@@ -122,7 +123,7 @@ pub async fn lexi_wars_handler(
                 let _ = socket.close().await;
             }));
         } else if lobby.state == LobbyState::Waiting {
-            tracing::info!("Player {} trying to connect to waiting lobby", player_id);
+            tracing::debug!("Player {} trying to connect to waiting lobby", player_id);
 
             // Send StartFailed message and close connection
             return Ok(ws.on_upgrade(move |mut socket| async move {
@@ -153,7 +154,7 @@ pub async fn lexi_wars_handler(
         })?;
 
     tracing::info!(
-        "Player {} allowed to join lobby {}",
+        "Player {} allowed to join lexi wars {}",
         matched_player.id,
         lobby_id
     );
@@ -201,6 +202,7 @@ pub async fn lexi_wars_handler(
             lobby_info,
             redis,
             is_game_started,
+            bot.clone(),
         )
     }))
 }
@@ -215,6 +217,7 @@ async fn handle_lexi_wars_socket(
     lobby_info: LobbyInfo,
     redis: RedisClient,
     is_reconnecting_to_started_game: bool,
+    bot: teloxide::Bot,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -228,6 +231,7 @@ async fn handle_lexi_wars_socket(
         connected_player_ids,
         &connections,
         &redis,
+        &bot,
     )
     .await;
 
@@ -252,7 +256,7 @@ async fn handle_lexi_wars_socket(
             broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
         }
 
-        tracing::info!("Sent reconnection state to player {}", player.id);
+        tracing::debug!("Sent reconnection state to player {}", player.id);
     }
 
     lexi_wars::engine::handle_incoming_messages(
@@ -261,6 +265,7 @@ async fn handle_lexi_wars_socket(
         receiver,
         &connections,
         redis.clone(),
+        bot.clone(),
     )
     .await;
 
@@ -297,6 +302,7 @@ async fn setup_player_and_lobby(
     connected_player_ids: Vec<Uuid>,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
+    telegram_bot: &teloxide::Bot,
 ) {
     let lobby_id = lobby_info.id;
 
@@ -360,6 +366,11 @@ async fn setup_player_and_lobby(
             "First player connected, starting auto-start timer for lobby {}",
             lobby_id
         );
-        start_auto_start_timer(lobby_id, connections.clone(), redis.clone());
+        start_auto_start_timer(
+            lobby_id,
+            connections.clone(),
+            redis.clone(),
+            telegram_bot.clone(),
+        );
     }
 }

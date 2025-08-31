@@ -139,7 +139,7 @@ pub async fn handle_incoming_chat_messages(
                     tracing::debug!("Received pong from player {}", player.id);
                 }
                 Message::Close(_) => {
-                    tracing::info!("Player {} closed chat connection", player.id);
+                    tracing::debug!("Player {} closed chat connection", player.id);
                     break;
                 }
                 _ => {}

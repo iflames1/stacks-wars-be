@@ -325,6 +325,7 @@ pub struct LobbyInfo {
     pub token_symbol: Option<String>,
     pub token_id: Option<String>,
     pub creator_last_ping: Option<u64>,
+    pub tg_msg_id: Option<i32>,
 }
 
 impl LobbyInfo {
@@ -358,6 +359,9 @@ impl LobbyInfo {
         }
         if let Some(creator_last_ping) = self.creator_last_ping {
             fields.push(("creator_last_ping".into(), creator_last_ping.to_string()));
+        }
+        if let Some(tg_msg_id) = self.tg_msg_id {
+            fields.push(("tg_msg_id".into(), tg_msg_id.to_string()));
         }
         fields
     }
@@ -430,6 +434,7 @@ impl LobbyInfo {
             token_symbol: map.get("token_symbol").cloned(),
             token_id: map.get("token_id").cloned(),
             creator_last_ping: map.get("creator_last_ping").and_then(|s| s.parse().ok()),
+            tg_msg_id: map.get("tg_msg_id").and_then(|s| s.parse().ok()),
         };
 
         Ok((lobby, creator_id, game_id))

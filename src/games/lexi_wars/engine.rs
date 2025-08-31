@@ -30,12 +30,14 @@ use crate::{
         rules::{RuleContext, get_rule_by_index, get_rules},
         utils::{broadcast_to_lobby, broadcast_to_player, generate_random_letter},
     },
+    http::bot::{self, BotLobbyWinnerPayload, RunnerUp},
     models::{
-        game::{LobbyState, Player},
+        game::{LobbyInfo, LobbyState, Player},
         lexi_wars::{LexiWarsClientMessage, LexiWarsServerMessage, PlayerStanding},
     },
     state::{ConnectionInfoMap, RedisClient},
 };
+use teloxide::Bot;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -235,7 +237,9 @@ pub async fn handle_incoming_messages(
     mut receiver: impl StreamExt<Item = Result<Message, axum::Error>> + Unpin,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
+    _telegram_bot: Bot,
 ) {
+    let _telegram_bot_clone = _telegram_bot.clone(); // Clone at function level for use in nested scopes
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
             Ok(msg) => match msg {
@@ -243,7 +247,7 @@ pub async fn handle_incoming_messages(
                     let parsed = match serde_json::from_str::<LexiWarsClientMessage>(&text) {
                         Ok(msg) => msg,
                         Err(e) => {
-                            tracing::info!("Invalid message format: {}", e);
+                            tracing::info!("Invalid message format from {}: {}", player.id, e);
                             continue;
                         }
                     };
@@ -561,6 +565,7 @@ pub async fn handle_incoming_messages(
                                     lobby_id,
                                     connections.clone(),
                                     redis.clone(),
+                                    _telegram_bot.clone(),
                                 );
                             } else {
                                 tracing::error!(
@@ -577,7 +582,7 @@ pub async fn handle_incoming_messages(
                     tracing::debug!("WebSocket pong from player {}", player.id);
                 }
                 Message::Close(_) => {
-                    tracing::info!("WebSocket close from player {}", player.id);
+                    tracing::debug!("WebSocket close from player {}", player.id);
                     break;
                 }
                 _ => {}
@@ -595,6 +600,7 @@ fn start_turn_timer(
     lobby_id: Uuid,
     connections: ConnectionInfoMap,
     redis: RedisClient,
+    telegram_bot: teloxide::Bot,
 ) {
     tokio::spawn(async move {
         for i in (0..=15).rev() {
@@ -697,7 +703,10 @@ fn start_turn_timer(
 
                     if remaining_players.len() <= 1 {
                         // Game over
-                        if let Err(e) = end_game(lobby_id, &connections, redis.clone()).await {
+                        if let Err(e) =
+                            end_game(lobby_id, &connections, redis.clone(), telegram_bot.clone())
+                                .await
+                        {
                             tracing::error!("Failed to end game: {}", e);
                         }
                     } else {
@@ -739,7 +748,13 @@ fn start_turn_timer(
                             }
 
                             // Start timer for next player
-                            start_turn_timer(next_player_id, lobby_id, connections, redis);
+                            start_turn_timer(
+                                next_player_id,
+                                lobby_id,
+                                connections,
+                                redis,
+                                telegram_bot.clone(),
+                            );
                         }
                     }
                 }
@@ -758,7 +773,12 @@ fn start_turn_timer(
     });
 }
 
-pub fn start_auto_start_timer(lobby_id: Uuid, connections: ConnectionInfoMap, redis: RedisClient) {
+pub fn start_auto_start_timer(
+    lobby_id: Uuid,
+    connections: ConnectionInfoMap,
+    redis: RedisClient,
+    telegram_bot: teloxide::Bot,
+) {
     tokio::spawn(async move {
         for i in (0..=15).rev() {
             // Get current lobby state from Redis
@@ -792,7 +812,9 @@ pub fn start_auto_start_timer(lobby_id: Uuid, connections: ConnectionInfoMap, re
             // If all players are connected, start immediately
             if connected_count == total_players {
                 tracing::info!("All players connected, starting game early");
-                if let Err(e) = start_game(lobby_id, &connections, redis.clone()).await {
+                if let Err(e) =
+                    start_game(lobby_id, &connections, redis.clone(), telegram_bot.clone()).await
+                {
                     tracing::error!("Failed to start game: {}", e);
                 }
                 return;
@@ -823,7 +845,10 @@ pub fn start_auto_start_timer(lobby_id: Uuid, connections: ConnectionInfoMap, re
                         "Sufficient players connected ({}%), starting game",
                         (connected_count * 100) / total_players
                     );
-                    if let Err(e) = start_game(lobby_id, &connections, redis.clone()).await {
+                    if let Err(e) =
+                        start_game(lobby_id, &connections, redis.clone(), telegram_bot.clone())
+                            .await
+                    {
                         tracing::error!("Failed to start game: {}", e);
                     }
                 } else {
@@ -859,6 +884,7 @@ async fn start_game(
     lobby_id: Uuid,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
+    telegram_bot: teloxide::Bot,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Set game as started
     set_game_started(lobby_id, true, redis.clone()).await?;
@@ -911,7 +937,13 @@ async fn start_game(
         }
 
         // Start turn timer for first player
-        start_turn_timer(first_player_id, lobby_id, connections.clone(), redis);
+        start_turn_timer(
+            first_player_id,
+            lobby_id,
+            connections.clone(),
+            redis,
+            telegram_bot,
+        );
 
         tracing::info!(
             "Game started for lobby {} with {} connected players",
@@ -927,6 +959,7 @@ async fn end_game(
     lobby_id: Uuid,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
+    telegram_bot: Bot,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Update game state first to prevent race conditions
     update_lobby_state(lobby_id, LobbyState::Finished, redis.clone()).await?;
@@ -963,23 +996,24 @@ async fn end_game(
     // Add remaining players first (winners)
     if let Ok(remaining_player_ids) = get_current_players_ids(lobby_id, redis.clone()).await {
         for (index, &player_id) in remaining_player_ids.iter().enumerate() {
-            if let Some(player) = players.iter().find(|p| p.id == player_id) {
-                final_standings.push(PlayerStanding {
-                    player: player.clone(),
-                    rank: index + 1,
-                });
+            if let Some(mut player) = players.iter().find(|p| p.id == player_id).cloned() {
+                let rank = index + 1;
+                // Calculate and set the prize for this player
+                player.prize = get_prize(&lobby_info, connected_players_count, rank);
+
+                final_standings.push(PlayerStanding { player, rank });
             }
         }
     }
 
     // Add eliminated players in reverse order (last eliminated gets better rank)
     for (index, &player_id) in eliminated_players.iter().rev().enumerate() {
-        if let Some(player) = players.iter().find(|p| p.id == player_id) {
+        if let Some(mut player) = players.iter().find(|p| p.id == player_id).cloned() {
             let rank = final_standings.len() + index + 1;
-            final_standings.push(PlayerStanding {
-                player: player.clone(),
-                rank,
-            });
+            // Calculate and set the prize for this player
+            player.prize = get_prize(&lobby_info, connected_players_count, rank);
+
+            final_standings.push(PlayerStanding { player, rank });
         }
     }
 
@@ -989,9 +1023,26 @@ async fn end_game(
 
     // Broadcast final standing
     let final_standing_msg = LexiWarsServerMessage::FinalStanding {
-        standing: final_standings,
+        standing: final_standings.iter().cloned().collect(),
     };
     broadcast_to_lobby(&final_standing_msg, &players, lobby_id, connections, &redis).await;
+
+    if let Some(tg_msg_id) = lobby_info.tg_msg_id {
+        tokio::spawn(async move {
+            let winner_payload =
+                create_winner_payload(lobby_id, &lobby_info, &final_standings, tg_msg_id);
+            let chat_id = std::env::var("TELEGRAM_CHAT_ID")
+                .expect("TELEGRAM_CHAT_ID must be set")
+                .parse::<i64>()
+                .unwrap();
+
+            if let Err(e) =
+                bot::broadcast_lobby_winner(&telegram_bot, chat_id, winner_payload).await
+            {
+                tracing::error!("Failed to broadcast lobby winner: {}", e);
+            }
+        });
+    }
 
     // Clean up Redis data
     if let Err(e) = clear_lobby_game_state(lobby_id, redis.clone()).await {
@@ -1000,4 +1051,83 @@ async fn end_game(
 
     tracing::info!("Game ended for lobby {}", lobby_id);
     Ok(())
+}
+
+fn create_winner_payload(
+    lobby_id: Uuid,
+    lobby_info: &LobbyInfo,
+    final_standings: &[PlayerStanding],
+    tg_msg_id: i32,
+) -> BotLobbyWinnerPayload {
+    let winner = &final_standings[0];
+
+    let winner_wallet = winner
+        .player
+        .user
+        .as_ref()
+        .map(|u| u.wallet_address.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let winner_name = winner
+        .player
+        .user
+        .as_ref()
+        .and_then(|u| u.display_name.clone().or_else(|| u.username.clone()));
+
+    // Create runner-ups (2nd and 3rd place if they exist)
+    let mut runner_ups = Vec::new();
+
+    if final_standings.len() > 1 {
+        let second_place = &final_standings[1];
+        let second_wallet = second_place
+            .player
+            .user
+            .as_ref()
+            .map(|u| u.wallet_address.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let second_name = second_place
+            .player
+            .user
+            .as_ref()
+            .and_then(|u| u.display_name.clone().or_else(|| u.username.clone()));
+
+        runner_ups.push(RunnerUp {
+            name: second_name,
+            wallet: second_wallet,
+            position: "2nd".to_string(),
+        });
+    }
+
+    if final_standings.len() > 2 {
+        let third_place = &final_standings[2];
+        let third_wallet = third_place
+            .player
+            .user
+            .as_ref()
+            .map(|u| u.wallet_address.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let third_name = third_place
+            .player
+            .user
+            .as_ref()
+            .and_then(|u| u.display_name.clone().or_else(|| u.username.clone()));
+
+        runner_ups.push(RunnerUp {
+            name: third_name,
+            wallet: third_wallet,
+            position: "3rd".to_string(),
+        });
+    }
+
+    BotLobbyWinnerPayload {
+        lobby_id,
+        lobby_name: lobby_info.name.clone(),
+        game: lobby_info.game.clone(),
+        winner_name,
+        winner_wallet,
+        winner_prize: winner.player.prize,
+        entry_amount: lobby_info.entry_amount,
+        runner_ups,
+        tg_msg_id,
+    }
 }

@@ -36,7 +36,7 @@ pub async fn lobby_ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (axum::http::StatusCode, String)> {
-    tracing::info!("New lobby WS connection from {}", addr);
+    tracing::debug!("New lobby WS connection from {}", addr);
 
     let player_id = query.user_id;
     let redis = state.redis.clone();
@@ -187,7 +187,7 @@ async fn handle_lobby_socket(
                         return;
                     }
 
-                    tracing::info!(
+                    tracing::debug!(
                         "Sent join state {:?} to player {} in lobby {}",
                         join_request.state,
                         player.id,
@@ -238,14 +238,14 @@ async fn handle_lobby_socket(
                         }
 
                         if lobby_info.creator.id == player.id {
-                            tracing::info!(
+                            tracing::debug!(
                                 "Sent {} pending players to lobby creator {} in lobby {}",
                                 pending_count,
                                 player.id,
                                 lobby_id
                             );
                         } else {
-                            tracing::info!(
+                            tracing::debug!(
                                 "Sent {} pending players to player {} in lobby {}",
                                 pending_count,
                                 player.id,

@@ -29,7 +29,7 @@ pub async fn chat_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    tracing::info!("New chat WebSocket connection from {}", addr);
+    tracing::debug!("New chat WebSocket connection from {}", addr);
 
     let player_id = query.user_id;
     let redis = state.redis.clone();
@@ -42,7 +42,7 @@ pub async fn chat_handler(
 
     // If game is finished, close connection immediately
     if lobby_info.state == LobbyState::Finished {
-        tracing::info!(
+        tracing::debug!(
             "Player {} trying to connect to chat while game is finished",
             player_id
         );
