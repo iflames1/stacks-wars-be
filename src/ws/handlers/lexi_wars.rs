@@ -45,6 +45,7 @@ pub async fn lexi_wars_handler(
     let player_id = query.user_id;
     let redis = state.redis.clone();
     let connections = state.connections.clone();
+    let bot = state.bot.clone();
 
     let lobby = get_lobby_info(lobby_id, redis.clone())
         .await
@@ -201,6 +202,7 @@ pub async fn lexi_wars_handler(
             lobby_info,
             redis,
             is_game_started,
+            bot.clone(),
         )
     }))
 }
@@ -215,6 +217,7 @@ async fn handle_lexi_wars_socket(
     lobby_info: LobbyInfo,
     redis: RedisClient,
     is_reconnecting_to_started_game: bool,
+    bot: teloxide::Bot,
 ) {
     let (sender, receiver) = socket.split();
 
@@ -228,6 +231,7 @@ async fn handle_lexi_wars_socket(
         connected_player_ids,
         &connections,
         &redis,
+        &bot,
     )
     .await;
 
@@ -261,6 +265,7 @@ async fn handle_lexi_wars_socket(
         receiver,
         &connections,
         redis.clone(),
+        bot.clone(),
     )
     .await;
 
@@ -297,6 +302,7 @@ async fn setup_player_and_lobby(
     connected_player_ids: Vec<Uuid>,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
+    telegram_bot: &teloxide::Bot,
 ) {
     let lobby_id = lobby_info.id;
 
@@ -360,6 +366,6 @@ async fn setup_player_and_lobby(
             "First player connected, starting auto-start timer for lobby {}",
             lobby_id
         );
-        start_auto_start_timer(lobby_id, connections.clone(), redis.clone());
+        start_auto_start_timer(lobby_id, connections.clone(), redis.clone(), telegram_bot.clone());
     }
 }

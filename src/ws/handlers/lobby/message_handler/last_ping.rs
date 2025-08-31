@@ -66,10 +66,7 @@ async fn update_player_last_ping(
         .map_err(AppError::RedisCommandError)?;
 
     if !exists {
-        return Err(AppError::NotFound(format!(
-            "Player {} not found in lobby {}",
-            player_id, lobby_id
-        )));
+        return Ok(());
     }
 
     let _: () = conn

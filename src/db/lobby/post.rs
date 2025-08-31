@@ -55,6 +55,7 @@ pub async fn create_lobby(
         token_symbol: pool.as_ref().and_then(|p| p.token_symbol.clone()),
         token_id: pool.as_ref().and_then(|p| p.token_id.clone()),
         creator_last_ping,
+        tg_msg_id: None,
     };
 
     // Store pool if it exists
@@ -115,7 +116,7 @@ pub async fn create_lobby(
 
     update_game_active_lobby(game_id, true, redis.clone()).await?;
 
-    // Bot notification code remains the same...
+    let redis_for_tg = redis.clone();
     tokio::spawn(async move {
         let payload = BotNewLobbyPayload {
             lobby_id,
@@ -135,8 +136,22 @@ pub async fn create_lobby(
             .parse::<i64>()
             .unwrap();
 
-        if let Err(e) = bot::broadcast_lobby_created(&bot, chat_id, payload).await {
-            tracing::error!("Failed to broadcast lobby creation: {}", e);
+        match bot::broadcast_lobby_created(&bot, chat_id, payload).await {
+            Ok(msg) => {
+                // Store the telegram message ID in Redis
+                let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
+                if let Ok(mut conn) = redis_for_tg.get().await {
+                    let _: Result<(), redis::RedisError> = redis::cmd("HSET")
+                        .arg(&lobby_key)
+                        .arg("tg_msg_id")
+                        .arg(msg.id.0)
+                        .query_async(&mut *conn)
+                        .await;
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to broadcast lobby creation: {}", e);
+            }
         }
     });
 

@@ -1,9 +1,11 @@
 use html_escape::encode_text;
 use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use teloxide::{
     Bot,
     payloads::SendPhotoSetters,
     prelude::{Request, Requester},
+    sugar::request::RequestReplyExt,
     types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode},
 };
 
@@ -23,11 +25,31 @@ pub struct BotNewLobbyPayload {
     pub wallet_address: String,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct BotLobbyWinnerPayload {
+    pub lobby_id: Uuid,
+    pub lobby_name: String,
+    pub game: GameType,
+    pub winner_name: Option<String>,
+    pub winner_wallet: String,
+    pub winner_prize: Option<f64>,
+    pub entry_amount: Option<f64>,
+    pub runner_ups: Vec<RunnerUp>,
+    pub tg_msg_id: i32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RunnerUp {
+    pub name: Option<String>,
+    pub wallet: String,
+    pub position: String,
+}
+
 pub async fn broadcast_lobby_created(
     bot: &Bot,
     chat_id: i64,
     payload: BotNewLobbyPayload,
-) -> Result<(), teloxide::RequestError> {
+) -> Result<teloxide::types::Message, teloxide::RequestError> {
     let wallet = payload.wallet_address.clone();
     let truncated_wallet = format!("{}...{}", &wallet[0..4], &wallet[wallet.len() - 4..]);
 
@@ -111,15 +133,125 @@ pub async fn broadcast_lobby_created(
         lobby_url,
     )]]);
 
-    bot.send_photo(
-        ChatId(chat_id),
-        InputFile::url(payload.game.image_url.parse().unwrap()),
-    )
-    .caption(caption)
-    .parse_mode(ParseMode::Html)
-    .reply_markup(keyboard)
-    .send()
-    .await?;
+    let message = bot
+        .send_photo(
+            ChatId(chat_id),
+            InputFile::url(payload.game.image_url.parse().unwrap()),
+        )
+        .caption(caption)
+        .parse_mode(ParseMode::Html)
+        .reply_markup(keyboard)
+        .send()
+        .await?;
+
+    Ok(message)
+}
+
+pub async fn broadcast_lobby_winner(
+    bot: &Bot,
+    chat_id: i64,
+    payload: BotLobbyWinnerPayload,
+) -> Result<(), teloxide::RequestError> {
+    let winner_wallet = payload.winner_wallet.clone();
+    let truncated_winner_wallet = format!(
+        "{}...{}",
+        &winner_wallet[0..4],
+        &winner_wallet[winner_wallet.len() - 4..]
+    );
+
+    let winner_display = payload
+        .winner_name
+        .as_ref()
+        .map(|name| {
+            format!(
+                "{} ({})",
+                encode_text(name),
+                encode_text(&truncated_winner_wallet)
+            )
+        })
+        .unwrap_or_else(|| encode_text(&winner_wallet).to_string());
+
+    let mut content = format!(
+        "🎉 <b>Game Finished!</b>\n\n\
+        🏆 <b>Winner:</b> {}\n",
+        winner_display
+    );
+
+    // Add prize information if there's a prize
+    match (payload.winner_prize, payload.entry_amount) {
+        (Some(prize), Some(entry)) => {
+            let net_prize = prize - entry;
+            content.push_str(&format!("💰 <b>Prize Won:</b> {:.2} STX\n", net_prize));
+        }
+        (Some(prize), None) => {
+            // No entry fee, so full prize amount
+            content.push_str(&format!("💰 <b>Prize Won:</b> {:.2} STX\n", prize));
+        }
+        _ => {
+            // No prize information available
+        }
+    }
+
+    // Add runner-ups
+    if !payload.runner_ups.is_empty() {
+        content.push_str("\n<b>Runner-ups:</b>\n");
+        for runner_up in payload.runner_ups {
+            let runner_up_wallet = runner_up.wallet.clone();
+            let truncated_runner_up_wallet = format!(
+                "{}...{}",
+                &runner_up_wallet[0..4],
+                &runner_up_wallet[runner_up_wallet.len() - 4..]
+            );
+
+            let runner_up_display = runner_up
+                .name
+                .as_ref()
+                .map(|name| {
+                    format!(
+                        "{} ({})",
+                        encode_text(name),
+                        encode_text(&truncated_runner_up_wallet)
+                    )
+                })
+                .unwrap_or_else(|| encode_text(&runner_up_wallet).to_string());
+
+            content.push_str(&format!(
+                "🥈 <b>{}:</b> {}\n",
+                runner_up.position, runner_up_display
+            ));
+        }
+    }
+
+    //let lobby_link = format!(
+    //    "\n🔗 <b>View Lobby:</b> <code>https://stackswars.com/lobby/{}</code>",
+    //    payload.lobby_id
+    //);
+
+    //content.push_str(&lobby_link);
+
+    tracing::info!("Telegram winner announcement (HTML): {}", content);
+
+    let game_url: Url = Url::parse(&format!(
+        "https://stackswars.com/lexi-wars/{}",
+        payload.lobby_id
+    ))
+    .unwrap();
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
+        "🎮 View Results",
+        game_url,
+    )]]);
+
+    let _message = bot
+        .send_photo(
+            ChatId(chat_id),
+            InputFile::url(payload.game.image_url.parse().unwrap()),
+        )
+        .caption(content)
+        .parse_mode(ParseMode::Html)
+        .reply_markup(keyboard)
+        .reply_to(teloxide::types::MessageId(payload.tg_msg_id))
+        .await?;
 
     Ok(())
 }

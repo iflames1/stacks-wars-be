@@ -8,7 +8,7 @@ pub enum LexiWarsClientMessage {
     Ping { ts: u64 },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PlayerStanding {
     pub player: Player,
     pub rank: usize,
