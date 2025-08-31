@@ -73,7 +73,7 @@ pub async fn leave_lobby(
                         }
                     }
                 } else {
-                    tracing::info!(
+                    tracing::debug!(
                         "Player {} is the lobby creator, no wars points deducted for leaving",
                         player.id
                     );

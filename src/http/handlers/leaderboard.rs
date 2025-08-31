@@ -45,10 +45,7 @@ pub async fn get_user_stat_handler(
     State(state): State<AppState>,
 ) -> Result<Json<LeaderBoard>, (StatusCode, String)> {
     let user_id = match (payload.user_id, payload.identifier) {
-        (Some(id), _) => {
-            tracing::info!("Using provided user_id: {}", id);
-            id
-        }
+        (Some(id), _) => id,
         (None, Some(identifier)) => {
             if identifier.trim().is_empty() {
                 tracing::warn!("Empty identifier provided");
@@ -79,8 +76,6 @@ pub async fn get_user_stat_handler(
             ));
         }
     };
-
-    tracing::info!("Fetching user stat for user_id: {}", user_id);
 
     let user_stat = get_user_stat(user_id, state.redis).await.map_err(|e| {
         tracing::error!("Failed to get user stat for {}: {}", user_id, e);

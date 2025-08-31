@@ -247,7 +247,7 @@ pub async fn handle_incoming_messages(
                     let parsed = match serde_json::from_str::<LexiWarsClientMessage>(&text) {
                         Ok(msg) => msg,
                         Err(e) => {
-                            tracing::info!("Invalid message format: {}", e);
+                            tracing::info!("Invalid message format from {}: {}", player.id, e);
                             continue;
                         }
                     };
@@ -582,7 +582,7 @@ pub async fn handle_incoming_messages(
                     tracing::debug!("WebSocket pong from player {}", player.id);
                 }
                 Message::Close(_) => {
-                    tracing::info!("WebSocket close from player {}", player.id);
+                    tracing::debug!("WebSocket close from player {}", player.id);
                     break;
                 }
                 _ => {}
