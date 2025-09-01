@@ -1029,8 +1029,13 @@ async fn end_game(
 
     if let Some(tg_msg_id) = lobby_info.tg_msg_id {
         tokio::spawn(async move {
-            let winner_payload =
-                create_winner_payload(lobby_id, &lobby_info, &final_standings, tg_msg_id);
+            let winner_payload = create_winner_payload(
+                lobby_id,
+                &lobby_info,
+                &final_standings,
+                connected_players_count,
+                tg_msg_id,
+            );
             let chat_id = std::env::var("TELEGRAM_CHAT_ID")
                 .expect("TELEGRAM_CHAT_ID must be set")
                 .parse::<i64>()
@@ -1057,6 +1062,7 @@ fn create_winner_payload(
     lobby_id: Uuid,
     lobby_info: &LobbyInfo,
     final_standings: &[PlayerStanding],
+    connected_players_count: usize,
     tg_msg_id: i32,
 ) -> BotLobbyWinnerPayload {
     let winner = &final_standings[0];
@@ -1091,10 +1097,13 @@ fn create_winner_payload(
             .as_ref()
             .and_then(|u| u.display_name.clone().or_else(|| u.username.clone()));
 
+        let second_prize = get_prize(lobby_info, connected_players_count, 2);
+
         runner_ups.push(RunnerUp {
             name: second_name,
             wallet: second_wallet,
             position: "2nd".to_string(),
+            prize: second_prize,
         });
     }
 
@@ -1112,10 +1121,13 @@ fn create_winner_payload(
             .as_ref()
             .and_then(|u| u.display_name.clone().or_else(|| u.username.clone()));
 
+        let third_prize = get_prize(lobby_info, connected_players_count, 3);
+
         runner_ups.push(RunnerUp {
             name: third_name,
             wallet: third_wallet,
             position: "3rd".to_string(),
+            prize: third_prize,
         });
     }
 

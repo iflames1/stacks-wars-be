@@ -43,6 +43,7 @@ pub struct RunnerUp {
     pub name: Option<String>,
     pub wallet: String,
     pub position: String,
+    pub prize: Option<f64>,
 }
 
 pub async fn broadcast_lobby_created(
@@ -222,10 +223,23 @@ pub async fn broadcast_lobby_winner(
                 _ => "🏅", // fallback for any other position
             };
 
-            content.push_str(&format!(
-                "{} <b>{}:</b> {}\n",
+            let mut runner_up_line = format!(
+                "{} <b>{}:</b> {}",
                 emoji, runner_up.position, runner_up_display
-            ));
+            );
+
+            if let Some(prize) = runner_up.prize {
+                let net_prize = match payload.entry_amount {
+                    Some(entry) => prize - entry,
+                    None => prize,
+                };
+
+                if net_prize > 0.0 {
+                    runner_up_line.push_str(&format!(" - {:.2} STX", net_prize));
+                }
+            }
+
+            content.push_str(&format!("{}\n", runner_up_line));
         }
     }
 
