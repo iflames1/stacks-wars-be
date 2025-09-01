@@ -22,8 +22,9 @@ pub async fn leave_lobby(
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: &RedisClient,
+    bot: teloxide::Bot,
 ) {
-    if let Err(e) = patch::leave_lobby(lobby_id, player.id, redis.clone()).await {
+    if let Err(e) = patch::leave_lobby(lobby_id, player.id, redis.clone(), bot).await {
         tracing::error!("Failed to leave lobby: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {

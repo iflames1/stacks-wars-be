@@ -42,6 +42,7 @@ pub async fn lobby_ws_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
     let chat_connections = state.chat_connections.clone();
+    let bot = state.bot.clone();
 
     let players = get_lobby_players(lobby_id, None, redis.clone())
         .await
@@ -56,6 +57,7 @@ pub async fn lobby_ws_handler(
                 connections,
                 chat_connections,
                 redis,
+                bot,
             )
         }));
     }
@@ -84,6 +86,7 @@ pub async fn lobby_ws_handler(
             connections,
             chat_connections,
             redis,
+            bot,
         )
     }))
 }
@@ -95,6 +98,7 @@ async fn handle_lobby_socket(
     connections: ConnectionInfoMap,
     chat_connections: ChatConnectionInfoMap,
     redis: RedisClient,
+    bot: teloxide::Bot,
 ) {
     let (mut sender, receiver) = socket.split();
 
@@ -312,6 +316,7 @@ async fn handle_lobby_socket(
         &connections,
         &chat_connections,
         redis.clone(),
+        bot,
     )
     .await;
 

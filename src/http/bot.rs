@@ -6,7 +6,7 @@ use teloxide::{
     payloads::SendPhotoSetters,
     prelude::{Request, Requester},
     sugar::request::RequestReplyExt,
-    types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ParseMode},
+    types::{ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode},
 };
 
 use crate::models::game::GameType;
@@ -215,9 +215,16 @@ pub async fn broadcast_lobby_winner(
                 })
                 .unwrap_or_else(|| encode_text(&runner_up_wallet).to_string());
 
+            // Use appropriate emoji based on position
+            let emoji = match runner_up.position.as_str() {
+                "2nd" => "🥈",
+                "3rd" => "🥉",
+                _ => "🏅", // fallback for any other position
+            };
+
             content.push_str(&format!(
-                "🥈 <b>{}:</b> {}\n",
-                runner_up.position, runner_up_display
+                "{} <b>{}:</b> {}\n",
+                emoji, runner_up.position, runner_up_display
             ));
         }
     }
@@ -253,5 +260,19 @@ pub async fn broadcast_lobby_winner(
         .reply_to(teloxide::types::MessageId(payload.tg_msg_id))
         .await?;
 
+    Ok(())
+}
+
+pub async fn delete_lobby_creation_message(
+    bot: &Bot,
+    chat_id: i64,
+    message_id: i32,
+) -> Result<(), teloxide::RequestError> {
+    tracing::info!("Deleting lobby creation message ID: {}", message_id);
+
+    bot.delete_message(ChatId(chat_id), MessageId(message_id))
+        .await?;
+
+    tracing::info!("Successfully deleted lobby creation message");
     Ok(())
 }
