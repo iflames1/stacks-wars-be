@@ -252,7 +252,7 @@ pub async fn leave_lobby_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
 
-    leave_lobby(lobby_id, user_id, state.redis.clone())
+    leave_lobby(lobby_id, user_id, state.redis.clone(), state.bot.clone())
         .await
         .map_err(|e| {
             tracing::error!("Error leaving lobby {lobby_id}: {}", e);
@@ -301,12 +301,17 @@ pub async fn kick_player_handler(
         });
     }
 
-    leave_lobby(lobby_id, payload.player_id, state.redis.clone())
-        .await
-        .map_err(|e| {
-            tracing::error!("Error kicking player: {}", e);
-            e.to_response()
-        })?;
+    leave_lobby(
+        lobby_id,
+        payload.player_id,
+        state.redis.clone(),
+        state.bot.clone(),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Error kicking player: {}", e);
+        e.to_response()
+    })?;
 
     tracing::info!("Success kicking player");
     Ok(Json("success".to_string()))

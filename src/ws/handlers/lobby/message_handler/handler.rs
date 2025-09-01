@@ -239,6 +239,7 @@ pub async fn handle_incoming_messages(
     connections: &ConnectionInfoMap,
     chat_connections: &ChatConnectionInfoMap,
     redis: RedisClient,
+    bot: teloxide::Bot,
 ) {
     while let Some(msg_result) = receiver.next().await {
         match msg_result {
@@ -292,8 +293,15 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::LeaveLobby => {
-                                leave_lobby(lobby_id, player, connections, chat_connections, &redis)
-                                    .await
+                                leave_lobby(
+                                    lobby_id,
+                                    player,
+                                    connections,
+                                    chat_connections,
+                                    &redis,
+                                    bot.clone(),
+                                )
+                                .await
                             }
                             LobbyClientMessage::KickPlayer { player_id } => {
                                 kick_player(
@@ -303,6 +311,7 @@ pub async fn handle_incoming_messages(
                                     connections,
                                     chat_connections,
                                     &redis,
+                                    bot.clone(),
                                 )
                                 .await
                             }

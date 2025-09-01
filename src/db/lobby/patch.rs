@@ -93,6 +93,7 @@ pub async fn leave_lobby(
     lobby_id: Uuid,
     user_id: Uuid,
     redis: RedisClient,
+    bot: teloxide::Bot,
 ) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
@@ -153,6 +154,23 @@ pub async fn leave_lobby(
 
             // Update game active lobby count
             update_game_active_lobby(game_id, false, redis.clone()).await?;
+
+            // Delete Telegram lobby creation message if bot is available and tg_msg_id exists
+            if let Some(tg_msg_id) = info.tg_msg_id {
+                tokio::spawn(async move {
+                    let chat_id = std::env::var("TELEGRAM_CHAT_ID")
+                        .expect("TELEGRAM_CHAT_ID must be set")
+                        .parse::<i64>()
+                        .unwrap();
+
+                    if let Err(e) =
+                        crate::http::bot::delete_lobby_creation_message(&bot, chat_id, tg_msg_id)
+                            .await
+                    {
+                        tracing::error!("Failed to delete lobby creation message: {}", e);
+                    }
+                });
+            }
         } else {
             return Err(AppError::BadRequest(
                 "Creator cannot leave lobby with players".into(),
