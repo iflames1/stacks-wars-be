@@ -13,7 +13,7 @@ use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use middleware::{cors_layer, create_global_rate_limiter, rate_limit_middleware};
 use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap};
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 use teloxide::Bot;
 
 use crate::games::init::initialize_games;
@@ -28,7 +28,15 @@ pub async fn start_server() {
     let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN must be set");
     let bot = Bot::new(bot_token);
 
-    let redis_pool = Pool::builder().build(manager).await.unwrap();
+    let redis_pool = Pool::builder()
+        .max_size(100)
+        .min_idle(Some(20))
+        .connection_timeout(Duration::from_secs(5))
+        .max_lifetime(Some(Duration::from_secs(300)))
+        .idle_timeout(Some(Duration::from_secs(30)))
+        .build(manager)
+        .await
+        .unwrap();
 
     // Initialize games in database
     if let Err(e) = initialize_games(redis_pool.clone()).await {

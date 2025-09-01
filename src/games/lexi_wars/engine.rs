@@ -588,7 +588,7 @@ pub async fn handle_incoming_messages(
                 _ => {}
             },
             Err(e) => {
-                tracing::error!("WebSocket error for player {}: {}", player.id, e);
+                tracing::debug!("WebSocket error for player {}: {}", player.id, e);
                 break;
             }
         }

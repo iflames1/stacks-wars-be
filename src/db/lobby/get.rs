@@ -6,7 +6,10 @@ use redis::AsyncCommands;
 use uuid::Uuid;
 
 use crate::{
-    db::{game::get::get_game, user::get::get_user_by_id},
+    db::{
+        game::get::get_game,
+        user::get::{get_user_by_id, get_user_by_id_with_conn},
+    },
     errors::AppError,
     models::{
         game::{
@@ -413,30 +416,54 @@ pub async fn get_all_lobbies_info(
     Ok(out)
 }
 
-pub async fn hydrate_player(mut player: Player, redis: RedisClient) -> Result<Player, AppError> {
-    if player.user.is_none() {
-        match get_user_by_id(player.id, redis).await {
-            Ok(user) => player.user = Some(user),
+pub async fn hydrate_players(players: Vec<Player>, redis: RedisClient) -> Vec<Player> {
+    // Monitor pool health
+    let pool_state = redis.state();
+    tracing::debug!(
+        "Redis pool before hydration - connections: {}, idle: {}",
+        pool_state.connections,
+        pool_state.idle_connections
+    );
+
+    // Get a single connection for all operations to reduce pool pressure
+    let mut conn = match redis.get().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::error!("Failed to get Redis connection for hydration: {}", e);
+            return players; // Return unhydrated players rather than failing
+        }
+    };
+
+    let mut hydrated = Vec::new();
+
+    // Collect users that need hydration
+    let user_ids_to_hydrate: Vec<Uuid> = players
+        .iter()
+        .filter(|p| p.user.is_none())
+        .map(|p| p.id)
+        .collect();
+
+    // Batch hydrate users using the same connection
+    let mut users_map = HashMap::new();
+    for user_id in user_ids_to_hydrate {
+        match get_user_by_id_with_conn(user_id, &mut conn).await {
+            Ok(user) => {
+                users_map.insert(user_id, user);
+            }
             Err(e) => {
-                tracing::warn!("Failed to hydrate user {} for player: {}", player.id, e);
-                // Continue without user data rather than failing
+                tracing::warn!("Failed to hydrate user {}: {}", user_id, e);
             }
         }
     }
-    Ok(player)
-}
 
-pub async fn hydrate_players(players: Vec<Player>, redis: RedisClient) -> Vec<Player> {
-    let mut hydrated = Vec::new();
-
-    for player in players {
-        match hydrate_player(player, redis.clone()).await {
-            Ok(hydrated_player) => hydrated.push(hydrated_player),
-            Err(e) => {
-                tracing::error!("Failed to hydrate player: {}", e);
-                // Skip this player rather than failing the entire request
+    // Apply user data to players
+    for mut player in players {
+        if player.user.is_none() {
+            if let Some(user) = users_map.remove(&player.id) {
+                player.user = Some(user);
             }
         }
+        hydrated.push(player);
     }
 
     hydrated

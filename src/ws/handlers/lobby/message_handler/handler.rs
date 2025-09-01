@@ -49,7 +49,7 @@ pub async fn broadcast_to_lobby(
                 // Try to send immediately
                 let mut sender = conn_info.sender.lock().await;
                 if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
-                    tracing::warn!("Failed to send message to player {}: {}", player.id, e);
+                    tracing::debug!("Failed to send message to player {}: {}", player.id, e);
 
                     // Only queue the message if it should be queued
                     if msg.should_queue() {
@@ -160,7 +160,7 @@ pub async fn send_to_player(
     if let Some(conn_info) = conns.get(&player_id) {
         let mut sender = conn_info.sender.lock().await;
         if let Err(e) = sender.send(Message::Text(serialized.clone().into())).await {
-            tracing::error!("Failed to send message to player {}: {}", player_id, e);
+            tracing::debug!("Failed to send message to player {}: {}", player_id, e);
 
             // Only queue the message if it should be queued
             if msg.should_queue() {
@@ -352,7 +352,7 @@ pub async fn handle_incoming_messages(
                 _ => {}
             },
             Err(e) => {
-                tracing::error!("WebSocket error for player {}: {}", player.id, e);
+                tracing::debug!("WebSocket error for player {}: {}", player.id, e);
                 break;
             }
         }

@@ -6,6 +6,8 @@ use crate::{
     },
     state::RedisClient,
 };
+use bb8::PooledConnection;
+use bb8_redis::RedisConnectionManager;
 use redis::AsyncCommands;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -16,6 +18,38 @@ pub async fn get_user_by_id(user_id: Uuid, redis: RedisClient) -> Result<User, A
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
     })?;
 
+    let key = RedisKey::user(KeyPart::Id(user_id));
+
+    let data: HashMap<String, String> = conn
+        .hgetall(&key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if data.is_empty() {
+        return Err(AppError::NotFound("User not found".into()));
+    }
+
+    let user = User {
+        id: user_id,
+        wallet_address: data
+            .get("wallet_address")
+            .cloned()
+            .unwrap_or_else(|| "".into()),
+        display_name: data.get("display_name").cloned(),
+        wars_point: data
+            .get("wars_point")
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0),
+        username: data.get("username").cloned(),
+    };
+
+    Ok(user)
+}
+
+pub async fn get_user_by_id_with_conn(
+    user_id: Uuid,
+    conn: &mut PooledConnection<'_, RedisConnectionManager>,
+) -> Result<User, AppError> {
     let key = RedisKey::user(KeyPart::Id(user_id));
 
     let data: HashMap<String, String> = conn
@@ -64,7 +98,7 @@ pub async fn get_user_id(identifier: String, redis: RedisClient) -> Result<Uuid,
             });
         }
         Ok(None) => {
-            tracing::warn!("No user found for wallet address: {}", identifier);
+            tracing::debug!("No user found for wallet address: {}", identifier);
         }
         Err(e) => {
             tracing::error!("Error during wallet lookup: {}", e);

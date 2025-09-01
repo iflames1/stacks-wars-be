@@ -145,7 +145,7 @@ pub async fn handle_incoming_chat_messages(
                 _ => {}
             },
             Err(e) => {
-                tracing::error!("Chat WebSocket error for player {}: {}", player.id, e);
+                tracing::debug!("Chat WebSocket error for player {}: {}", player.id, e);
                 break;
             }
         }

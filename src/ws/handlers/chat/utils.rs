@@ -169,7 +169,7 @@ pub async fn send_chat_message_to_player(
     if let Some(conn_info) = connection_guard.get(&player_id) {
         let mut sender = conn_info.sender.lock().await;
         if let Err(e) = sender.send(Message::Text(serialized.into())).await {
-            tracing::warn!("Failed to send message to player {}: {}", player_id, e);
+            tracing::debug!("Failed to send message to player {}: {}", player_id, e);
         }
     }
 }
