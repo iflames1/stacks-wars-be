@@ -54,14 +54,10 @@ pub async fn update_game_state(
         tracing::error!("Failed to update game state: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else {
-        if new_state == LobbyState::InProgress {
-            let players = get_lobby_players(lobby_id, None, redis.clone())
+        if new_state == LobbyState::Starting {
+            let not_ready = get_lobby_players(lobby_id, Some(PlayerState::NotReady), redis.clone())
                 .await
                 .unwrap_or_default();
-            let not_ready: Vec<_> = players
-                .into_iter()
-                .filter(|p| p.state != PlayerState::Ready)
-                .collect();
 
             if !not_ready.is_empty() {
                 let msg = LobbyServerMessage::PlayersNotReady { players: not_ready };
@@ -80,31 +76,25 @@ pub async fn update_game_state(
             let conns_clone = connections.clone();
             let player_clone = player.clone();
             tokio::spawn(async move {
-                start_countdown(
-                    lobby_id,
-                    player_clone,
-                    redis_clone,
-                    conns_clone,
-                )
-                .await;
+                start_countdown(lobby_id, player_clone, redis_clone, conns_clone).await;
             });
 
-            if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
-                if info.state == LobbyState::InProgress {
-                    let game_starting = LobbyServerMessage::LobbyState {
-                        state: new_state,
-                        ready_players: None,
-                    };
-                    broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone())
-                        .await;
-                } else {
-                    tracing::info!(
-                        "Game state was reverted before start, skipping LobbyState message"
-                    );
-                }
-            }
+            //if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
+            //    if info.state == LobbyState::InProgress {
+            //        let game_starting = LobbyServerMessage::LobbyState {
+            //            state: LobbyState::InProgress,
+            //            ready_players: None,
+            //        };
+            //        broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone())
+            //            .await;
+            //    } else {
+            //        tracing::info!(
+            //            "Game state was reverted before start, skipping LobbyState message"
+            //        );
+            //    }
+            //}
         } else {
-            // If game state is not InProgress, clear any existing countdown
+            // If game state is not starting, clear any existing countdown
             if let Err(e) = clear_lobby_countdown(lobby_id, redis.clone()).await {
                 tracing::error!("Failed to clear countdown for lobby {}: {}", lobby_id, e);
             }
@@ -163,7 +153,7 @@ async fn start_countdown(
 
         match get_lobby_info(lobby_id, redis.clone()).await {
             Ok(info) => {
-                if info.state != LobbyState::InProgress {
+                if info.state != LobbyState::Starting {
                     tracing::info!("Countdown interrupted by state change");
 
                     // Clear countdown state
@@ -200,7 +190,7 @@ async fn start_countdown(
 
     // Final state confirmation
     if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
-        if info.state == LobbyState::InProgress {
+        if info.state == LobbyState::Starting {
             let ready_players =
                 match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
@@ -229,6 +219,16 @@ async fn start_countdown(
             };
 
             tracing::info!("Game started with {} ready players", ready_players.len());
+
+            // Update lobby state to InProgress after countdown completes
+            if let Err(e) =
+                update_lobby_state(lobby_id, LobbyState::InProgress, redis.clone()).await
+            {
+                tracing::error!("Failed to update lobby state to InProgress: {}", e);
+                send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
+                    .await;
+                return;
+            }
 
             let msg = LobbyServerMessage::LobbyState {
                 state: LobbyState::InProgress,

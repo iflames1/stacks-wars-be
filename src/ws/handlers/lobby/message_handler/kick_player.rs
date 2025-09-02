@@ -55,7 +55,7 @@ pub async fn kick_player(
         send_error_to_player(
             player.id,
             lobby_id,
-            "Cannot kick player when game is in progress",
+            "Cannot kick player when game is in starting",
             &connections,
             &redis,
         )
