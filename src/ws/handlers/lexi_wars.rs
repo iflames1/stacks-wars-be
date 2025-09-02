@@ -122,6 +122,18 @@ pub async fn lexi_wars_handler(
 
                 let _ = socket.close().await;
             }));
+        } else if lobby.state == LobbyState::Starting {
+            tracing::debug!("Player {} trying to connect to starting lobby", player_id);
+
+            // Send StartFailed message and close connection
+            return Ok(ws.on_upgrade(move |mut socket| async move {
+                let start_failed_msg = LexiWarsServerMessage::StartFailed;
+                let serialized = serde_json::to_string(&start_failed_msg).unwrap();
+                let _ = socket
+                    .send(axum::extract::ws::Message::Text(serialized.into()))
+                    .await;
+                let _ = socket.close().await;
+            }));
         } else if lobby.state == LobbyState::Waiting {
             tracing::debug!("Player {} trying to connect to waiting lobby", player_id);
 
@@ -338,9 +350,17 @@ async fn setup_player_and_lobby(
 
     // Track connected player by adding to Redis connected players set
     if !connected_player_ids.contains(&player.id) {
-        // Add this player to connected players
-        if let Err(e) = add_connected_player(lobby_id, player.id, redis.clone()).await {
-            tracing::error!("Failed to add connected player: {}", e);
+        // Verify the player is actually part of the lobby before adding to connected players
+        if players.iter().any(|p| p.id == player.id) {
+            if let Err(e) = add_connected_player(lobby_id, player.id, redis.clone()).await {
+                tracing::error!("Failed to add connected player: {}", e);
+            }
+        } else {
+            tracing::warn!(
+                "Player {} not found in lobby {} players list, skipping connected player tracking",
+                player.id,
+                lobby_id
+            );
         }
     }
 
