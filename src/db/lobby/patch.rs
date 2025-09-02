@@ -190,12 +190,6 @@ pub async fn leave_lobby(
         return Err(AppError::BadRequest("User not in lobby".into()));
     }
 
-    let pm: HashMap<String, String> = conn
-        .hgetall(&player_key)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-    let player = Player::from_redis_hash(&pm)?;
-
     let _: () = conn
         .del(&player_key)
         .await
@@ -210,15 +204,13 @@ pub async fn leave_lobby(
     if let Some(_addr) = &info.contract_address {
         let entry_amount = info.entry_amount.unwrap_or(0.0);
 
-        if entry_amount > 0.0 && player.tx_id.is_some() {
+        if entry_amount > 0.0 {
             // Regular paid lobby - refund player by decreasing pool
             let _: () = conn
                 .hincr(&lobby_key, "current_amount", -(entry_amount as i64))
                 .await
                 .map_err(AppError::RedisCommandError)?;
         }
-        // For sponsored lobbies (entry_amount = 0), no pool adjustment needed
-        // Players joined for free, so no refund needed
     }
 
     Ok(())
@@ -279,10 +271,14 @@ pub async fn update_lobby_state(
 
     // Update active lobby count when transitioning to/from Finished
     if new_state == LobbyState::Finished
-        && (old_state == LobbyState::Waiting || old_state == LobbyState::InProgress)
+        && (old_state == LobbyState::Waiting
+            || old_state == LobbyState::InProgress
+            || old_state == LobbyState::Starting)
     {
         update_game_active_lobby(game_id, false, redis.clone()).await?;
-    } else if (new_state == LobbyState::InProgress || new_state == LobbyState::Waiting)
+    } else if (new_state == LobbyState::InProgress
+        || new_state == LobbyState::Waiting
+        || new_state == LobbyState::Starting)
         && old_state == LobbyState::Finished
     {
         update_game_active_lobby(game_id, true, redis.clone()).await?;
