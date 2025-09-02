@@ -279,6 +279,7 @@ fn default_token_symbol() -> Option<String> {
 #[serde(rename_all = "camelCase")]
 pub enum LobbyState {
     Waiting,
+    Starting,
     InProgress,
     Finished,
 }
@@ -289,6 +290,7 @@ impl FromStr for LobbyState {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Waiting" => Ok(LobbyState::Waiting),
+            "Starting" => Ok(LobbyState::Starting),
             "InProgress" => Ok(LobbyState::InProgress),
             "Finished" => Ok(LobbyState::Finished),
             other => Err(format!("Unknown LobbyState: {}", other)),
@@ -463,6 +465,7 @@ pub fn parse_lobby_states(state_param: Option<String>) -> Option<Vec<LobbyState>
                     let trimmed = state_str.trim();
                     match trimmed {
                         "waiting" => Some(LobbyState::Waiting),
+                        "starting" => Some(LobbyState::Starting),
                         "inProgress" => Some(LobbyState::InProgress),
                         "finished" => Some(LobbyState::Finished),
                         _ => {
