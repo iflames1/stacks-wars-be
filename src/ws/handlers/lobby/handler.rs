@@ -145,7 +145,7 @@ async fn handle_lobby_socket(
                         vec![]
                     }
                 };
-            
+
             // Get game started status
             let started = match get_game_started(lobby_id, redis.clone()).await {
                 Ok(status) => status,
@@ -154,7 +154,7 @@ async fn handle_lobby_socket(
                     false
                 }
             };
-            
+
             let game_state_msg = LobbyServerMessage::LobbyState {
                 state: lobby_info.state.clone(),
                 ready_players: Some(ready_players),
@@ -258,14 +258,14 @@ async fn handle_lobby_socket(
 
             // If game is in progress, close the connection immediately
             if lobby_info.state == LobbyState::InProgress {
-                tracing::info!(
+                tracing::debug!(
                     "Player {} trying to connect to lobby while game is in progress - closing connection",
                     player.id
                 );
 
                 let close_frame = CloseFrame {
                     code: axum::extract::ws::close_code::NORMAL,
-                    reason: "Game already in progress".into(),
+                    reason: "inProgress".into(),
                 };
 
                 let _ = sender.send(Message::Close(Some(close_frame))).await;
@@ -274,14 +274,14 @@ async fn handle_lobby_socket(
 
             // If game is finished, close the connection immediately
             if lobby_info.state == LobbyState::Finished {
-                tracing::info!(
+                tracing::debug!(
                     "Player {} trying to connect to lobby after game has ended - closing connection",
                     player.id
                 );
 
                 let close_frame = CloseFrame {
                     code: axum::extract::ws::close_code::NORMAL,
-                    reason: "Game ended".into(),
+                    reason: "finished".into(),
                 };
 
                 let _ = sender.send(Message::Close(Some(close_frame))).await;

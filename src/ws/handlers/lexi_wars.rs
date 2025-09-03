@@ -117,6 +117,16 @@ pub async fn lexi_wars_handler(
                                     .await;
                             }
                         }
+
+                        if let Some(rank) = connecting_player.rank {
+                            let rank_msg = LexiWarsServerMessage::Rank {
+                                rank: rank.to_string(),
+                            };
+                            let serialized = serde_json::to_string(&rank_msg).unwrap();
+                            let _ = socket
+                                .send(axum::extract::ws::Message::Text(serialized.into()))
+                                .await;
+                        }
                     }
                 }
 
