@@ -44,12 +44,13 @@ pub async fn update_player_state(
 
         if new_state == PlayerState::NotReady {
             if let Ok(lobby_info) = get_lobby_info(lobby_id, redis.clone()).await {
-                if lobby_info.state == LobbyState::InProgress {
+                if lobby_info.state == LobbyState::Starting {
                     // revert game state to Waiting
                     let _ = update_lobby_state(lobby_id, LobbyState::Waiting, redis.clone()).await;
                     let msg = LobbyServerMessage::LobbyState {
                         state: LobbyState::Waiting,
                         ready_players: None,
+                        started: false,
                     };
                     broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
                 }

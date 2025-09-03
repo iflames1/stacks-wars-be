@@ -11,6 +11,7 @@ use crate::ws::handlers::{
 };
 use crate::{
     db::{
+        game::state::get_game_started,
         lobby::{
             countdown::get_lobby_countdown,
             get::{get_lobby_info, get_lobby_players},
@@ -109,13 +110,23 @@ async fn handle_lobby_socket(
             let countdown_time = get_lobby_countdown(lobby_id, redis.clone())
                 .await
                 .unwrap_or(None)
-                .unwrap_or_else(|| {
-                    if lobby_info.state == LobbyState::InProgress {
-                        0
-                    } else {
-                        15
-                    }
-                });
+                .unwrap_or(15);
+
+            let countdown_msg = LobbyServerMessage::Countdown {
+                time: countdown_time,
+            };
+            let serialized = match serde_json::to_string(&countdown_msg) {
+                Ok(json) => json,
+                Err(e) => {
+                    tracing::error!("Failed to serialize Countdown message: {}", e);
+                    return;
+                }
+            };
+
+            if let Err(e) = sender.send(Message::Text(serialized.into())).await {
+                tracing::error!("Failed to send countdown to player {}: {}", player.id, e);
+                return;
+            }
 
             // Always broadcast the current game state
             let ready_players =
@@ -134,9 +145,20 @@ async fn handle_lobby_socket(
                         vec![]
                     }
                 };
+
+            // Get game started status
+            let started = match get_game_started(lobby_id, redis.clone()).await {
+                Ok(status) => status,
+                Err(e) => {
+                    tracing::error!("Failed to get game started status: {}", e);
+                    false
+                }
+            };
+
             let game_state_msg = LobbyServerMessage::LobbyState {
                 state: lobby_info.state.clone(),
                 ready_players: Some(ready_players),
+                started,
             };
 
             let serialized = match serde_json::to_string(&game_state_msg) {
@@ -149,22 +171,6 @@ async fn handle_lobby_socket(
 
             if let Err(e) = sender.send(Message::Text(serialized.into())).await {
                 tracing::error!("Failed to send game state to player {}: {}", player.id, e);
-                return;
-            }
-
-            let countdown_msg = LobbyServerMessage::Countdown {
-                time: countdown_time,
-            };
-            let serialized = match serde_json::to_string(&countdown_msg) {
-                Ok(json) => json,
-                Err(e) => {
-                    tracing::error!("Failed to serialize Countdown message: {}", e);
-                    return;
-                }
-            };
-
-            if let Err(e) = sender.send(Message::Text(serialized.into())).await {
-                tracing::error!("Failed to send countdown to player {}: {}", player.id, e);
                 return;
             }
 
@@ -219,7 +225,6 @@ async fn handle_lobby_socket(
             match get_pending_players(lobby_id, redis.clone()).await {
                 Ok(pending_players) => {
                     if !pending_players.is_empty() {
-                        let pending_count = pending_players.len();
                         let pending_msg = LobbyServerMessage::PendingPlayers { pending_players };
                         let serialized = match serde_json::to_string(&pending_msg) {
                             Ok(json) => json,
@@ -240,22 +245,6 @@ async fn handle_lobby_socket(
                             );
                             return;
                         }
-
-                        if lobby_info.creator.id == player.id {
-                            tracing::debug!(
-                                "Sent {} pending players to lobby creator {} in lobby {}",
-                                pending_count,
-                                player.id,
-                                lobby_id
-                            );
-                        } else {
-                            tracing::debug!(
-                                "Sent {} pending players to player {} in lobby {}",
-                                pending_count,
-                                player.id,
-                                lobby_id
-                            );
-                        }
                     }
                 }
                 Err(e) => {
@@ -267,16 +256,32 @@ async fn handle_lobby_socket(
                 }
             }
 
-            // If game is in progress and countdown is 0, close the connection immediately
-            if lobby_info.state == LobbyState::InProgress && countdown_time == 0 {
-                tracing::info!(
-                    "Player {} trying to connect to lobby while game is in progress (countdown finished) - closing connection",
+            // If game is in progress, close the connection immediately
+            if lobby_info.state == LobbyState::InProgress {
+                tracing::debug!(
+                    "Player {} trying to connect to lobby while game is in progress - closing connection",
                     player.id
                 );
 
                 let close_frame = CloseFrame {
                     code: axum::extract::ws::close_code::NORMAL,
-                    reason: "Game already in progress".into(),
+                    reason: "inProgress".into(),
+                };
+
+                let _ = sender.send(Message::Close(Some(close_frame))).await;
+                return;
+            }
+
+            // If game is finished, close the connection immediately
+            if lobby_info.state == LobbyState::Finished {
+                tracing::debug!(
+                    "Player {} trying to connect to lobby after game has ended - closing connection",
+                    player.id
+                );
+
+                let close_frame = CloseFrame {
+                    code: axum::extract::ws::close_code::NORMAL,
+                    reason: "finished".into(),
                 };
 
                 let _ = sender.send(Message::Close(Some(close_frame))).await;

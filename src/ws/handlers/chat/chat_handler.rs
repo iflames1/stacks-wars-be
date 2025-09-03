@@ -50,7 +50,7 @@ pub async fn chat_handler(
         return Ok(ws.on_upgrade(move |mut socket| async move {
             let close_frame = CloseFrame {
                 code: axum::extract::ws::close_code::NORMAL,
-                reason: "Game finished - chat unavailable".into(),
+                reason: "finished".into(),
             };
 
             let _ = socket.send(Message::Close(Some(close_frame))).await;

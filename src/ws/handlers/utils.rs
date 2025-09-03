@@ -122,7 +122,6 @@ pub async fn store_connection_and_send_queued_messages(
                 if let Some(conn_info) = conns.get(&player_id) {
                     let mut sender_guard = conn_info.sender.lock().await;
 
-                    let mut sent_count = 0;
                     for message in messages {
                         if let Err(e) = sender_guard.send(Message::Text(message.into())).await {
                             tracing::error!(
@@ -132,17 +131,10 @@ pub async fn store_connection_and_send_queued_messages(
                             );
                             break;
                         }
-                        sent_count += 1;
 
                         // Small delay to avoid overwhelming the client
                         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                     }
-
-                    tracing::info!(
-                        "Successfully sent {} queued messages to player {}",
-                        sent_count,
-                        player_id
-                    );
                 }
             }
         }

@@ -920,13 +920,6 @@ async fn start_game(
             }
         }
 
-        // Send game started message to all players
-        let game_started_msg = LexiWarsServerMessage::Start {
-            time: 0,
-            started: true,
-        };
-        broadcast_to_lobby(&game_started_msg, &players, lobby_id, connections, &redis).await;
-
         // Send first turn message to all players
         if let Some(first_player) = players.iter().find(|p| p.id == first_player_id) {
             let turn_msg = LexiWarsServerMessage::Turn {
@@ -935,6 +928,13 @@ async fn start_game(
             };
             broadcast_to_lobby(&turn_msg, &players, lobby_id, connections, &redis).await;
         }
+
+        // Send game started message to all players
+        let game_started_msg = LexiWarsServerMessage::Start {
+            time: 0,
+            started: true,
+        };
+        broadcast_to_lobby(&game_started_msg, &players, lobby_id, connections, &redis).await;
 
         // Start turn timer for first player
         start_turn_timer(

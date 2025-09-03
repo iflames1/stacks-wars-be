@@ -47,7 +47,7 @@ pub async fn permit_join(
         send_error_to_player(
             player.id,
             lobby_id,
-            "Cannot permit joins when game is not open".to_string(),
+            "Cannot permit joins when game is starting".to_string(),
             &connections,
             &redis,
         )
