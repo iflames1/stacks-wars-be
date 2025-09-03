@@ -50,6 +50,7 @@ pub async fn update_player_state(
                     let msg = LobbyServerMessage::LobbyState {
                         state: LobbyState::Waiting,
                         ready_players: None,
+                        started: false,
                     };
                     broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
                 }

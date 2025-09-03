@@ -10,10 +10,7 @@ use crate::{
     },
     state::{ConnectionInfoMap, RedisClient},
     ws::handlers::{
-        lobby::message_handler::{
-            broadcast_to_lobby,
-            handler::{send_error_to_player, send_to_player},
-        },
+        lobby::message_handler::{broadcast_to_lobby, handler::send_error_to_player},
         utils::remove_connection,
     },
 };
@@ -54,23 +51,29 @@ pub async fn update_game_state(
         tracing::error!("Failed to update game state: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else {
+        tracing::info!(
+            "Lobby {} state updated to {:?} by player {}",
+            lobby_id,
+            new_state,
+            player.id
+        );
+        let game_starting = LobbyServerMessage::LobbyState {
+            state: new_state.clone(),
+            ready_players: None,
+            started: false,
+        };
+        broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone()).await;
         if new_state == LobbyState::Starting {
-            let not_ready = get_lobby_players(lobby_id, Some(PlayerState::NotReady), redis.clone())
-                .await
-                .unwrap_or_default();
+            // invalid block
+            //let not_ready = get_lobby_players(lobby_id, Some(PlayerState::NotReady), redis.clone())
+            //    .await
+            //    .unwrap_or_default();
 
-            if !not_ready.is_empty() {
-                let msg = LobbyServerMessage::PlayersNotReady { players: not_ready };
-                send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
-
-                let game_starting = LobbyServerMessage::LobbyState {
-                    state: new_state,
-                    ready_players: None,
-                };
-                broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone())
-                    .await;
-                return; // don't start the game
-            }
+            //if !not_ready.is_empty() {
+            //    let msg = LobbyServerMessage::PlayersNotReady { players: not_ready };
+            //    send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
+            //    return; // don't start the game
+            //}
 
             let redis_clone = redis.clone();
             let conns_clone = connections.clone();
@@ -164,6 +167,7 @@ async fn start_countdown(
                     let msg = LobbyServerMessage::LobbyState {
                         state: info.state,
                         ready_players: None,
+                        started: false,
                     };
                     broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
 
@@ -233,6 +237,7 @@ async fn start_countdown(
             let msg = LobbyServerMessage::LobbyState {
                 state: LobbyState::InProgress,
                 ready_players: Some(ready_players.clone()),
+                started: false,
             };
             broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
 

@@ -11,6 +11,7 @@ use crate::ws::handlers::{
 };
 use crate::{
     db::{
+        game::state::get_game_started,
         lobby::{
             countdown::get_lobby_countdown,
             get::{get_lobby_info, get_lobby_players},
@@ -144,9 +145,20 @@ async fn handle_lobby_socket(
                         vec![]
                     }
                 };
+            
+            // Get game started status
+            let started = match get_game_started(lobby_id, redis.clone()).await {
+                Ok(status) => status,
+                Err(e) => {
+                    tracing::error!("Failed to get game started status: {}", e);
+                    false
+                }
+            };
+            
             let game_state_msg = LobbyServerMessage::LobbyState {
                 state: lobby_info.state.clone(),
                 ready_players: Some(ready_players),
+                started,
             };
 
             let serialized = match serde_json::to_string(&game_state_msg) {

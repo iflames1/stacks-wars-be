@@ -104,6 +104,7 @@ pub enum LobbyServerMessage {
     LobbyState {
         state: LobbyState,
         ready_players: Option<Vec<Uuid>>,
+        started: bool,
     },
 
     #[serde(rename_all = "camelCase")]
