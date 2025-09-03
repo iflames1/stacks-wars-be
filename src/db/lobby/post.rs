@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     db::{
         game::{get::get_game, patch::update_game_active_lobby},
-        tx::validate_payment_tx,
+        tx::{validate_fee_transfer, validate_payment_tx},
         user::get::get_user_by_id,
     },
     errors::AppError,
@@ -23,6 +23,7 @@ pub async fn create_lobby(
     creator_id: Uuid,
     game_id: Uuid,
     pool: Option<LobbyPoolInput>,
+    tx_id: String,
     redis: RedisClient,
     bot: Bot,
 ) -> Result<Uuid, AppError> {
@@ -37,7 +38,7 @@ pub async fn create_lobby(
     })?;
 
     // Create player with minimal data
-    let lobby_player = Player::new(creator_user.id, pool.as_ref().map(|p| p.tx_id.to_owned()));
+    let lobby_player = Player::new(creator_user.id, Some(tx_id.clone()));
     let creator_last_ping = lobby_player.last_ping;
 
     let lobby_info = LobbyInfo {
@@ -61,12 +62,17 @@ pub async fn create_lobby(
     // Store pool if it exists
     if let Some(pool_input) = &pool {
         validate_payment_tx(
-            &pool_input.tx_id,
+            &tx_id,
             &creator_user.wallet_address,
             &pool_input.contract_address,
             pool_input.current_amount,
         )
         .await?;
+    } else {
+        let fee_wallet = std::env::var("FEE_WALLET")
+            .map_err(|_| AppError::EnvError("FEE_WALLET not set".into()))?;
+
+        validate_fee_transfer(&tx_id, &creator_user.wallet_address, &fee_wallet).await?;
     }
 
     let lobby_key = RedisKey::lobby(KeyPart::Id(lobby_id));
