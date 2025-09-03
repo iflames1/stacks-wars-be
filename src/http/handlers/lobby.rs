@@ -33,7 +33,7 @@ pub struct CreateLobbyPayload {
     pub entry_amount: Option<f64>,
     pub current_amount: Option<f64>,
     pub contract_address: Option<String>,
-    pub tx_id: Option<String>,
+    pub tx_id: String,
     pub token_symbol: Option<String>,
     pub token_id: Option<String>,
     pub game_id: Uuid,
@@ -53,14 +53,12 @@ pub async fn create_lobby_handler(
         payload.entry_amount,
         payload.current_amount,
         payload.contract_address.clone(),
-        payload.tx_id.clone(),
     ) {
-        (Some(entry_amount), Some(current_amount), Some(contract_address), Some(tx_id)) => {
+        (Some(entry_amount), Some(current_amount), Some(contract_address)) => {
             Some(LobbyPoolInput {
                 entry_amount,
                 current_amount,
                 contract_address,
-                tx_id,
                 token_symbol: payload.token_symbol.clone().or(Some("STX".to_string())),
                 token_id: payload.token_id.clone(),
             })
@@ -74,6 +72,7 @@ pub async fn create_lobby_handler(
         user_id,
         payload.game_id,
         pool,
+        payload.tx_id,
         state.redis.clone(),
         state.bot.clone(),
     )

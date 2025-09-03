@@ -117,3 +117,99 @@ pub async fn validate_payment_tx(
 
     Ok(())
 }
+
+pub async fn validate_fee_transfer(
+    tx_id: &str,
+    expected_sender: &str,
+    fee_wallet: &str,
+) -> Result<(), AppError> {
+    let url = format!("https://api.testnet.hiro.so/extended/v1/tx/{}", tx_id);
+
+    let res = reqwest::get(&url)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Failed to fetch tx: {}", e)))?;
+
+    if !res.status().is_success() {
+        return Err(AppError::BadRequest(format!(
+            "Transaction not found or failed: {}",
+            tx_id
+        )));
+    }
+
+    let json: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| AppError::Deserialization(format!("Invalid JSON response: {}", e)))?;
+
+    // Validate sender
+    let sender_address = json
+        .get("sender_address")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("Missing sender address".into()))?;
+
+    if sender_address != expected_sender {
+        return Err(AppError::BadRequest(format!(
+            "Unexpected sender address: {}, expected: {}",
+            sender_address, expected_sender
+        )));
+    }
+
+    // Validate transaction status
+    let status = json
+        .get("tx_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("failed");
+
+    if status != "success" {
+        return Err(AppError::BadRequest("Transaction failed".into()));
+    }
+
+    // Validate transaction type (should be token_transfer for STX transfers)
+    let tx_type = json
+        .get("tx_type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("Missing transaction type".into()))?;
+
+    if tx_type != "token_transfer" {
+        return Err(AppError::BadRequest(
+            "Invalid transaction type, expected token_transfer".into(),
+        ));
+    }
+
+    // Validate recipient and amount from token_transfer field
+    let token_transfer = json
+        .get("token_transfer")
+        .ok_or_else(|| AppError::BadRequest("Missing token_transfer data".into()))?;
+
+    let recipient_address = token_transfer
+        .get("recipient_address")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("Missing recipient address".into()))?;
+
+    if recipient_address != fee_wallet {
+        return Err(AppError::BadRequest(format!(
+            "Unexpected recipient address: expected {}, got {}",
+            fee_wallet, recipient_address
+        )));
+    }
+
+    let amount_str = token_transfer
+        .get("amount")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("Missing transfer amount".into()))?;
+
+    let amount = amount_str
+        .parse::<f64>()
+        .map_err(|_| AppError::BadRequest("Invalid amount format".into()))?;
+
+    // Expected amount is 0.2 STX = 200,000 microSTX
+    let expected_amount = 200_000.0;
+    if amount != expected_amount {
+        return Err(AppError::BadRequest(format!(
+            "Invalid fee amount: expected {} microSTX (0.2 STX), got {} microSTX",
+            expected_amount, amount
+        )));
+    }
+
+    Ok(())
+}
