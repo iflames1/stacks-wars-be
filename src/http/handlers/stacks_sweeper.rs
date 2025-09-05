@@ -15,7 +15,7 @@ pub struct CreateStacksSweeperPayload {
     pub size: usize,
     pub risk: f32,
     pub blind: bool,
-    pub tx_id: String,
+    pub _tx_id: String,
 }
 
 #[derive(Serialize)]
