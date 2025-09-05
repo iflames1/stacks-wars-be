@@ -132,6 +132,10 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:missed_chat_msgs:{player_id}")
     }
 
+    pub fn stacks_sweeper(user_id: KeyPart) -> String {
+        format!("stacks_sweeper:{user_id}")
+    }
+
     // Key parsing utilities
     pub fn _extract_user_id_from_user_key(key: &str) -> Option<Uuid> {
         // Parse "users:{uuid}" to extract user_id

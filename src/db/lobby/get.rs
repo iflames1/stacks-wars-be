@@ -16,6 +16,7 @@ use crate::{
             ClaimState, LobbyExtended, LobbyInfo, LobbyState, Player, PlayerLobbyInfo, PlayerState,
         },
         redis::{KeyPart, RedisKey},
+        stacks_sweeper,
     },
     state::RedisClient,
 };
@@ -744,6 +745,39 @@ pub async fn get_player_lobbies(
     }
 
     Ok(result)
+}
+
+pub async fn get_stacks_sweeper_single(
+    user_id: Uuid,
+    redis: RedisClient,
+) -> Result<Vec<stacks_sweeper::MaskedCell>, AppError> {
+    use crate::models::stacks_sweeper::StacksSweeperGame;
+
+    // Get the game from Redis
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let game_key = RedisKey::stacks_sweeper(KeyPart::Id(user_id));
+
+    // Get current game data
+    let game_hash: std::collections::HashMap<String, String> = redis::cmd("HGETALL")
+        .arg(&game_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if game_hash.is_empty() {
+        return Err(AppError::NotFound("Game not found".into()));
+    }
+
+    // Deserialize the game
+    let game = StacksSweeperGame::from_redis_hash(game_hash)
+        .map_err(|e| AppError::Deserialization(format!("Failed to deserialize game: {}", e)))?;
+
+    // Return masked cells (only revealed information)
+    Ok(game.get_masked_cells())
 }
 
 async fn fetch_lobby_uuids(

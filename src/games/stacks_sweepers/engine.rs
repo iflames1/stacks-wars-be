@@ -1,6 +1,7 @@
-use rand::seq::SliceRandom;
+use crate::models::stacks_sweeper::StacksSweeperCell;
 use rand::rng;
-use serde::{Serialize, Deserialize};
+use rand::seq::SliceRandom;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Cell {
@@ -18,7 +19,10 @@ pub struct Board {
 
 impl Board {
     pub fn generate(size: usize, risk: f32) -> Self {
-        assert!(risk >= 0.0 && risk <= 1.0, "risk must be between 0.0 and 1.0");
+        assert!(
+            risk >= 0.0 && risk <= 1.0,
+            "risk must be between 0.0 and 1.0"
+        );
 
         let total_cells = size * size;
         let mine_count = ((total_cells as f32) * risk).round() as usize;
@@ -56,10 +60,29 @@ impl Board {
                     }
                 }
 
-                cells.push(Cell { x, y, is_mine, adjacent });
+                cells.push(Cell {
+                    x,
+                    y,
+                    is_mine,
+                    adjacent,
+                });
             }
         }
 
         Self { size, cells }
+    }
+
+    pub fn to_game_cells(&self) -> Vec<StacksSweeperCell> {
+        self.cells
+            .iter()
+            .map(|cell| StacksSweeperCell {
+                x: cell.x,
+                y: cell.y,
+                is_mine: cell.is_mine,
+                adjacent: cell.adjacent,
+                revealed: false,
+                flagged: false,
+            })
+            .collect()
     }
 }

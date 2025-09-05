@@ -163,3 +163,132 @@ pub async fn create_lobby(
 
     Ok(lobby_id)
 }
+
+pub async fn create_stacks_sweeper_single(
+    user_id: Uuid,
+    size: usize,
+    risk: f32,
+    blind: bool,
+    redis: RedisClient,
+) -> Result<Uuid, AppError> {
+    use crate::{games::stacks_sweepers::Board, models::stacks_sweeper::StacksSweeperGame};
+
+    // Validate input parameters
+    if size < 3 || size > 10 {
+        return Err(AppError::BadRequest(
+            "Grid size must be between 3 and 10".into(),
+        ));
+    }
+    if risk < 0.1 || risk > 0.9 {
+        return Err(AppError::BadRequest(
+            "Risk must be between 0.1 and 0.9".into(),
+        ));
+    }
+
+    // Generate the board
+    let board = Board::generate(size, risk);
+    let game_cells = board.to_game_cells();
+
+    // Create the game instance
+    let mut game = StacksSweeperGame::new(user_id, size, risk, game_cells);
+    game.blind = blind;
+    let game_id = game.id;
+
+    // Store in Redis
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let game_key = RedisKey::stacks_sweeper(KeyPart::Id(user_id));
+    let game_hash = game.to_redis_hash();
+
+    // Store the game data
+    let _: () = redis::cmd("HSET")
+        .arg(&game_key)
+        .arg(
+            game_hash
+                .iter()
+                .flat_map(|(k, v)| [k.as_ref(), v.as_str()])
+                .collect::<Vec<&str>>(),
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    tracing::info!(
+        "Created StacksSweeper game {} for user {} with size {}x{} and risk {}",
+        game_id,
+        user_id,
+        size,
+        size,
+        risk
+    );
+
+    Ok(game_id)
+}
+
+pub async fn shift_mine(
+    user_id: Uuid,
+    x: usize,
+    y: usize,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    use crate::models::stacks_sweeper::StacksSweeperGame;
+
+    // Get the game from Redis
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let game_key = RedisKey::stacks_sweeper(KeyPart::Id(user_id));
+    
+    // Get current game data
+    let game_hash: std::collections::HashMap<String, String> = redis::cmd("HGETALL")
+        .arg(&game_key)
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if game_hash.is_empty() {
+        return Err(AppError::NotFound("Game not found".into()));
+    }
+
+    // Deserialize the game
+    let mut game = StacksSweeperGame::from_redis_hash(game_hash)
+        .map_err(|e| AppError::Deserialization(format!("Failed to deserialize game: {}", e)))?;
+
+    // Only allow mine shifting on first move
+    if !game.first_move {
+        return Err(AppError::BadRequest("Mine shifting only allowed on first move".into()));
+    }
+
+    // Shift the mine
+    game.shift_mine(x, y)
+        .map_err(|e| AppError::BadRequest(format!("Failed to shift mine: {}", e)))?;
+
+    // Save the updated game back to Redis
+    let updated_hash = game.to_redis_hash();
+    let _: () = redis::cmd("HSET")
+        .arg(&game_key)
+        .arg(
+            updated_hash
+                .iter()
+                .flat_map(|(k, v)| [k.as_ref(), v.as_str()])
+                .collect::<Vec<&str>>(),
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    tracing::info!(
+        "Shifted mine from ({}, {}) for user {} game {}",
+        x,
+        y,
+        user_id,
+        game.id
+    );
+
+    Ok(())
+}
