@@ -462,7 +462,6 @@ pub async fn handle_incoming_messages(
                                     if new_rule_index == 0 {
                                         new_rule_context.min_word_length += 2;
                                     }
-                                    new_rule_context.random_letter = generate_random_letter();
 
                                     // Update rule context and index
                                     if let Err(e) =
@@ -477,6 +476,15 @@ pub async fn handle_incoming_messages(
                                     {
                                         tracing::error!("Failed to update rule index: {}", e);
                                     }
+                                }
+
+                                new_rule_context.random_letter = generate_random_letter();
+
+                                if let Err(e) =
+                                    set_rule_context(lobby_id, &new_rule_context, redis.clone())
+                                        .await
+                                {
+                                    tracing::error!("Failed to update rule context: {}", e);
                                 }
 
                                 // Set next turn
