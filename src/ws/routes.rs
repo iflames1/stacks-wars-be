@@ -2,7 +2,12 @@ use axum::{Router, routing::get};
 
 use crate::{
     state::AppState,
-    ws::handlers::{chat::chat_handler::chat_handler, lexi_wars_handler, lobby_ws_handler},
+    ws::handlers::{
+        chat::chat_handler::chat_handler, 
+        lexi_wars_handler, 
+        lobby_ws_handler,
+        stacks_sweepers_single_handler,
+    },
 };
 
 pub fn create_ws_routes(state: AppState) -> Router {
@@ -10,5 +15,6 @@ pub fn create_ws_routes(state: AppState) -> Router {
         .route("/ws/lexiwars/{lobby_id}", get(lexi_wars_handler))
         .route("/ws/lobby/{lobby_id}", get(lobby_ws_handler))
         .route("/ws/chat/{lobby_id}", get(chat_handler))
+        .route("/ws/stacks-sweeper", get(stacks_sweepers_single_handler))
         .with_state(state)
 }

@@ -32,6 +32,61 @@ pub enum GameState {
     Lost,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum StacksSweeperClientMessage {
+    CellReveal { x: usize, y: usize },
+    CellFlag { x: usize, y: usize },
+    Ping { ts: u64 },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum StacksSweeperServerMessage {
+    #[serde(rename_all = "camelCase")]
+    GameBoard {
+        cells: Vec<MaskedCell>,
+        game_state: GameState,
+        time_remaining: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    GameOver {
+        won: bool,
+        cells: Vec<MaskedCell>, // Unmasked board
+    },
+    #[serde(rename_all = "camelCase")]
+    Countdown {
+        time_remaining: u64,
+    },
+    #[serde(rename_all = "camelCase")]
+    TimeUp {
+        cells: Vec<MaskedCell>, // Unmasked board
+    },
+    Pong {
+        ts: u64,
+        pong: u64,
+    },
+    Error {
+        message: String,
+    },
+}
+
+impl StacksSweeperServerMessage {
+    pub fn should_queue(&self) -> bool {
+        match self {
+            // Time-sensitive messages that should NOT be queued
+            StacksSweeperServerMessage::Countdown { .. } => false,
+            StacksSweeperServerMessage::Pong { .. } => false,
+
+            // Important messages that SHOULD be queued
+            StacksSweeperServerMessage::GameBoard { .. } => true,
+            StacksSweeperServerMessage::GameOver { .. } => true,
+            StacksSweeperServerMessage::TimeUp { .. } => true,
+            StacksSweeperServerMessage::Error { .. } => true,
+        }
+    }
+}
+
 impl StacksSweeperGame {
     pub fn new(user_id: Uuid, size: usize, risk: f32, cells: Vec<StacksSweeperCell>) -> Self {
         Self {
@@ -117,16 +172,16 @@ impl StacksSweeperGame {
     }
 
     // Shift a mine from the given position to a random safe position
-    pub fn shift_mine(&mut self, x: usize, y: usize) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn shift_mine(&mut self, x: usize, y: usize) -> Result<(), String> {
         // Find the cell at the given position
         let cell_index = y * self.size + x;
         if cell_index >= self.cells.len() {
-            return Err("Invalid cell position".into());
+            return Err("Invalid cell position".to_string());
         }
 
         // Check if the cell is actually a mine
         if !self.cells[cell_index].is_mine {
-            return Err("Cell is not a mine".into());
+            return Err("Cell is not a mine".to_string());
         }
 
         // Find all non-mine cells that can become mines
@@ -139,7 +194,7 @@ impl StacksSweeperGame {
             .collect();
 
         if safe_positions.is_empty() {
-            return Err("No safe positions available to move mine".into());
+            return Err("No safe positions available to move mine".to_string());
         }
 
         // Choose a random safe position
