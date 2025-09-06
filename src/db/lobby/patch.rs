@@ -5,9 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        chat::delete::delete_lobby_chat, game::patch::update_game_active_lobby,
-        lobby::join_requests::remove_all_lobby_join_requests, tx::validate_payment_tx,
-        user::get::get_user_by_id,
+        chat::delete::delete_lobby_chat, lobby::join_requests::remove_all_lobby_join_requests,
+        tx::validate_payment_tx, user::get::get_user_by_id,
     },
     errors::AppError,
     models::{
@@ -153,7 +152,7 @@ pub async fn leave_lobby(
                 .map_err(AppError::RedisCommandError)?;
 
             // Update game active lobby count
-            update_game_active_lobby(game_id, false, redis.clone()).await?;
+            //update_game_active_lobby(game_id, false, redis.clone()).await?;
 
             // Delete Telegram lobby creation message if bot is available and tg_msg_id exists
             if let Some(tg_msg_id) = info.tg_msg_id {
@@ -233,17 +232,17 @@ pub async fn update_lobby_state(
         .hget(&lobby_key, "state")
         .await
         .map_err(AppError::RedisCommandError)?;
-    let game_id_str: String = conn
-        .hget(&lobby_key, "game_id")
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    //let game_id_str: String = conn
+    //    .hget(&lobby_key, "game_id")
+    //    .await
+    //    .map_err(AppError::RedisCommandError)?;
 
     let old_state = old_state_str
         .parse::<LobbyState>()
         .map_err(|_| AppError::Deserialization("Invalid old state".into()))?;
-    let game_id = game_id_str
-        .parse::<Uuid>()
-        .map_err(|_| AppError::Deserialization("Invalid game_id".into()))?;
+    //let game_id = game_id_str
+    //    .parse::<Uuid>()
+    //    .map_err(|_| AppError::Deserialization("Invalid game_id".into()))?;
 
     // No-op if state is unchanged
     if old_state == new_state {
@@ -269,20 +268,19 @@ pub async fn update_lobby_state(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    // Update active lobby count when transitioning to/from Finished
-    if new_state == LobbyState::Finished
-        && (old_state == LobbyState::Waiting
-            || old_state == LobbyState::InProgress
-            || old_state == LobbyState::Starting)
-    {
-        update_game_active_lobby(game_id, false, redis.clone()).await?;
-    } else if (new_state == LobbyState::InProgress
-        || new_state == LobbyState::Waiting
-        || new_state == LobbyState::Starting)
-        && old_state == LobbyState::Finished
-    {
-        update_game_active_lobby(game_id, true, redis.clone()).await?;
-    }
+    //if new_state == LobbyState::Finished
+    //    && (old_state == LobbyState::Waiting
+    //        || old_state == LobbyState::InProgress
+    //        || old_state == LobbyState::Starting)
+    //{
+    //    update_game_active_lobby(game_id, false, redis.clone()).await?;
+    //} else if (new_state == LobbyState::InProgress
+    //    || new_state == LobbyState::Waiting
+    //    || new_state == LobbyState::Starting)
+    //    && old_state == LobbyState::Finished
+    //{
+    //    update_game_active_lobby(game_id, true, redis.clone()).await?;
+    //}
 
     // clean up chat history if transitioning to Finished
     if new_state == LobbyState::Finished {
