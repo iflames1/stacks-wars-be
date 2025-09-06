@@ -10,17 +10,19 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::{
-    db::lobby::get::get_stacks_sweeper_single,
     errors::AppError,
     models::{
         game::WsQueryParams,
+        redis::{KeyPart, RedisKey},
         stacks_sweeper::{
             GameState, MaskedCell, StacksSweeperClientMessage, StacksSweeperGame,
             StacksSweeperServerMessage,
         },
     },
     state::{AppState, ConnectionInfoMap, RedisClient},
-    ws::handlers::utils::{remove_connection, store_connection_and_send_queued_messages},
+    ws::handlers::utils::{
+        queue_message_for_player, remove_connection, store_connection_and_send_queued_messages,
+    },
 };
 
 pub async fn stacks_sweepers_single_handler(
@@ -35,22 +37,16 @@ pub async fn stacks_sweepers_single_handler(
     let redis = state.redis.clone();
     let connections = state.connections.clone();
 
-    // Get the player's game
-    let masked_cells = get_stacks_sweeper_single(player_id, redis.clone())
-        .await
-        .map_err(|e| e.to_response())?;
-
     tracing::info!("Player {} connected to StacksSweeper", player_id);
 
     Ok(ws.on_upgrade(move |socket| {
-        handle_stacks_sweeper_socket(socket, player_id, masked_cells, connections, redis)
+        handle_stacks_sweeper_socket(socket, player_id, connections, redis)
     }))
 }
 
 async fn handle_stacks_sweeper_socket(
     socket: WebSocket,
     player_id: Uuid,
-    initial_cells: Vec<MaskedCell>,
     connections: ConnectionInfoMap,
     redis: RedisClient,
 ) {
@@ -60,8 +56,8 @@ async fn handle_stacks_sweeper_socket(
     store_connection_and_send_queued_messages(player_id, player_id, sender, &connections, &redis)
         .await;
 
-    // Send initial game board
-    send_initial_board(&player_id, &initial_cells, &connections, &redis).await;
+    // Try to get existing game and send it if exists
+    send_existing_game_if_exists(&player_id, &connections, &redis).await;
 
     // Handle incoming messages
     handle_incoming_messages(player_id, receiver, &connections, redis.clone()).await;
@@ -71,19 +67,27 @@ async fn handle_stacks_sweeper_socket(
     tracing::info!("Player {} disconnected from StacksSweeper", player_id);
 }
 
-async fn send_initial_board(
+async fn send_existing_game_if_exists(
     player_id: &Uuid,
-    cells: &[MaskedCell],
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    let message = StacksSweeperServerMessage::GameBoard {
-        cells: cells.to_vec(),
-        game_state: GameState::Playing,
-        time_remaining: None, // No timer until first move
-    };
-
-    broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
+    match get_game_from_redis(*player_id, redis).await {
+        Ok(game) => {
+            // Send existing game board
+            let masked_cells = game.get_masked_cells();
+            let message = StacksSweeperServerMessage::GameBoard {
+                cells: masked_cells,
+                game_state: game.game_state,
+                time_remaining: None,
+            };
+            broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
+        }
+        Err(_) => {
+            // No existing game - client will need to create one
+            tracing::info!("No existing game found for player {}", player_id);
+        }
+    }
 }
 
 async fn handle_incoming_messages(
@@ -98,6 +102,17 @@ async fn handle_incoming_messages(
                 axum::extract::ws::Message::Text(text) => {
                     match serde_json::from_str::<StacksSweeperClientMessage>(&text) {
                         Ok(parsed) => match parsed {
+                            StacksSweeperClientMessage::CreateBoard { size, risk, blind } => {
+                                handle_create_board(
+                                    player_id,
+                                    size,
+                                    risk,
+                                    blind,
+                                    connections,
+                                    redis.clone(),
+                                )
+                                .await;
+                            }
                             StacksSweeperClientMessage::Ping { ts } => {
                                 handle_ping(player_id, ts, connections, &redis).await;
                             }
@@ -131,6 +146,80 @@ async fn handle_incoming_messages(
                 tracing::error!("WebSocket error for player {}: {}", player_id, e);
                 break;
             }
+        }
+    }
+}
+
+async fn handle_create_board(
+    player_id: Uuid,
+    size: usize,
+    risk: f32,
+    blind: bool,
+    connections: &ConnectionInfoMap,
+    redis: RedisClient,
+) {
+    // Validate input parameters
+    if size < 3 || size > 10 {
+        let error_msg = StacksSweeperServerMessage::Error {
+            message: "Grid size must be between 3 and 10".to_string(),
+        };
+        broadcast_to_player(player_id, player_id, &error_msg, connections, &redis).await;
+        return;
+    }
+    if risk < 0.1 || risk > 0.9 {
+        let error_msg = StacksSweeperServerMessage::Error {
+            message: "Risk must be between 0.1 and 0.9".to_string(),
+        };
+        broadcast_to_player(player_id, player_id, &error_msg, connections, &redis).await;
+        return;
+    }
+
+    // Check if player can create a new game
+    if let Ok(existing_game) = get_game_from_redis(player_id, &redis).await {
+        if !existing_game.can_create_new() {
+            let error_msg = StacksSweeperServerMessage::Error {
+                message: "Cannot create a new game while current game is in progress".to_string(),
+            };
+            broadcast_to_player(player_id, player_id, &error_msg, connections, &redis).await;
+            return;
+        }
+    }
+
+    match create_stacks_sweeper_single(player_id, size, risk, blind, redis.clone()).await {
+        Ok(_) => {
+            // Get the created game and send it to the player
+            match get_game_from_redis(player_id, &redis).await {
+                Ok(game) => {
+                    let masked_cells = game.get_masked_cells();
+                    let message = StacksSweeperServerMessage::BoardCreated {
+                        cells: masked_cells,
+                        game_state: game.game_state,
+                    };
+                    broadcast_to_player(player_id, player_id, &message, connections, &redis).await;
+                    tracing::info!(
+                        "Created new StacksSweeper game for player {} with size {}x{} and risk {}",
+                        player_id,
+                        size,
+                        size,
+                        risk
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Failed to get created game for player {}: {}", player_id, e);
+                    let error_msg = StacksSweeperServerMessage::Error {
+                        message: "Failed to retrieve created game".to_string(),
+                    };
+                    broadcast_to_player(player_id, player_id, &error_msg, connections, &redis)
+                        .await;
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to create game for player {}: {}", player_id, e);
+            let error_msg = StacksSweeperServerMessage::Error {
+                message: "Failed to create game".to_string(),
+            };
+            broadcast_to_player(player_id, player_id, &error_msg, connections, &redis).await;
         }
     }
 }
@@ -395,15 +484,53 @@ fn start_game_timer(player_id: Uuid, connections: ConnectionInfoMap, redis: Redi
     });
 }
 
+async fn create_stacks_sweeper_single(
+    user_id: Uuid,
+    size: usize,
+    risk: f32,
+    blind: bool,
+    redis: RedisClient,
+) -> Result<Uuid, AppError> {
+    use crate::{games::stacks_sweepers::Board, models::stacks_sweeper::StacksSweeperGame};
+
+    // Generate the board
+    let board = Board::generate(size, risk);
+    let game_cells = board.to_game_cells();
+
+    // Create the game instance
+    let mut game = StacksSweeperGame::new(user_id, size, risk, game_cells);
+    game.blind = blind;
+    let game_id = game.id;
+
+    // Store in Redis
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let game_key = RedisKey::stacks_sweeper(KeyPart::Id(user_id));
+    let game_hash = game.to_redis_hash();
+
+    // Store the game data
+    let _: () = redis::cmd("HSET")
+        .arg(&game_key)
+        .arg(
+            game_hash
+                .iter()
+                .flat_map(|(k, v)| [k.as_ref(), v.as_str()])
+                .collect::<Vec<&str>>(),
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(game_id)
+}
+
 async fn get_game_from_redis(
     player_id: Uuid,
     redis: &RedisClient,
 ) -> Result<StacksSweeperGame, AppError> {
-    use crate::models::{
-        redis::{KeyPart, RedisKey},
-        stacks_sweeper::StacksSweeperGame,
-    };
-
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -426,8 +553,6 @@ async fn get_game_from_redis(
 }
 
 async fn save_game_to_redis(game: &StacksSweeperGame, redis: &RedisClient) -> Result<(), AppError> {
-    use crate::models::redis::{KeyPart, RedisKey};
-
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -459,8 +584,6 @@ async fn broadcast_to_player(
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
 ) {
-    use crate::ws::handlers::utils::queue_message_for_player;
-
     let serialized = match serde_json::to_string(message) {
         Ok(s) => s,
         Err(e) => {

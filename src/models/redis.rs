@@ -69,6 +69,10 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:chats")
     }
 
+    pub fn stacks_sweeper(user_id: KeyPart) -> String {
+        format!("stacks_sweeper:{user_id}")
+    }
+
     // temporary keys
     pub fn lobby_countdown(lobby_id: KeyPart) -> String {
         format!("lobbies:{lobby_id}:countdown")
@@ -130,10 +134,6 @@ impl RedisKey {
 
     pub fn player_missed_chat_msgs(lobby_id: KeyPart, player_id: KeyPart) -> String {
         format!("lobbies:{lobby_id}:missed_chat_msgs:{player_id}")
-    }
-
-    pub fn stacks_sweeper(user_id: KeyPart) -> String {
-        format!("stacks_sweeper:{user_id}")
     }
 
     // Key parsing utilities

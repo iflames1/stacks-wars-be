@@ -35,6 +35,7 @@ pub enum GameState {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum StacksSweeperClientMessage {
+    CreateBoard { size: usize, risk: f32, blind: bool },
     CellReveal { x: usize, y: usize },
     CellFlag { x: usize, y: usize },
     Ping { ts: u64 },
@@ -48,6 +49,11 @@ pub enum StacksSweeperServerMessage {
         cells: Vec<MaskedCell>,
         game_state: GameState,
         time_remaining: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    BoardCreated {
+        cells: Vec<MaskedCell>,
+        game_state: GameState,
     },
     #[serde(rename_all = "camelCase")]
     GameOver {
@@ -80,6 +86,7 @@ impl StacksSweeperServerMessage {
 
             // Important messages that SHOULD be queued
             StacksSweeperServerMessage::GameBoard { .. } => true,
+            StacksSweeperServerMessage::BoardCreated { .. } => true,
             StacksSweeperServerMessage::GameOver { .. } => true,
             StacksSweeperServerMessage::TimeUp { .. } => true,
             StacksSweeperServerMessage::Error { .. } => true,
@@ -142,6 +149,11 @@ impl StacksSweeperGame {
                 .parse()?,
             blind: hash.get("blind").ok_or("Missing blind")?.parse()?,
         })
+    }
+
+    // Check if a new game can be created (no existing game or game is finished)
+    pub fn can_create_new(&self) -> bool {
+        matches!(self.game_state, GameState::Won | GameState::Lost)
     }
 
     // Get masked cells (only showing revealed information)
