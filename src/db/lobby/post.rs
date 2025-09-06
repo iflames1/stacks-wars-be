@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        game::{get::get_game, patch::update_game_active_lobby},
+        game::get::get_game,
         tx::{validate_fee_transfer, validate_payment_tx},
         user::get::get_user_by_id,
     },
@@ -120,7 +120,7 @@ pub async fn create_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    update_game_active_lobby(game_id, true, redis.clone()).await?;
+    //update_game_active_lobby(game_id, true, redis.clone()).await?;
 
     let redis_for_tg = redis.clone();
     tokio::spawn(async move {

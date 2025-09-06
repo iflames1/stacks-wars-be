@@ -32,7 +32,6 @@ pub async fn create_game(
         image_url,
         tags,
         min_players,
-        active_lobbies: 0,
     };
 
     let key = RedisKey::game(KeyPart::Id(game_id));
