@@ -19,7 +19,6 @@ pub struct GameType {
     pub description: String,
     pub image_url: String,
     pub min_players: u8,
-    pub active_lobbies: u16,
     pub tags: Option<Vec<String>>,
 }
 
@@ -31,7 +30,6 @@ impl GameType {
         map.insert("description".into(), self.description.clone());
         map.insert("image_url".into(), self.image_url.clone());
         map.insert("min_players".into(), self.min_players.to_string());
-        map.insert("active_lobbies".into(), self.active_lobbies.to_string());
         if let Some(ref tags) = self.tags {
             map.insert("tags".into(), serde_json::to_string(tags).unwrap());
         }
@@ -66,12 +64,6 @@ impl GameType {
                 .ok_or_else(|| AppError::Deserialization("Missing min_players".into()))?
                 .parse()
                 .map_err(|_| AppError::Deserialization("Invalid min_players".into()))?,
-
-            active_lobbies: map
-                .get("active_lobbies")
-                .ok_or_else(|| AppError::Deserialization("Missing active_lobbies".into()))?
-                .parse()
-                .map_err(|_| AppError::Deserialization("Invalid active_lobbies".into()))?,
 
             tags: map
                 .get("tags")
@@ -397,7 +389,6 @@ impl LobbyInfo {
             description: String::new(),
             image_url: String::new(),
             min_players: 0,
-            active_lobbies: 0,
             tags: None,
         };
 
