@@ -14,7 +14,7 @@ pub fn create_ws_routes(state: AppState) -> Router {
         .route("/ws/lobby/{lobby_id}", get(lobby_ws_handler))
         .route("/ws/chat/{lobby_id}", get(chat_handler))
         .route(
-            "/ws/stacks-sweeper-single",
+            "/ws/stacks-sweepers-single",
             get(stacks_sweepers_single_handler),
         )
         .with_state(state)

@@ -15,7 +15,7 @@ use crate::{
         game::WsQueryParams,
         redis::{KeyPart, RedisKey},
         stacks_sweeper::{
-            GameState, MaskedCell, StacksSweeperClientMessage, StacksSweeperGame,
+            CellState, GameState, MaskedCell, StacksSweeperClientMessage, StacksSweeperGame,
             StacksSweeperServerMessage,
         },
     },
@@ -74,17 +74,38 @@ async fn send_existing_game_if_exists(
 ) {
     match get_game_from_redis(*player_id, redis).await {
         Ok(game) => {
-            // Send existing game board
-            let masked_cells = game.get_masked_cells();
-            let message = StacksSweeperServerMessage::GameBoard {
-                cells: masked_cells,
-                game_state: game.game_state,
-                time_remaining: None,
-            };
-            broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
+            // Check if game has ended - if so, send unmasked cells with GameOver message
+            if matches!(game.game_state, GameState::Won | GameState::Lost) {
+                let won = matches!(game.game_state, GameState::Won);
+                let unmasked_cells = get_unmasked_cells(&game);
+                let message = StacksSweeperServerMessage::GameOver {
+                    won,
+                    cells: unmasked_cells,
+                    mines: game.get_mine_count(),
+                    board_size: game.size,
+                };
+                tracing::info!("Sending game over state to reconnected player: {message:?}");
+                broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
+            } else {
+                // Send existing game board with masked cells for ongoing games
+                let masked_cells = game.get_masked_cells();
+                let message = StacksSweeperServerMessage::GameBoard {
+                    cells: masked_cells,
+                    game_state: game.game_state,
+                    time_remaining: None,
+                    mines: game.get_mine_count(),
+                    board_size: game.size,
+                };
+                tracing::info!("Sending ongoing game state to reconnected player: {message:?}");
+                broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
+            }
         }
         Err(_) => {
-            // No existing game - client will need to create one
+            // No existing game - send NoBoard message
+            let no_board_msg = StacksSweeperServerMessage::NoBoard {
+                message: "No existing game found. Create a new board to start playing.".to_string(),
+            };
+            broadcast_to_player(*player_id, *player_id, &no_board_msg, connections, redis).await;
             tracing::info!("No existing game found for player {}", player_id);
         }
     }
@@ -117,6 +138,12 @@ async fn handle_incoming_messages(
                                 handle_ping(player_id, ts, connections, &redis).await;
                             }
                             StacksSweeperClientMessage::CellReveal { x, y } => {
+                                tracing::info!(
+                                    "Player {} revealed cell at ({}, {})",
+                                    player_id,
+                                    x,
+                                    y
+                                );
                                 handle_cell_reveal(player_id, x, y, connections, redis.clone())
                                     .await;
                             }
@@ -143,7 +170,7 @@ async fn handle_incoming_messages(
                 _ => {}
             },
             Err(e) => {
-                tracing::error!("WebSocket error for player {}: {}", player_id, e);
+                tracing::debug!("WebSocket error for player {}: {}", player_id, e);
                 break;
             }
         }
@@ -164,6 +191,10 @@ async fn handle_create_board(
             message: "Grid size must be between 3 and 10".to_string(),
         };
         broadcast_to_player(player_id, player_id, &error_msg, connections, &redis).await;
+        let no_board_msg = StacksSweeperServerMessage::NoBoard {
+            message: "Error creating board.".to_string(),
+        };
+        broadcast_to_player(player_id, player_id, &no_board_msg, connections, &redis).await;
         return;
     }
     if risk < 0.1 || risk > 0.9 {
@@ -171,11 +202,16 @@ async fn handle_create_board(
             message: "Risk must be between 0.1 and 0.9".to_string(),
         };
         broadcast_to_player(player_id, player_id, &error_msg, connections, &redis).await;
+        let no_board_msg = StacksSweeperServerMessage::NoBoard {
+            message: "Error creating board.".to_string(),
+        };
+        broadcast_to_player(player_id, player_id, &no_board_msg, connections, &redis).await;
         return;
     }
 
     // Check if player can create a new game
     if let Ok(existing_game) = get_game_from_redis(player_id, &redis).await {
+        tracing::info!("{existing_game:?}");
         if !existing_game.can_create_new() {
             let error_msg = StacksSweeperServerMessage::Error {
                 message: "Cannot create a new game while current game is in progress".to_string(),
@@ -194,6 +230,8 @@ async fn handle_create_board(
                     let message = StacksSweeperServerMessage::BoardCreated {
                         cells: masked_cells,
                         game_state: game.game_state,
+                        mines: game.get_mine_count(),
+                        board_size: game.size,
                     };
                     broadcast_to_player(player_id, player_id, &message, connections, &redis).await;
                     tracing::info!(
@@ -257,8 +295,8 @@ async fn handle_cell_reveal(
         }
     };
 
-    // Check if game is still playing
-    if !matches!(game.game_state, GameState::Playing) {
+    // Check if game is in a playable state (Waiting or Playing)
+    if !matches!(game.game_state, GameState::Playing | GameState::Waiting) {
         return;
     }
 
@@ -300,9 +338,10 @@ async fn handle_cell_reveal(
         }
     }
 
-    // Start countdown timer on first move
+    // Start countdown timer on first move and transition to Playing state
     if updated_game.first_move {
         updated_game.first_move = false;
+        updated_game.game_state = GameState::Playing; // Transition from Waiting to Playing
         start_game_timer(player_id, connections.clone(), redis.clone());
     }
 
@@ -326,6 +365,8 @@ async fn handle_cell_reveal(
         let game_over_msg = StacksSweeperServerMessage::GameOver {
             won,
             cells: unmasked_cells,
+            mines: updated_game.get_mine_count(),
+            board_size: updated_game.size,
         };
         broadcast_to_player(player_id, player_id, &game_over_msg, connections, &redis).await;
     } else {
@@ -334,6 +375,8 @@ async fn handle_cell_reveal(
             cells: masked_cells,
             game_state: updated_game.game_state,
             time_remaining: Some(60), // This would be calculated based on actual timer
+            mines: updated_game.get_mine_count(),
+            board_size: game.size,
         };
         broadcast_to_player(player_id, player_id, &board_msg, connections, &redis).await;
     }
@@ -356,7 +399,7 @@ async fn handle_cell_flag(
     };
 
     // Check if game is still playing
-    if !matches!(game.game_state, GameState::Playing) {
+    if !matches!(game.game_state, GameState::Playing | GameState::Waiting) {
         return;
     }
 
@@ -383,6 +426,8 @@ async fn handle_cell_flag(
             cells: masked_cells,
             game_state: game.game_state,
             time_remaining: Some(60), // This would be calculated based on actual timer
+            mines: game.get_mine_count(),
+            board_size: game.size,
         };
         broadcast_to_player(player_id, player_id, &board_msg, connections, &redis).await;
     }
@@ -423,6 +468,9 @@ fn check_game_state(game: &mut StacksSweeperGame, x: usize, y: usize) -> bool {
     // Check if player hit a mine
     if game.cells[cell_index].is_mine {
         game.game_state = GameState::Lost;
+        for cell in &mut game.cells {
+            cell.revealed = true;
+        }
         return true;
     }
 
@@ -431,6 +479,9 @@ fn check_game_state(game: &mut StacksSweeperGame, x: usize, y: usize) -> bool {
 
     if all_safe_revealed {
         game.game_state = GameState::Won;
+        for cell in &mut game.cells {
+            cell.revealed = true;
+        }
         return true;
     }
 
@@ -440,17 +491,22 @@ fn check_game_state(game: &mut StacksSweeperGame, x: usize, y: usize) -> bool {
 fn get_unmasked_cells(game: &StacksSweeperGame) -> Vec<MaskedCell> {
     game.cells
         .iter()
-        .map(|cell| MaskedCell {
-            x: cell.x,
-            y: cell.y,
-            revealed: true, // Always show as revealed for unmasked view
-            flagged: cell.flagged,
-            adjacent: if cell.is_mine {
-                None
+        .map(|cell| {
+            let state = if cell.flagged {
+                Some(CellState::Flagged)
+            } else if cell.is_mine {
+                Some(CellState::Mine)
+            } else if game.blind {
+                Some(CellState::Gem)
             } else {
-                Some(cell.adjacent)
-            },
-            is_mine: if cell.is_mine { Some(true) } else { None },
+                Some(CellState::Adjacent { count: cell.adjacent })
+            };
+
+            MaskedCell {
+                x: cell.x,
+                y: cell.y,
+                state,
+            }
         })
         .collect()
 }
@@ -471,11 +527,16 @@ fn start_game_timer(player_id: Uuid, connections: ConnectionInfoMap, redis: Redi
         if let Ok(mut game) = get_game_from_redis(player_id, &redis).await {
             if matches!(game.game_state, GameState::Playing) {
                 game.game_state = GameState::Lost;
+                for cell in &mut game.cells {
+                    cell.revealed = true;
+                }
                 let _ = save_game_to_redis(&game, &redis).await;
 
                 let unmasked_cells = get_unmasked_cells(&game);
                 let time_up_msg = StacksSweeperServerMessage::TimeUp {
                     cells: unmasked_cells,
+                    mines: game.get_mine_count(),
+                    board_size: game.size,
                 };
 
                 broadcast_to_player(player_id, player_id, &time_up_msg, &connections, &redis).await;

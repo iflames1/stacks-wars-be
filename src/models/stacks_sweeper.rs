@@ -25,8 +25,10 @@ pub struct StacksSweeperGame {
     pub blind: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum GameState {
+    Waiting,
     Playing,
     Won,
     Lost,
@@ -49,16 +51,26 @@ pub enum StacksSweeperServerMessage {
         cells: Vec<MaskedCell>,
         game_state: GameState,
         time_remaining: Option<u64>,
+        mines: u32,
+        board_size: usize,
     },
     #[serde(rename_all = "camelCase")]
     BoardCreated {
         cells: Vec<MaskedCell>,
         game_state: GameState,
+        mines: u32,
+        board_size: usize,
+    },
+    #[serde(rename_all = "camelCase")]
+    NoBoard {
+        message: String,
     },
     #[serde(rename_all = "camelCase")]
     GameOver {
         won: bool,
         cells: Vec<MaskedCell>, // Unmasked board
+        mines: u32,
+        board_size: usize,
     },
     #[serde(rename_all = "camelCase")]
     Countdown {
@@ -67,6 +79,8 @@ pub enum StacksSweeperServerMessage {
     #[serde(rename_all = "camelCase")]
     TimeUp {
         cells: Vec<MaskedCell>, // Unmasked board
+        mines: u32,
+        board_size: usize,
     },
     Pong {
         ts: u64,
@@ -87,6 +101,7 @@ impl StacksSweeperServerMessage {
             // Important messages that SHOULD be queued
             StacksSweeperServerMessage::GameBoard { .. } => true,
             StacksSweeperServerMessage::BoardCreated { .. } => true,
+            StacksSweeperServerMessage::NoBoard { .. } => true,
             StacksSweeperServerMessage::GameOver { .. } => true,
             StacksSweeperServerMessage::TimeUp { .. } => true,
             StacksSweeperServerMessage::Error { .. } => true,
@@ -102,7 +117,7 @@ impl StacksSweeperGame {
             size,
             risk,
             cells,
-            game_state: GameState::Playing,
+            game_state: GameState::Waiting,
             created_at: chrono::Utc::now(),
             first_move: true,
             blind: false, // Default to false, will be set by caller
@@ -156,29 +171,35 @@ impl StacksSweeperGame {
         matches!(self.game_state, GameState::Won | GameState::Lost)
     }
 
+    // Get the total number of mines in the game
+    pub fn get_mine_count(&self) -> u32 {
+        self.cells.iter().filter(|cell| cell.is_mine).count() as u32
+    }
+
     // Get masked cells (only showing revealed information)
     pub fn get_masked_cells(&self) -> Vec<MaskedCell> {
         self.cells
             .iter()
-            .map(|cell| MaskedCell {
-                x: cell.x,
-                y: cell.y,
-                revealed: cell.revealed,
-                flagged: cell.flagged,
-                adjacent: if cell.revealed && !cell.is_mine {
-                    if self.blind {
-                        None // In blind mode, never show adjacent count
+            .map(|cell| {
+                let state = if cell.flagged {
+                    Some(CellState::Flagged)
+                } else if cell.revealed {
+                    if cell.is_mine {
+                        Some(CellState::Mine)
+                    } else if self.blind {
+                        Some(CellState::Gem)
                     } else {
-                        Some(cell.adjacent) // In normal mode, show adjacent count
+                        Some(CellState::Adjacent { count: cell.adjacent })
                     }
                 } else {
                     None
-                },
-                is_mine: if cell.revealed && cell.is_mine {
-                    Some(true)
-                } else {
-                    None
-                },
+                };
+
+                MaskedCell {
+                    x: cell.x,
+                    y: cell.y,
+                    state,
+                }
             })
             .collect()
     }
@@ -265,11 +286,17 @@ impl StacksSweeperGame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CellState {
+    Flagged,
+    Mine,
+    Gem,
+    Adjacent { count: u8 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaskedCell {
     pub x: usize,
     pub y: usize,
-    pub revealed: bool,
-    pub flagged: bool,
-    pub adjacent: Option<u8>,
-    pub is_mine: Option<bool>,
+    pub state: Option<CellState>, // None if not revealed and not flagged
 }
