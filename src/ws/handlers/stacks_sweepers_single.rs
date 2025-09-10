@@ -10,6 +10,10 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::{
+    db::stacks_sweeper::countdown::{
+        clear_stacks_sweeper_countdown, clear_timer_session, get_stacks_sweeper_countdown, 
+        get_timer_session, set_stacks_sweeper_countdown, set_timer_session,
+    },
     errors::AppError,
     models::{
         game::WsQueryParams,
@@ -64,7 +68,7 @@ async fn handle_stacks_sweeper_socket(
 
     // Clean up connection on disconnect
     remove_connection(player_id, &connections).await;
-    tracing::info!("Player {} disconnected from StacksSweeper", player_id);
+    tracing::debug!("Player {} disconnected from StacksSweeper", player_id);
 }
 
 async fn send_existing_game_if_exists(
@@ -84,19 +88,29 @@ async fn send_existing_game_if_exists(
                     mines: game.get_mine_count(),
                     board_size: game.size,
                 };
-                tracing::info!("Sending game over state to reconnected player: {message:?}");
+                tracing::debug!("Sending game over state to reconnected player: {message:?}");
                 broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
             } else {
                 // Send existing game board with masked cells for ongoing games
                 let masked_cells = game.get_masked_cells();
+
+                // Get actual countdown time from Redis if game is playing
+                let time_remaining = if matches!(game.game_state, GameState::Playing) {
+                    get_stacks_sweeper_countdown(*player_id, redis.clone())
+                        .await
+                        .unwrap_or(None)
+                } else {
+                    None
+                };
+
                 let message = StacksSweeperServerMessage::GameBoard {
                     cells: masked_cells,
                     game_state: game.game_state,
-                    time_remaining: None,
+                    time_remaining,
                     mines: game.get_mine_count(),
                     board_size: game.size,
                 };
-                tracing::info!("Sending ongoing game state to reconnected player: {message:?}");
+                tracing::debug!("Sending ongoing game state to reconnected player: {message:?}");
                 broadcast_to_player(*player_id, *player_id, &message, connections, redis).await;
             }
         }
@@ -211,7 +225,6 @@ async fn handle_create_board(
 
     // Check if player can create a new game
     if let Ok(existing_game) = get_game_from_redis(player_id, &redis).await {
-        tracing::info!("{existing_game:?}");
         if !existing_game.can_create_new() {
             let error_msg = StacksSweeperServerMessage::Error {
                 message: "Cannot create a new game while current game is in progress".to_string(),
@@ -342,14 +355,19 @@ async fn handle_cell_reveal(
     if updated_game.first_move {
         updated_game.first_move = false;
         updated_game.game_state = GameState::Playing; // Transition from Waiting to Playing
-        start_game_timer(player_id, connections.clone(), redis.clone());
+        start_game_timer(player_id, connections.clone(), redis.clone(), 60);
+    } else {
+        if matches!(updated_game.game_state, GameState::Playing) {
+            // Reset timer to 60 seconds by restarting the timer
+            start_game_timer(player_id, connections.clone(), redis.clone(), 60);
+        }
     }
 
     // Reveal the cell and adjacent cells if it's safe
     reveal_cells(&mut updated_game, x, y);
 
     // Check game state
-    let game_over = check_game_state(&mut updated_game, x, y);
+    let game_over = check_game_state(&mut updated_game, x, y, player_id, &redis).await;
 
     // Save updated game to Redis
     if let Err(_) = save_game_to_redis(&updated_game, &redis).await {
@@ -359,6 +377,13 @@ async fn handle_cell_reveal(
 
     // Send appropriate response
     if game_over {
+        if let Err(e) = clear_stacks_sweeper_countdown(player_id, redis.clone()).await {
+            tracing::error!("Failed to clear countdown for player {}: {}", player_id, e);
+        }
+        if let Err(e) = clear_timer_session(player_id, redis.clone()).await {
+            tracing::error!("Failed to clear timer session for player {}: {}", player_id, e);
+        }
+
         let won = matches!(updated_game.game_state, GameState::Won);
         let unmasked_cells = get_unmasked_cells(&updated_game);
 
@@ -371,10 +396,19 @@ async fn handle_cell_reveal(
         broadcast_to_player(player_id, player_id, &game_over_msg, connections, &redis).await;
     } else {
         let masked_cells = updated_game.get_masked_cells();
+
+        let time_remaining = if matches!(updated_game.game_state, GameState::Playing) {
+            get_stacks_sweeper_countdown(player_id, redis.clone())
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
+
         let board_msg = StacksSweeperServerMessage::GameBoard {
             cells: masked_cells,
             game_state: updated_game.game_state,
-            time_remaining: Some(60), // This would be calculated based on actual timer
+            time_remaining,
             mines: updated_game.get_mine_count(),
             board_size: game.size,
         };
@@ -422,10 +456,20 @@ async fn handle_cell_flag(
 
         // Send updated board
         let masked_cells = game.get_masked_cells();
+
+        // Get actual countdown time from Redis (don't reset timer for flagging)
+        let time_remaining = if matches!(game.game_state, GameState::Playing) {
+            get_stacks_sweeper_countdown(player_id, redis.clone())
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
+
         let board_msg = StacksSweeperServerMessage::GameBoard {
             cells: masked_cells,
             game_state: game.game_state,
-            time_remaining: Some(60), // This would be calculated based on actual timer
+            time_remaining,
             mines: game.get_mine_count(),
             board_size: game.size,
         };
@@ -462,7 +506,13 @@ fn reveal_cells(game: &mut StacksSweeperGame, x: usize, y: usize) {
     }
 }
 
-fn check_game_state(game: &mut StacksSweeperGame, x: usize, y: usize) -> bool {
+async fn check_game_state(
+    game: &mut StacksSweeperGame,
+    x: usize,
+    y: usize,
+    player_id: Uuid,
+    redis: &RedisClient,
+) -> bool {
     let cell_index = y * game.size + x;
 
     // Check if player hit a mine
@@ -470,6 +520,21 @@ fn check_game_state(game: &mut StacksSweeperGame, x: usize, y: usize) -> bool {
         game.game_state = GameState::Lost;
         for cell in &mut game.cells {
             cell.revealed = true;
+            cell.flagged = false; // Unflag all cells when game ends
+        }
+        if let Err(e) = clear_stacks_sweeper_countdown(player_id, redis.clone()).await {
+            tracing::error!(
+                "Failed to clear countdown for player {}: {:?}",
+                player_id,
+                e
+            );
+        }
+        if let Err(e) = clear_timer_session(player_id, redis.clone()).await {
+            tracing::error!(
+                "Failed to clear timer session for player {}: {:?}",
+                player_id,
+                e
+            );
         }
         return true;
     }
@@ -481,6 +546,21 @@ fn check_game_state(game: &mut StacksSweeperGame, x: usize, y: usize) -> bool {
         game.game_state = GameState::Won;
         for cell in &mut game.cells {
             cell.revealed = true;
+            cell.flagged = false; // Unflag all cells when game ends
+        }
+        if let Err(e) = clear_stacks_sweeper_countdown(player_id, redis.clone()).await {
+            tracing::error!(
+                "Failed to clear countdown for player {}: {:?}",
+                player_id,
+                e
+            );
+        }
+        if let Err(e) = clear_timer_session(player_id, redis.clone()).await {
+            tracing::error!(
+                "Failed to clear timer session for player {}: {:?}",
+                player_id,
+                e
+            );
         }
         return true;
     }
@@ -499,7 +579,9 @@ fn get_unmasked_cells(game: &StacksSweeperGame) -> Vec<MaskedCell> {
             } else if game.blind {
                 Some(CellState::Gem)
             } else {
-                Some(CellState::Adjacent { count: cell.adjacent })
+                Some(CellState::Adjacent {
+                    count: cell.adjacent,
+                })
             };
 
             MaskedCell {
@@ -511,9 +593,58 @@ fn get_unmasked_cells(game: &StacksSweeperGame) -> Vec<MaskedCell> {
         .collect()
 }
 
-fn start_game_timer(player_id: Uuid, connections: ConnectionInfoMap, redis: RedisClient) {
+fn start_game_timer(
+    player_id: Uuid,
+    connections: ConnectionInfoMap,
+    redis: RedisClient,
+    start_time: u64,
+) {
     tokio::spawn(async move {
-        for remaining in (1..=60).rev() {
+        // Generate a unique session ID for this timer
+        let session_id = Uuid::new_v4();
+        
+        // Set the timer session in Redis
+        if let Err(e) = set_timer_session(player_id, session_id, redis.clone()).await {
+            tracing::error!("Failed to set timer session for player {}: {}", player_id, e);
+            return;
+        }
+
+        for remaining in (1..=start_time).rev() {
+            // Check if this timer session is still active
+            match get_timer_session(player_id, redis.clone()).await {
+                Ok(Some(current_session)) if current_session == session_id => {
+                    // This timer is still active, continue
+                }
+                _ => {
+                    // Timer session has been replaced or cleared, stop this timer
+                    tracing::debug!("Timer session replaced for player {} - stopping timer", player_id);
+                    return;
+                }
+            }
+
+            // Check if game is still in playing state before continuing
+            if let Ok(game) = get_game_from_redis(player_id, &redis).await {
+                if !matches!(game.game_state, GameState::Playing) {
+                    // Game is no longer playing, stop the timer and clear session
+                    tracing::debug!(
+                        "Timer stopped for player {} - game not in playing state",
+                        player_id
+                    );
+                    let _ = clear_timer_session(player_id, redis.clone()).await;
+                    return;
+                }
+            } else {
+                // Game not found, stop the timer and clear session
+                tracing::debug!("Timer stopped for player {} - game not found", player_id);
+                let _ = clear_timer_session(player_id, redis.clone()).await;
+                return;
+            }
+
+            if let Err(e) = set_stacks_sweeper_countdown(player_id, remaining, redis.clone()).await
+            {
+                tracing::error!("Failed to save countdown for player {}: {}", player_id, e);
+            }
+
             sleep(Duration::from_secs(1)).await;
 
             let countdown_msg = StacksSweeperServerMessage::Countdown {
@@ -523,14 +654,36 @@ fn start_game_timer(player_id: Uuid, connections: ConnectionInfoMap, redis: Redi
             broadcast_to_player(player_id, player_id, &countdown_msg, &connections, &redis).await;
         }
 
+        // Check one more time if this timer session is still active before ending the game
+        match get_timer_session(player_id, redis.clone()).await {
+            Ok(Some(current_session)) if current_session == session_id => {
+                // This timer is still active, proceed with time up logic
+            }
+            _ => {
+                // Timer session has been replaced, don't end the game
+                tracing::debug!("Timer session replaced for player {} - not ending game", player_id);
+                return;
+            }
+        }
+
         // Time's up - end the game
         if let Ok(mut game) = get_game_from_redis(player_id, &redis).await {
             if matches!(game.game_state, GameState::Playing) {
                 game.game_state = GameState::Lost;
                 for cell in &mut game.cells {
                     cell.revealed = true;
+                    cell.flagged = false; // Unflag all cells when game ends
                 }
                 let _ = save_game_to_redis(&game, &redis).await;
+
+                if let Err(e) = clear_stacks_sweeper_countdown(player_id, redis.clone()).await {
+                    tracing::error!("Failed to clear countdown for player {}: {}", player_id, e);
+                }
+
+                // Clear the timer session
+                if let Err(e) = clear_timer_session(player_id, redis.clone()).await {
+                    tracing::error!("Failed to clear timer session for player {}: {}", player_id, e);
+                }
 
                 let unmasked_cells = get_unmasked_cells(&game);
                 let time_up_msg = StacksSweeperServerMessage::TimeUp {
