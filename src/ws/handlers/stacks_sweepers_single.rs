@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     db::stacks_sweeper::countdown::{
-        clear_stacks_sweeper_countdown, clear_timer_session, get_stacks_sweeper_countdown, 
+        clear_stacks_sweeper_countdown, clear_timer_session, get_stacks_sweeper_countdown,
         get_timer_session, set_stacks_sweeper_countdown, set_timer_session,
     },
     errors::AppError,
@@ -20,7 +20,7 @@ use crate::{
         redis::{KeyPart, RedisKey},
         stacks_sweeper::{
             CellState, GameState, MaskedCell, StacksSweeperClientMessage, StacksSweeperGame,
-            StacksSweeperServerMessage,
+            StacksSweeperServerMessage, calc_cashout_multiplier, calc_target_multiplier,
         },
     },
     state::{AppState, ConnectionInfoMap, RedisClient},
@@ -145,6 +145,16 @@ async fn handle_incoming_messages(
                                     blind,
                                     connections,
                                     redis.clone(),
+                                )
+                                .await;
+                            }
+                            StacksSweeperClientMessage::MultiplierTarget { size, risk } => {
+                                handle_multiplier_target(
+                                    player_id,
+                                    size,
+                                    risk,
+                                    connections,
+                                    &redis,
                                 )
                                 .await;
                             }
@@ -288,6 +298,48 @@ async fn handle_ping(
     broadcast_to_player(player_id, player_id, &pong_msg, connections, redis).await;
 }
 
+async fn handle_multiplier_target(
+    player_id: Uuid,
+    size: usize,
+    risk: f32,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    // Validate input parameters
+    if size < 3 || size > 10 {
+        let error_msg = StacksSweeperServerMessage::Error {
+            message: "Grid size must be between 3 and 10".to_string(),
+        };
+        broadcast_to_player(player_id, player_id, &error_msg, connections, redis).await;
+        return;
+    }
+    if risk < 0.1 || risk > 0.9 {
+        let error_msg = StacksSweeperServerMessage::Error {
+            message: "Risk must be between 0.1 and 0.9".to_string(),
+        };
+        broadcast_to_player(player_id, player_id, &error_msg, connections, redis).await;
+        return;
+    }
+
+    let max_multiplier = calc_target_multiplier(size, risk as f64);
+
+    let multiplier_msg = StacksSweeperServerMessage::MultiplierTarget {
+        max_multiplier,
+        size,
+        risk,
+    };
+
+    broadcast_to_player(player_id, player_id, &multiplier_msg, connections, redis).await;
+    tracing::info!(
+        "Sent multiplier target to player {}: {}x for size {}x{} with risk {}",
+        player_id,
+        max_multiplier,
+        size,
+        size,
+        risk
+    );
+}
+
 async fn handle_cell_reveal(
     player_id: Uuid,
     x: usize,
@@ -364,6 +416,11 @@ async fn handle_cell_reveal(
     }
 
     // Reveal the cell and adjacent cells if it's safe
+    let cell_index = y * updated_game.size + x;
+    if !updated_game.cells[cell_index].is_mine {
+        updated_game.user_revealed_count += 1;
+    }
+
     reveal_cells(&mut updated_game, x, y);
 
     // Check game state
@@ -381,7 +438,11 @@ async fn handle_cell_reveal(
             tracing::error!("Failed to clear countdown for player {}: {}", player_id, e);
         }
         if let Err(e) = clear_timer_session(player_id, redis.clone()).await {
-            tracing::error!("Failed to clear timer session for player {}: {}", player_id, e);
+            tracing::error!(
+                "Failed to clear timer session for player {}: {}",
+                player_id,
+                e
+            );
         }
 
         let won = matches!(updated_game.game_state, GameState::Won);
@@ -413,6 +474,25 @@ async fn handle_cell_reveal(
             board_size: game.size,
         };
         broadcast_to_player(player_id, player_id, &board_msg, connections, &redis).await;
+
+        // Send cashout information if player has revealed any safe cells
+        if updated_game.user_revealed_count > 0
+            && matches!(updated_game.game_state, GameState::Playing)
+        {
+            let current_multiplier = calc_cashout_multiplier(
+                updated_game.size,
+                updated_game.risk as f64,
+                updated_game.user_revealed_count,
+            );
+
+            let cashout_msg = StacksSweeperServerMessage::Cashout {
+                current_multiplier,
+                revealed_count: updated_game.user_revealed_count,
+                size: updated_game.size,
+                risk: updated_game.risk,
+            };
+            broadcast_to_player(player_id, player_id, &cashout_msg, connections, &redis).await;
+        }
     }
 }
 
@@ -602,10 +682,14 @@ fn start_game_timer(
     tokio::spawn(async move {
         // Generate a unique session ID for this timer
         let session_id = Uuid::new_v4();
-        
+
         // Set the timer session in Redis
         if let Err(e) = set_timer_session(player_id, session_id, redis.clone()).await {
-            tracing::error!("Failed to set timer session for player {}: {}", player_id, e);
+            tracing::error!(
+                "Failed to set timer session for player {}: {}",
+                player_id,
+                e
+            );
             return;
         }
 
@@ -617,7 +701,10 @@ fn start_game_timer(
                 }
                 _ => {
                     // Timer session has been replaced or cleared, stop this timer
-                    tracing::debug!("Timer session replaced for player {} - stopping timer", player_id);
+                    tracing::debug!(
+                        "Timer session replaced for player {} - stopping timer",
+                        player_id
+                    );
                     return;
                 }
             }
@@ -661,7 +748,10 @@ fn start_game_timer(
             }
             _ => {
                 // Timer session has been replaced, don't end the game
-                tracing::debug!("Timer session replaced for player {} - not ending game", player_id);
+                tracing::debug!(
+                    "Timer session replaced for player {} - not ending game",
+                    player_id
+                );
                 return;
             }
         }
@@ -682,7 +772,11 @@ fn start_game_timer(
 
                 // Clear the timer session
                 if let Err(e) = clear_timer_session(player_id, redis.clone()).await {
-                    tracing::error!("Failed to clear timer session for player {}: {}", player_id, e);
+                    tracing::error!(
+                        "Failed to clear timer session for player {}: {}",
+                        player_id,
+                        e
+                    );
                 }
 
                 let unmasked_cells = get_unmasked_cells(&game);

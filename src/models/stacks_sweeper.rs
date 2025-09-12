@@ -23,6 +23,7 @@ pub struct StacksSweeperGame {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub first_move: bool,
     pub blind: bool,
+    pub user_revealed_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -40,6 +41,7 @@ pub enum StacksSweeperClientMessage {
     CreateBoard { size: usize, risk: f32, blind: bool },
     CellReveal { x: usize, y: usize },
     CellFlag { x: usize, y: usize },
+    MultiplierTarget { size: usize, risk: f32 },
     Ping { ts: u64 },
 }
 
@@ -82,6 +84,19 @@ pub enum StacksSweeperServerMessage {
         mines: u32,
         board_size: usize,
     },
+    #[serde(rename_all = "camelCase")]
+    MultiplierTarget {
+        max_multiplier: f64,
+        size: usize,
+        risk: f32,
+    },
+    #[serde(rename_all = "camelCase")]
+    Cashout {
+        current_multiplier: f64,
+        revealed_count: usize,
+        size: usize,
+        risk: f32,
+    },
     Pong {
         ts: u64,
         pong: u64,
@@ -104,6 +119,8 @@ impl StacksSweeperServerMessage {
             StacksSweeperServerMessage::NoBoard { .. } => true,
             StacksSweeperServerMessage::GameOver { .. } => true,
             StacksSweeperServerMessage::TimeUp { .. } => true,
+            StacksSweeperServerMessage::MultiplierTarget { .. } => true,
+            StacksSweeperServerMessage::Cashout { .. } => true,
             StacksSweeperServerMessage::Error { .. } => true,
         }
     }
@@ -120,7 +137,8 @@ impl StacksSweeperGame {
             game_state: GameState::Waiting,
             created_at: chrono::Utc::now(),
             first_move: true,
-            blind: false, // Default to false, will be set by caller
+            blind: false,           // Default to false, will be set by caller
+            user_revealed_count: 0, // Start with 0 revealed cells
         }
     }
 
@@ -141,6 +159,10 @@ impl StacksSweeperGame {
         hash.insert("created_at".to_string(), self.created_at.to_rfc3339());
         hash.insert("first_move".to_string(), self.first_move.to_string());
         hash.insert("blind".to_string(), self.blind.to_string());
+        hash.insert(
+            "user_revealed_count".to_string(),
+            self.user_revealed_count.to_string(),
+        );
         hash
     }
 
@@ -163,6 +185,10 @@ impl StacksSweeperGame {
                 .ok_or("Missing first_move")?
                 .parse()?,
             blind: hash.get("blind").ok_or("Missing blind")?.parse()?,
+            user_revealed_count: hash
+                .get("user_revealed_count")
+                .ok_or("Missing user_revealed_count")?
+                .parse()?,
         })
     }
 
@@ -189,7 +215,9 @@ impl StacksSweeperGame {
                     } else if self.blind {
                         Some(CellState::Gem)
                     } else {
-                        Some(CellState::Adjacent { count: cell.adjacent })
+                        Some(CellState::Adjacent {
+                            count: cell.adjacent,
+                        })
                     }
                 } else {
                     None
@@ -283,6 +311,46 @@ impl StacksSweeperGame {
             }
         }
     }
+}
+
+fn risk_scale(d: f64, hard_density: f64, gamma: f64) -> f64 {
+    (d / hard_density).powf(gamma)
+}
+
+/// Preview function: full clear multiplier for chosen board size + difficulty.
+pub fn calc_target_multiplier(n: usize, d: f64) -> f64 {
+    let base = 2.0; // Hard 5x5 full clear anchor
+    let beta = 0.1; // board size growth factor
+    let hard_density = 0.4;
+    let gamma = 0.8;
+
+    let size_scale = 1.0 + beta * ((n as f64) - 5.0);
+    let risk = risk_scale(d, hard_density, gamma);
+
+    let target = base * size_scale * risk;
+    (target * 100.0).floor() / 100.0 // round down to 2 decimals
+}
+
+/// Cashout function: multiplier based on revealed safe cells so far.
+pub fn calc_cashout_multiplier(n: usize, d: f64, r: usize) -> f64 {
+    let base = 2.0;
+    let beta = 0.1;
+    let hard_density = 0.4;
+    let gamma = 0.8;
+
+    let t = (n * n) as f64;
+    let m = (t * d).round();
+    let s = t - m;
+    let c = (s - 1.0).max(1.0); // avoid divide by zero
+
+    let size_scale = 1.0 + beta * ((n as f64) - 5.0);
+    let risk = risk_scale(d, hard_density, gamma);
+
+    let target = base * size_scale * risk;
+    let p = (target - 1.0) / c;
+
+    let multiplier = 1.0 + p * (r as f64);
+    (multiplier * 100.0).floor() / 100.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
