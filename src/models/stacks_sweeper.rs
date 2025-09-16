@@ -1,6 +1,9 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+use crate::models::game::ClaimState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StacksSweeperCell {
@@ -15,34 +18,73 @@ pub struct StacksSweeperCell {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StacksSweeperGame {
     pub id: Uuid,
-    pub user_id: Uuid,
+    pub board: Vec<Vec<u8>>,
+    pub state: StacksSweeperGameState,
+    pub user_id: String,
+    pub username: String,
+    pub player_board: Vec<Vec<StacksSweeperCellState>>,
+    pub countdown: u32,
+    pub user_revealed_count: u32,
+    pub amount: f64,
+    pub tx_id: String,
+    pub claim_state: Option<ClaimState>,
+    // Additional fields needed by the existing code
     pub size: usize,
     pub risk: f32,
     pub cells: Vec<StacksSweeperCell>,
-    pub game_state: GameState,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub game_state: StacksSweeperGameState, // Alias for state for backward compatibility
+    pub created_at: DateTime<Utc>,
     pub first_move: bool,
     pub blind: bool,
-    pub user_revealed_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum GameState {
+pub enum StacksSweeperGameState {
     Waiting,
     Playing,
     Won,
     Lost,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StacksSweeperCellState {
+    Hidden,
+    Revealed,
+    Flagged,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum StacksSweeperClientMessage {
-    CreateBoard { size: usize, risk: f32, blind: bool },
-    CellReveal { x: usize, y: usize },
-    CellFlag { x: usize, y: usize },
-    MultiplierTarget { size: usize, risk: f32 },
-    Ping { ts: u64 },
+    #[serde(rename_all = "camelCase")]
+    CreateBoard {
+        size: usize,
+        risk: f32,
+        blind: bool,
+        amount: f64,
+        tx_id: String,
+    },
+    CellReveal {
+        x: usize,
+        y: usize,
+    },
+    CellFlag {
+        x: usize,
+        y: usize,
+    },
+    MultiplierTarget {
+        size: usize,
+        risk: f32,
+    },
+    #[serde(rename_all = "camelCase")]
+    Cashout {
+        tx_id: String,
+    },
+    Ping {
+        ts: u64,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,7 +93,7 @@ pub enum StacksSweeperServerMessage {
     #[serde(rename_all = "camelCase")]
     GameBoard {
         cells: Vec<MaskedCell>,
-        game_state: GameState,
+        game_state: StacksSweeperGameState,
         time_remaining: Option<u64>,
         mines: u32,
         board_size: usize,
@@ -59,7 +101,7 @@ pub enum StacksSweeperServerMessage {
     #[serde(rename_all = "camelCase")]
     BoardCreated {
         cells: Vec<MaskedCell>,
-        game_state: GameState,
+        game_state: StacksSweeperGameState,
         mines: u32,
         board_size: usize,
     },
@@ -91,11 +133,13 @@ pub enum StacksSweeperServerMessage {
         risk: f32,
     },
     #[serde(rename_all = "camelCase")]
-    Cashout {
-        current_multiplier: f64,
-        revealed_count: usize,
-        size: usize,
-        risk: f32,
+    ClaimInfo {
+        claim_state: Option<ClaimState>,
+        cashout_amount: Option<f64>,
+        current_multiplier: Option<f64>,
+        revealed_count: Option<usize>,
+        size: Option<usize>,
+        risk: Option<f32>,
     },
     Pong {
         ts: u64,
@@ -120,25 +164,44 @@ impl StacksSweeperServerMessage {
             StacksSweeperServerMessage::GameOver { .. } => true,
             StacksSweeperServerMessage::TimeUp { .. } => true,
             StacksSweeperServerMessage::MultiplierTarget { .. } => true,
-            StacksSweeperServerMessage::Cashout { .. } => true,
+            StacksSweeperServerMessage::ClaimInfo { .. } => true,
             StacksSweeperServerMessage::Error { .. } => true,
         }
     }
 }
 
 impl StacksSweeperGame {
-    pub fn new(user_id: Uuid, size: usize, risk: f32, cells: Vec<StacksSweeperCell>) -> Self {
+    pub fn new(
+        user_id: Uuid,
+        username: String,
+        size: usize,
+        risk: f32,
+        cells: Vec<StacksSweeperCell>,
+        amount: f64,
+        tx_id: String,
+    ) -> Self {
+        let player_board = vec![vec![StacksSweeperCellState::Hidden; size]; size];
+        let board = vec![vec![0u8; size]; size]; // Initialize empty board
+
         Self {
             id: Uuid::new_v4(),
-            user_id,
+            board,
+            state: StacksSweeperGameState::Waiting,
+            user_id: user_id.to_string(),
+            username,
+            player_board,
+            countdown: 60, // Default 60 seconds
+            user_revealed_count: 0,
+            amount,
+            tx_id,
+            claim_state: Some(ClaimState::NotClaimed),
             size,
             risk,
             cells,
-            game_state: GameState::Waiting,
+            game_state: StacksSweeperGameState::Waiting,
             created_at: chrono::Utc::now(),
             first_move: true,
-            blind: false,           // Default to false, will be set by caller
-            user_revealed_count: 0, // Start with 0 revealed cells
+            blind: false, // Default to false, will be set by caller
         }
     }
 
@@ -146,6 +209,7 @@ impl StacksSweeperGame {
         let mut hash = HashMap::new();
         hash.insert("id".to_string(), self.id.to_string());
         hash.insert("user_id".to_string(), self.user_id.to_string());
+        hash.insert("username".to_string(), self.username.clone());
         hash.insert("size".to_string(), self.size.to_string());
         hash.insert("risk".to_string(), self.risk.to_string());
         hash.insert(
@@ -163,16 +227,60 @@ impl StacksSweeperGame {
             "user_revealed_count".to_string(),
             self.user_revealed_count.to_string(),
         );
+        hash.insert("countdown".to_string(), self.countdown.to_string());
+        hash.insert("amount".to_string(), self.amount.to_string());
+        hash.insert("tx_id".to_string(), self.tx_id.clone());
+        if let Some(ref claim_state) = self.claim_state {
+            hash.insert(
+                "claim_state".to_string(),
+                serde_json::to_string(claim_state).unwrap_or_default(),
+            );
+        } else {
+            hash.insert("claim_state".to_string(), "".to_string());
+        }
         hash
     }
 
     pub fn from_redis_hash(
         hash: HashMap<String, String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let size: usize = hash.get("size").ok_or("Missing size")?.parse()?;
+        let player_board = vec![vec![StacksSweeperCellState::Hidden; size]; size];
+        let board = vec![vec![0u8; size]; size]; // Initialize empty board
+
         Ok(Self {
             id: Uuid::parse_str(&hash.get("id").ok_or("Missing id")?)?,
-            user_id: Uuid::parse_str(&hash.get("user_id").ok_or("Missing user_id")?)?,
-            size: hash.get("size").ok_or("Missing size")?.parse()?,
+            board,
+            state: serde_json::from_str(hash.get("game_state").ok_or("Missing game_state")?)?,
+            user_id: hash.get("user_id").ok_or("Missing user_id")?.clone(),
+            username: hash
+                .get("username")
+                .unwrap_or(&"Unknown".to_string())
+                .clone(),
+            player_board,
+            countdown: hash
+                .get("countdown")
+                .unwrap_or(&"60".to_string())
+                .parse()
+                .unwrap_or(60),
+            user_revealed_count: hash
+                .get("user_revealed_count")
+                .ok_or("Missing user_revealed_count")?
+                .parse()?,
+            amount: hash
+                .get("amount")
+                .unwrap_or(&"0.0".to_string())
+                .parse()
+                .unwrap_or(0.0),
+            tx_id: hash.get("tx_id").unwrap_or(&"".to_string()).clone(),
+            claim_state: hash.get("claim_state").and_then(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    serde_json::from_str(s).ok()
+                }
+            }),
+            size,
             risk: hash.get("risk").ok_or("Missing risk")?.parse()?,
             cells: serde_json::from_str(hash.get("cells").ok_or("Missing cells")?)?,
             game_state: serde_json::from_str(hash.get("game_state").ok_or("Missing game_state")?)?,
@@ -185,16 +293,64 @@ impl StacksSweeperGame {
                 .ok_or("Missing first_move")?
                 .parse()?,
             blind: hash.get("blind").ok_or("Missing blind")?.parse()?,
-            user_revealed_count: hash
-                .get("user_revealed_count")
-                .ok_or("Missing user_revealed_count")?
-                .parse()?,
         })
     }
 
     // Check if a new game can be created (no existing game or game is finished)
     pub fn can_create_new(&self) -> bool {
-        matches!(self.game_state, GameState::Won | GameState::Lost)
+        matches!(
+            self.game_state,
+            StacksSweeperGameState::Won | StacksSweeperGameState::Lost
+        )
+    }
+
+    // Update claim state based on game outcome
+    pub fn update_claim_state_on_game_end(&mut self) {
+        match self.game_state {
+            StacksSweeperGameState::Won => {
+                // If won and haven't claimed yet, set to NotClaimed
+                if self.claim_state.is_none() {
+                    self.claim_state = Some(ClaimState::NotClaimed);
+                }
+            }
+            StacksSweeperGameState::Lost => {
+                // If lost, set claim state to None (no claimable reward)
+                self.claim_state = None;
+            }
+            _ => {
+                // For Waiting/Playing states, keep current claim state
+            }
+        }
+    }
+
+    // Check if player can cashout (game won or in progress with reveals)
+    pub fn can_cashout(&self) -> bool {
+        match self.game_state {
+            StacksSweeperGameState::Won => {
+                // Can cashout if won and not claimed yet
+                matches!(self.claim_state, Some(ClaimState::NotClaimed))
+            }
+            StacksSweeperGameState::Playing => {
+                // Can cashout during game if has revealed cells and not claimed
+                self.user_revealed_count > 0
+                    && matches!(self.claim_state, Some(ClaimState::NotClaimed))
+            }
+            _ => false,
+        }
+    }
+
+    // Get cashout amount (amount * current multiplier)
+    pub fn get_cashout_amount(&self) -> Option<f64> {
+        if self.can_cashout() {
+            let current_multiplier = calc_cashout_multiplier(
+                self.size,
+                self.risk as f64,
+                self.user_revealed_count as usize,
+            );
+            Some(self.amount * current_multiplier)
+        } else {
+            None
+        }
     }
 
     // Get the total number of mines in the game

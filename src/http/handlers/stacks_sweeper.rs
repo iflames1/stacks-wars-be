@@ -15,7 +15,8 @@ pub struct CreateStacksSweeperPayload {
     pub size: usize,
     pub risk: f32,
     pub blind: bool,
-    pub _tx_id: String,
+    pub amount: f64,
+    pub tx_id: String,
 }
 
 #[derive(Serialize)]
@@ -45,6 +46,8 @@ pub async fn create_stacks_sweeper_handler(
         payload.size,
         payload.risk,
         payload.blind,
+        payload.amount,
+        payload.tx_id,
         state.redis,
     )
     .await

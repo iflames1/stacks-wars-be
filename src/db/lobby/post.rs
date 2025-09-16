@@ -169,6 +169,8 @@ pub async fn create_stacks_sweeper_single(
     size: usize,
     risk: f32,
     blind: bool,
+    amount: f64,
+    tx_id: String,
     redis: RedisClient,
 ) -> Result<Uuid, AppError> {
     use crate::{games::stacks_sweepers::Board, models::stacks_sweeper::StacksSweeperGame};
@@ -185,12 +187,56 @@ pub async fn create_stacks_sweeper_single(
         ));
     }
 
+    // Validate payment transaction if amount > 0
+    if amount > 0.0 {
+        let expected_contract = "STF0V8KWBS70F0WDKTMY65B3G591NN52PR4Z71Y3.stacks-sweepers-pool-v1";
+
+        // Get the user's wallet address
+        match get_user_by_id(user_id, redis.clone()).await {
+            Ok(user) => {
+                match validate_payment_tx(&tx_id, &user.wallet_address, expected_contract, amount)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Payment validated for user {}: amount {}, tx_id {}",
+                            user_id,
+                            amount,
+                            tx_id
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("Payment validation failed for user {}: {}", user_id, e);
+                        return Err(AppError::BadRequest(format!(
+                            "Payment validation failed: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to get user data for user {}: {}", user_id, e);
+                return Err(AppError::BadRequest(
+                    "Failed to verify user data".to_string(),
+                ));
+            }
+        }
+    }
+
     // Generate the board
     let board = Board::generate(size, risk);
     let game_cells = board.to_game_cells();
 
     // Create the game instance
-    let mut game = StacksSweeperGame::new(user_id, size, risk, game_cells);
+    let mut game = StacksSweeperGame::new(
+        user_id,
+        "Unknown".to_string(),
+        size,
+        risk,
+        game_cells,
+        amount,
+        tx_id,
+    );
     game.blind = blind;
     let game_id = game.id;
 
