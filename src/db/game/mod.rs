@@ -1,3 +1,4 @@
+pub mod delete;
 pub mod get;
 pub mod player_words;
 pub mod post;
