@@ -408,7 +408,22 @@ async fn shift_mine(
     Ok(())
 }
 
-async fn generate_masked_cells(
+pub async fn get_mine_count(lobby_id: Uuid, redis: RedisClient) -> Result<u32, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let mine_count_key = RedisKey::lobby_stacks_sweeper_mine_count(KeyPart::Id(lobby_id));
+    let mine_count: Option<u32> = conn
+        .get(&mine_count_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(mine_count.unwrap_or(0))
+}
+
+pub async fn generate_masked_cells(
     lobby_id: Uuid,
     redis: RedisClient,
 ) -> Result<Vec<MaskedCell>, AppError> {
@@ -449,6 +464,141 @@ async fn generate_masked_cells(
     Ok(masked_cells)
 }
 
+async fn handle_cell_reveal(
+    lobby_id: Uuid,
+    player: &Player,
+    x: usize,
+    y: usize,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+    telegram_bot: Bot,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Check if game has started
+    let game_started = get_game_started(lobby_id, redis.clone()).await?;
+    if !game_started {
+        return Err("Game has not started yet".into());
+    }
+
+    // Check if it's the player's turn
+    let current_turn_id = get_current_turn(lobby_id, redis.clone())
+        .await?
+        .ok_or("No current turn set")?;
+
+    if player.id != current_turn_id {
+        return Err("Not your turn".into());
+    }
+
+    // Get current board
+    let cells = get_multiplayer_board(lobby_id, redis.clone())
+        .await?
+        .ok_or("Board not found")?;
+
+    let size = (cells.len() as f64).sqrt() as usize;
+    let cell_index = y * size + x;
+
+    if cell_index >= cells.len() {
+        return Err("Invalid cell position".into());
+    }
+
+    let cell = &cells[cell_index];
+
+    // Check if cell is already revealed
+    let revealed_cells = get_revealed_cells(lobby_id, redis.clone()).await?;
+
+    if revealed_cells.contains(&(x, y)) {
+        return Err("Cell already revealed".into());
+    }
+
+    // Check if this is the first move and if we hit a mine, shift it
+    let is_first_move = revealed_cells.is_empty();
+    if is_first_move && cell.is_mine {
+        shift_mine(lobby_id, x, y, redis.clone()).await?;
+        tracing::info!("Mine shifted on first move at ({}, {})", x, y);
+    }
+
+    // Reveal the cell
+    add_revealed_cell(lobby_id, x, y, redis.clone()).await?;
+
+    // Get updated board after potential mine shift
+    let updated_cells = get_multiplayer_board(lobby_id, redis.clone())
+        .await?
+        .ok_or("Board disappeared")?;
+
+    let updated_cell = &updated_cells[cell_index];
+
+    // Get all players for broadcasting
+    let players = get_lobby_players(lobby_id, None, redis.clone()).await?;
+
+    // Broadcast cell revealed to all players
+    let cell_revealed_msg = StacksSweeperServerMessage::CellRevealed {
+        x,
+        y,
+        cell_state: if updated_cell.is_mine {
+            CellState::Mine
+        } else if updated_cell.adjacent > 0 {
+            CellState::Adjacent {
+                count: updated_cell.adjacent,
+            }
+        } else {
+            CellState::Gem
+        },
+        revealed_by: player
+            .user
+            .as_ref()
+            .and_then(|u| u.username.clone())
+            .unwrap_or_else(|| player.id.to_string()),
+    };
+    broadcast_to_lobby(&cell_revealed_msg, &players, lobby_id, connections, redis).await;
+
+    // Check for mine hit (after potential mine shift, this should only happen on subsequent moves)
+    if updated_cell.is_mine {
+        // Player hit a mine - eliminate them
+        tracing::info!("Player {} hit a mine at ({}, {})", player.id, x, y);
+
+        crate::db::game::state::add_eliminated_player(lobby_id, player.id, redis.clone()).await?;
+        remove_current_player(lobby_id, player.id, redis.clone()).await?;
+
+        // Broadcast elimination
+        let eliminated_msg = StacksSweeperServerMessage::Eliminated {
+            player: player.clone(),
+            reason: EliminationReason::HitMine,
+            mine_position: Some((x, y)),
+        };
+
+        broadcast_to_lobby(&eliminated_msg, &players, lobby_id, connections, redis).await;
+
+        // Check if game should end
+        let remaining_players =
+            crate::db::lobby::get::get_current_players_ids(lobby_id, redis.clone()).await?;
+
+        if remaining_players.len() <= 1 {
+            // Game over
+            end_game(lobby_id, connections, redis.clone(), telegram_bot).await?;
+        } else {
+            // Continue game with remaining players
+            advance_turn(lobby_id, &players, connections, redis.clone(), telegram_bot).await?;
+        }
+    } else {
+        // Safe move - check for win condition (all non-mine cells revealed)
+        let total_cells = updated_cells.len();
+        let mine_count = get_mine_count(lobby_id, redis.clone()).await? as usize;
+        let safe_cells = total_cells - mine_count;
+
+        let updated_revealed = get_revealed_cells(lobby_id, redis.clone()).await?;
+
+        if updated_revealed.len() >= safe_cells {
+            // All safe cells revealed - game won!
+            tracing::info!("All safe cells revealed - ending game");
+            end_game(lobby_id, connections, redis.clone(), telegram_bot).await?;
+        } else {
+            // Continue game - advance turn
+            advance_turn(lobby_id, &players, connections, redis.clone(), telegram_bot).await?;
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn handle_incoming_messages(
     player: &Player,
     lobby_id: Uuid,
@@ -485,302 +635,28 @@ pub async fn handle_incoming_messages(
                             .await;
                         }
                         StacksSweeperClientMessage::CellReveal { x, y } => {
-                            // Check if game has started
-                            let game_started = match get_game_started(lobby_id, redis.clone()).await
-                            {
-                                Ok(started) => started,
-                                Err(e) => {
-                                    tracing::error!("Failed to check game started: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            if !game_started {
-                                let error_msg = StacksSweeperServerMessage::Error {
-                                    message: "Game has not started yet".into(),
-                                };
-                                broadcast_to_player(
-                                    player.id,
-                                    lobby_id,
-                                    &error_msg,
-                                    connections,
-                                    &redis,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            // Check if it's the player's turn
-                            let current_turn_id =
-                                match get_current_turn(lobby_id, redis.clone()).await {
-                                    Ok(Some(id)) => id,
-                                    Ok(None) => {
-                                        let error_msg = StacksSweeperServerMessage::Error {
-                                            message: "No current turn set".into(),
-                                        };
-                                        broadcast_to_player(
-                                            player.id,
-                                            lobby_id,
-                                            &error_msg,
-                                            connections,
-                                            &redis,
-                                        )
-                                        .await;
-                                        continue;
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to get current turn: {}", e);
-                                        continue;
-                                    }
-                                };
-
-                            if player.id != current_turn_id {
-                                let error_msg = StacksSweeperServerMessage::Error {
-                                    message: "Not your turn".into(),
-                                };
-                                broadcast_to_player(
-                                    player.id,
-                                    lobby_id,
-                                    &error_msg,
-                                    connections,
-                                    &redis,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            // Get current board
-                            let cells = match get_multiplayer_board(lobby_id, redis.clone()).await {
-                                Ok(Some(cells)) => cells,
-                                Ok(None) => {
-                                    let error_msg = StacksSweeperServerMessage::Error {
-                                        message: "Board not found".into(),
-                                    };
-                                    broadcast_to_player(
-                                        player.id,
-                                        lobby_id,
-                                        &error_msg,
-                                        connections,
-                                        &redis,
-                                    )
-                                    .await;
-                                    continue;
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to get board: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            let size = (cells.len() as f64).sqrt() as usize;
-                            let cell_index = y * size + x;
-
-                            if cell_index >= cells.len() {
-                                let error_msg = StacksSweeperServerMessage::Error {
-                                    message: "Invalid cell position".into(),
-                                };
-                                broadcast_to_player(
-                                    player.id,
-                                    lobby_id,
-                                    &error_msg,
-                                    connections,
-                                    &redis,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            let cell = &cells[cell_index];
-
-                            // Check if cell is already revealed
-                            let revealed_cells =
-                                match get_revealed_cells(lobby_id, redis.clone()).await {
-                                    Ok(cells) => cells,
-                                    Err(e) => {
-                                        tracing::error!("Failed to get revealed cells: {}", e);
-                                        continue;
-                                    }
-                                };
-
-                            if revealed_cells.contains(&(x, y)) {
-                                let error_msg = StacksSweeperServerMessage::Error {
-                                    message: "Cell already revealed".into(),
-                                };
-                                broadcast_to_player(
-                                    player.id,
-                                    lobby_id,
-                                    &error_msg,
-                                    connections,
-                                    &redis,
-                                )
-                                .await;
-                                continue;
-                            }
-
-                            // Check if this is the first move and it's a mine
-                            let is_first_move = revealed_cells.is_empty();
-                            if is_first_move && cell.is_mine {
-                                // Shift the mine
-                                if let Err(e) = shift_mine(lobby_id, x, y, redis.clone()).await {
-                                    tracing::error!("Failed to shift mine: {}", e);
-                                    continue;
-                                }
-                            }
-
-                            // Add to revealed cells
-                            if let Err(e) = add_revealed_cell(lobby_id, x, y, redis.clone()).await {
-                                tracing::error!("Failed to add revealed cell: {}", e);
-                                continue;
-                            }
-
-                            // Get updated board after potential mine shift
-                            let updated_cells =
-                                match get_multiplayer_board(lobby_id, redis.clone()).await {
-                                    Ok(Some(cells)) => cells,
-                                    Ok(None) => {
-                                        tracing::error!("Board disappeared after mine shift");
-                                        continue;
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to get updated board: {}", e);
-                                        continue;
-                                    }
-                                };
-
-                            let updated_cell = &updated_cells[cell_index];
-
-                            // Determine cell state for broadcast
-                            let cell_state = if updated_cell.is_mine {
-                                CellState::Mine
-                            } else if updated_cell.adjacent > 0 {
-                                CellState::Adjacent {
-                                    count: updated_cell.adjacent,
-                                }
-                            } else {
-                                CellState::Gem
-                            };
-
-                            // Get player username for broadcast
-                            let player_username = player
-                                .user
-                                .as_ref()
-                                .and_then(|u| u.username.as_ref().or(u.display_name.as_ref()))
-                                .unwrap_or(&player.id.to_string())
-                                .clone();
-
-                            // Broadcast cell revealed to all players
-                            let players =
-                                match get_lobby_players(lobby_id, None, redis.clone()).await {
-                                    Ok(players) => players,
-                                    Err(e) => {
-                                        tracing::error!("Failed to get players: {}", e);
-                                        continue;
-                                    }
-                                };
-
-                            let cell_revealed_msg = StacksSweeperServerMessage::CellRevealed {
+                            if let Err(e) = handle_cell_reveal(
+                                lobby_id,
+                                player,
                                 x,
                                 y,
-                                cell_state: cell_state.clone(),
-                                revealed_by: player_username,
-                            };
-
-                            broadcast_to_lobby(
-                                &cell_revealed_msg,
-                                &players,
-                                lobby_id,
                                 connections,
                                 &redis,
+                                _telegram_bot_clone.clone(),
                             )
-                            .await;
-
-                            // Check if player hit a mine (after first move)
-                            if updated_cell.is_mine && !is_first_move {
-                                // Player is eliminated
-                                if let Err(e) =
-                                    add_eliminated_player(lobby_id, player.id, redis.clone()).await
-                                {
-                                    tracing::error!("Failed to eliminate player: {}", e);
-                                    continue;
-                                }
-
-                                if let Err(e) =
-                                    remove_current_player(lobby_id, player.id, redis.clone()).await
-                                {
-                                    tracing::error!(
-                                        "Failed to remove eliminated player from current: {}",
-                                        e
-                                    );
-                                }
-
-                                // Broadcast elimination
-                                let eliminated_msg = StacksSweeperServerMessage::Eliminated {
-                                    player: player.clone(),
-                                    reason: EliminationReason::HitMine,
-                                    mine_position: Some((x, y)),
+                            .await
+                            {
+                                let error_msg = StacksSweeperServerMessage::Error {
+                                    message: e.to_string(),
                                 };
-
-                                broadcast_to_lobby(
-                                    &eliminated_msg,
-                                    &players,
+                                broadcast_to_player(
+                                    player.id,
                                     lobby_id,
+                                    &error_msg,
                                     connections,
                                     &redis,
                                 )
                                 .await;
-
-                                // Check if game should end
-                                let remaining_players =
-                                    match get_current_players_ids(lobby_id, redis.clone()).await {
-                                        Ok(players) => players,
-                                        Err(e) => {
-                                            tracing::error!(
-                                                "Failed to get remaining players: {}",
-                                                e
-                                            );
-                                            continue;
-                                        }
-                                    };
-
-                                if remaining_players.len() <= 1 {
-                                    // Game over
-                                    if let Err(e) = end_game(
-                                        lobby_id,
-                                        connections,
-                                        redis.clone(),
-                                        _telegram_bot_clone.clone(),
-                                    )
-                                    .await
-                                    {
-                                        tracing::error!("Failed to end game: {}", e);
-                                    }
-                                } else {
-                                    // Continue with next player
-                                    if let Err(e) = advance_turn(
-                                        lobby_id,
-                                        &players,
-                                        connections,
-                                        redis.clone(),
-                                        _telegram_bot_clone.clone(),
-                                    )
-                                    .await
-                                    {
-                                        tracing::error!("Failed to advance turn: {}", e);
-                                    }
-                                }
-                            } else {
-                                // Player successfully revealed a safe cell, advance turn
-                                if let Err(e) = advance_turn(
-                                    lobby_id,
-                                    &players,
-                                    connections,
-                                    redis.clone(),
-                                    _telegram_bot_clone.clone(),
-                                )
-                                .await
-                                {
-                                    tracing::error!("Failed to advance turn: {}", e);
-                                }
                             }
                         }
                         StacksSweeperClientMessage::CellFlag { x: _, y: _ } => {
@@ -1192,21 +1068,6 @@ async fn start_game(
     }
 
     Ok(())
-}
-
-async fn get_mine_count(lobby_id: Uuid, redis: RedisClient) -> Result<u32, AppError> {
-    let mut conn = redis.get().await.map_err(|e| match e {
-        bb8::RunError::User(err) => AppError::RedisCommandError(err),
-        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
-    })?;
-
-    let mine_count_key = RedisKey::lobby_stacks_sweeper_mine_count(KeyPart::Id(lobby_id));
-    let mine_count: Option<u32> = conn
-        .get(&mine_count_key)
-        .await
-        .map_err(AppError::RedisCommandError)?;
-
-    Ok(mine_count.unwrap_or(0))
 }
 
 async fn end_game(

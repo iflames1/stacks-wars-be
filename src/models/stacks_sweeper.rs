@@ -191,6 +191,7 @@ pub enum StacksSweeperServerMessage {
         reason: EliminationReason,
         mine_position: Option<(usize, usize)>, // Position of mine if hit
     },
+    AlreadyStarted,
 }
 
 impl StacksSweeperServerMessage {
@@ -221,6 +222,7 @@ impl StacksSweeperServerMessage {
             StacksSweeperServerMessage::MultiplayerGameOver => true,
             StacksSweeperServerMessage::FinalStanding { .. } => true,
             StacksSweeperServerMessage::Eliminated { .. } => true,
+            StacksSweeperServerMessage::AlreadyStarted { .. } => true,
         }
     }
 }
