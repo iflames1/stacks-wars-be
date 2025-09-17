@@ -19,6 +19,9 @@ pub enum AppError {
     #[error("Deserialization error: {0}")]
     Deserialization(String),
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
@@ -51,6 +54,7 @@ impl AppError {
                 "Unexpected server error".into(),
             ),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            AppError::InvalidInput(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
         }
     }
 }

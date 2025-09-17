@@ -1,11 +1,68 @@
-// StacksSweeper utility functions
-// This module will contain helper functions for the StacksSweeper game
+use futures::SinkExt;
+use rand::{SeedableRng, rngs::StdRng};
 
-pub struct StacksSweeperUtils;
+use crate::{
+    models::{game::Player, stacks_sweeper::StacksSweeperServerMessage},
+    state::{ConnectionInfoMap, RedisClient},
+    ws::handlers::utils::queue_message_for_player,
+};
+use uuid::Uuid;
 
-impl StacksSweeperUtils {
-    // Placeholder for future utility functions
-    pub fn format_board() -> String {
-        "Board formatting utils will go here".to_string()
+pub async fn broadcast_to_player(
+    player_id: Uuid,
+    lobby_id: Uuid,
+    msg: &StacksSweeperServerMessage,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    let serialized = match serde_json::to_string(msg) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to serialize message: {}", e);
+            return;
+        }
+    };
+
+    // Check if player is currently connected
+    let conns = connections.lock().await;
+    if let Some(conn_info) = conns.get(&player_id) {
+        // Player is connected, send directly
+        let mut sender_guard = conn_info.sender.lock().await;
+        if let Err(e) = sender_guard
+            .send(axum::extract::ws::Message::Text(serialized.clone().into()))
+            .await
+        {
+            tracing::debug!(
+                "Failed to send direct message to player {}: {}",
+                player_id,
+                e
+            );
+            // Connection failed, queue the message if it should be queued
+            if msg.should_queue() {
+                let _ = queue_message_for_player(player_id, lobby_id, serialized, redis).await;
+            }
+        }
+    } else {
+        // Player not connected, queue if message should be queued
+        if msg.should_queue() {
+            let _ = queue_message_for_player(player_id, lobby_id, serialized, redis).await;
+        }
     }
+}
+
+pub async fn broadcast_to_lobby(
+    msg: &StacksSweeperServerMessage,
+    players: &[Player],
+    lobby_id: Uuid,
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+) {
+    for player in players {
+        broadcast_to_player(player.id, lobby_id, msg, connections, redis).await;
+    }
+}
+
+/// Create a Send-safe random number generator for async contexts
+pub fn create_rng() -> StdRng {
+    StdRng::seed_from_u64(rand::random())
 }

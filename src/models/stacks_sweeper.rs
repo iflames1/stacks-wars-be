@@ -148,6 +148,49 @@ pub enum StacksSweeperServerMessage {
     Error {
         message: String,
     },
+
+    // Multiplayer messages
+    #[serde(rename_all = "camelCase")]
+    Turn {
+        current_turn: crate::models::game::Player,
+        countdown: u32,
+    },
+    #[serde(rename_all = "camelCase")]
+    CellRevealed {
+        x: usize,
+        y: usize,
+        cell_state: CellState,
+        revealed_by: String, // Player username who revealed it
+    },
+    #[serde(rename_all = "camelCase")]
+    Start {
+        time: u32,
+        started: bool,
+    },
+    StartFailed,
+    #[serde(rename_all = "camelCase")]
+    Rank {
+        rank: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Prize {
+        amount: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    WarsPoint {
+        wars_point: f64,
+    },
+    MultiplayerGameOver,
+    #[serde(rename_all = "camelCase")]
+    FinalStanding {
+        standing: Vec<PlayerStanding>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Eliminated {
+        player: crate::models::game::Player,
+        reason: EliminationReason,
+        mine_position: Option<(usize, usize)>, // Position of mine if hit
+    },
 }
 
 impl StacksSweeperServerMessage {
@@ -166,6 +209,18 @@ impl StacksSweeperServerMessage {
             StacksSweeperServerMessage::MultiplierTarget { .. } => true,
             StacksSweeperServerMessage::ClaimInfo { .. } => true,
             StacksSweeperServerMessage::Error { .. } => true,
+
+            // Multiplayer messages
+            StacksSweeperServerMessage::Turn { .. } => true,
+            StacksSweeperServerMessage::CellRevealed { .. } => true,
+            StacksSweeperServerMessage::Start { .. } => true,
+            StacksSweeperServerMessage::StartFailed => true,
+            StacksSweeperServerMessage::Rank { .. } => true,
+            StacksSweeperServerMessage::Prize { .. } => true,
+            StacksSweeperServerMessage::WarsPoint { .. } => true,
+            StacksSweeperServerMessage::MultiplayerGameOver => true,
+            StacksSweeperServerMessage::FinalStanding { .. } => true,
+            StacksSweeperServerMessage::Eliminated { .. } => true,
         }
     }
 }
@@ -523,4 +578,18 @@ pub struct MaskedCell {
     pub x: usize,
     pub y: usize,
     pub state: Option<CellState>, // None if not revealed and not flagged
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EliminationReason {
+    HitMine,
+    Timeout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerStanding {
+    pub player: crate::models::game::Player,
+    pub rank: usize,
 }

@@ -72,6 +72,9 @@ pub async fn chat_handler(
         prize: None,
         last_ping: None,
         user: Some(user.clone()),
+        // StacksSweeper fields (None for non-StacksSweeper contexts)
+        opened_cells: None,
+        hit_mine: None,
     };
 
     Ok(ws.on_upgrade(move |socket| {

@@ -73,6 +73,23 @@ impl RedisKey {
         format!("stacks_sweeper:{user_id}")
     }
 
+    // StacksSweeper multiplayer keys
+    pub fn lobby_stacks_sweeper_board(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:stacks_sweeper:board")
+    }
+
+    pub fn lobby_stacks_sweeper_cells(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:stacks_sweeper:cells")
+    }
+
+    pub fn lobby_stacks_sweeper_revealed_cells(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:stacks_sweeper:revealed_cells")
+    }
+
+    pub fn lobby_stacks_sweeper_mine_count(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:stacks_sweeper:mine_count")
+    }
+
     // temporary keys
     pub fn lobby_countdown(lobby_id: KeyPart) -> String {
         format!("lobbies:{lobby_id}:countdown")

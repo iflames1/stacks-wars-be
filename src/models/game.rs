@@ -9,6 +9,7 @@ use crate::{errors::AppError, models::User};
 #[derive(Deserialize)]
 pub struct WsQueryParams {
     pub user_id: Uuid,
+    pub lobby_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +138,10 @@ pub struct Player {
     pub prize: Option<f64>,
     pub last_ping: Option<u64>,
 
+    // StacksSweeper-specific fields
+    pub opened_cells: Option<Vec<(usize, usize)>>,
+    pub hit_mine: Option<bool>,
+
     // Hydrated user data (not stored in Redis)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<User>,
@@ -169,6 +174,14 @@ impl Player {
         }
         if let Some(ref last_ping) = self.last_ping {
             map.insert("last_ping".into(), last_ping.to_string());
+        }
+        if let Some(ref opened_cells) = self.opened_cells {
+            if let Ok(json) = serde_json::to_string(opened_cells) {
+                map.insert("opened_cells".into(), json);
+            }
+        }
+        if let Some(ref hit_mine) = self.hit_mine {
+            map.insert("hit_mine".into(), hit_mine.to_string());
         }
 
         map
@@ -203,6 +216,12 @@ impl Player {
 
         let last_ping = data.get("last_ping").and_then(|v| v.parse::<u64>().ok());
 
+        let opened_cells = data
+            .get("opened_cells")
+            .and_then(|v| serde_json::from_str::<Vec<(usize, usize)>>(v).ok());
+
+        let hit_mine = data.get("hit_mine").and_then(|v| v.parse::<bool>().ok());
+
         Ok(Player {
             id,
             state,
@@ -212,12 +231,29 @@ impl Player {
             claim,
             prize,
             last_ping,
+            opened_cells,
+            hit_mine,
             user: None, // Will be hydrated separately
         })
     }
 
-    // Helper to create a new player with minimal data
-    pub fn new(user_id: Uuid, tx_id: Option<String>) -> Self {
+    pub fn new(id: Uuid, state: PlayerState) -> Self {
+        Player {
+            id,
+            state,
+            rank: None,
+            used_words: None,
+            tx_id: None,
+            claim: None,
+            prize: None,
+            last_ping: None,
+            opened_cells: None,
+            hit_mine: None,
+            user: None,
+        }
+    }
+
+    pub fn new_with_tx(user_id: Uuid, tx_id: Option<String>) -> Self {
         Player {
             id: user_id,
             state: PlayerState::Ready,
@@ -227,6 +263,8 @@ impl Player {
             claim: None,
             prize: None,
             last_ping: Some(Utc::now().timestamp_millis() as u64),
+            opened_cells: None,
+            hit_mine: None,
             user: None,
         }
     }
@@ -319,9 +357,45 @@ pub struct LobbyInfo {
     pub token_id: Option<String>,
     pub creator_last_ping: Option<u64>,
     pub tg_msg_id: Option<i32>,
+
+    // StacksSweeper-specific fields
+    pub board_size: Option<usize>,
+    pub mine_risk: Option<f32>,
+    pub board_blind: Option<bool>,
 }
 
 impl LobbyInfo {
+    pub fn new(
+        id: Uuid,
+        name: String,
+        creator: User,
+        state: LobbyState,
+        game: GameType,
+        participants: usize,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        LobbyInfo {
+            id,
+            name,
+            creator,
+            state,
+            game,
+            participants,
+            created_at,
+            description: None,
+            contract_address: None,
+            entry_amount: None,
+            current_amount: None,
+            token_symbol: None,
+            token_id: None,
+            creator_last_ping: None,
+            tg_msg_id: None,
+            board_size: None,
+            mine_risk: None,
+            board_blind: None,
+        }
+    }
+
     pub fn to_redis_hash(&self) -> Vec<(String, String)> {
         let mut fields = vec![
             ("id".into(), self.id.to_string()),
@@ -355,6 +429,15 @@ impl LobbyInfo {
         }
         if let Some(tg_msg_id) = self.tg_msg_id {
             fields.push(("tg_msg_id".into(), tg_msg_id.to_string()));
+        }
+        if let Some(board_size) = self.board_size {
+            fields.push(("board_size".into(), board_size.to_string()));
+        }
+        if let Some(mine_risk) = self.mine_risk {
+            fields.push(("mine_risk".into(), mine_risk.to_string()));
+        }
+        if let Some(board_blind) = self.board_blind {
+            fields.push(("board_blind".into(), board_blind.to_string()));
         }
         fields
     }
@@ -427,6 +510,9 @@ impl LobbyInfo {
             token_id: map.get("token_id").cloned(),
             creator_last_ping: map.get("creator_last_ping").and_then(|s| s.parse().ok()),
             tg_msg_id: map.get("tg_msg_id").and_then(|s| s.parse().ok()),
+            board_size: map.get("board_size").and_then(|s| s.parse().ok()),
+            mine_risk: map.get("mine_risk").and_then(|s| s.parse().ok()),
+            board_blind: map.get("board_blind").and_then(|s| s.parse().ok()),
         };
 
         Ok((lobby, creator_id, game_id))

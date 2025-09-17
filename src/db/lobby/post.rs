@@ -38,7 +38,7 @@ pub async fn create_lobby(
     })?;
 
     // Create player with minimal data
-    let lobby_player = Player::new(creator_user.id, Some(tx_id.clone()));
+    let lobby_player = Player::new_with_tx(creator_user.id, Some(tx_id.clone()));
     let creator_last_ping = lobby_player.last_ping;
 
     let lobby_info = LobbyInfo {
@@ -57,6 +57,9 @@ pub async fn create_lobby(
         token_id: pool.as_ref().and_then(|p| p.token_id.clone()),
         creator_last_ping,
         tg_msg_id: None,
+        board_size: None,
+        mine_risk: None,
+        board_blind: None,
     };
 
     // Store pool if it exists
@@ -173,7 +176,7 @@ pub async fn create_stacks_sweeper_single(
     tx_id: String,
     redis: RedisClient,
 ) -> Result<Uuid, AppError> {
-    use crate::{games::stacks_sweepers::Board, models::stacks_sweeper::StacksSweeperGame};
+    use crate::models::stacks_sweeper::StacksSweeperGame;
 
     // Validate input parameters
     if size < 3 || size > 10 {
@@ -223,9 +226,12 @@ pub async fn create_stacks_sweeper_single(
         }
     }
 
+    // TODO: Implement Board struct for single-player StacksSweeper
+    // For now, create empty game (multiplayer board creation happens in engine)
     // Generate the board
-    let board = Board::generate(size, risk);
-    let game_cells = board.to_game_cells();
+    // let board = Board::generate(size, risk);
+    // let game_cells = board.to_game_cells();
+    let game_cells = vec![];
 
     // Create the game instance
     let mut game = StacksSweeperGame::new(

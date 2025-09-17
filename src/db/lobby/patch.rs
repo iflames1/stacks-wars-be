@@ -68,7 +68,7 @@ pub async fn join_lobby(
     }
 
     // Create player with minimal data (just ID and tx_id)
-    let new_player = Player::new(user_id, tx_id);
+    let new_player = Player::new_with_tx(user_id, tx_id);
     let player_hash = new_player.to_redis_hash();
     let player_fields: Vec<(&str, &str)> = player_hash
         .iter()

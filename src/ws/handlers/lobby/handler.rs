@@ -67,17 +67,7 @@ pub async fn lobby_ws_handler(
         .await
         .map_err(|e| e.to_response())?;
 
-    let idle_player = Player {
-        id: user.id,
-        state: PlayerState::NotReady,
-        rank: None,
-        used_words: None,
-        tx_id: None,
-        claim: None,
-        prize: None,
-        last_ping: None,
-        user: Some(user.clone()),
-    };
+    let idle_player = Player::new(user.id, PlayerState::NotReady);
 
     Ok(ws.on_upgrade(move |socket| {
         handle_lobby_socket(
