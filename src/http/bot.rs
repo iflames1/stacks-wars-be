@@ -51,6 +51,7 @@ pub async fn broadcast_lobby_created(
     chat_id: i64,
     payload: BotNewLobbyPayload,
 ) -> Result<teloxide::types::Message, teloxide::RequestError> {
+    let network = std::env::var("STACKS_NETWORK").unwrap_or("testnet".to_string());
     let wallet = payload.wallet_address.clone();
     let truncated_wallet = format!("{}...{}", &wallet[0..4], &wallet[wallet.len() - 4..]);
 
@@ -84,7 +85,7 @@ pub async fn broadcast_lobby_created(
         .as_ref()
         .map(|addr| {
             format!(
-                "💰 <b>Pool Contract:</b> <a href=\"https://explorer.hiro.so/txid/{}?chain=testnet\">View on Hiro</a>\n",
+                "💰 <b>Pool Contract:</b> <a href=\"https://explorer.hiro.so/txid/{}?chain={network}\">View on Hiro</a>\n",
                 addr
             )
         })

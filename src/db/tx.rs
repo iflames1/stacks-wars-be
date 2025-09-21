@@ -6,7 +6,8 @@ pub async fn validate_payment_tx(
     expected_contract: &str,
     expected_amount: f64,
 ) -> Result<(), AppError> {
-    let url = format!("https://api.testnet.hiro.so/extended/v1/tx/{}", tx_id);
+    let network = std::env::var("STACKS_NETWORK").unwrap_or("testnet".to_string());
+    let url = format!("https://api.{network}.hiro.so/extended/v1/tx/{}", tx_id);
 
     let res = reqwest::get(&url)
         .await
@@ -123,7 +124,8 @@ pub async fn validate_fee_transfer(
     expected_sender: &str,
     fee_wallet: &str,
 ) -> Result<(), AppError> {
-    let url = format!("https://api.testnet.hiro.so/extended/v1/tx/{}", tx_id);
+    let network = std::env::var("STACKS_NETWORK").unwrap_or("testnet".to_string());
+    let url = format!("https://api.{network}.hiro.so/extended/v1/tx/{}", tx_id);
 
     let res = reqwest::get(&url)
         .await
