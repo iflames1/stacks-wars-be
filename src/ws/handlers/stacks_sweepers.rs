@@ -270,9 +270,6 @@ async fn handle_stacks_sweeper_socket(
             crate::games::stacks_sweepers::engine::generate_masked_cells(lobby_id, redis.clone())
                 .await
         {
-            let lobby_info = crate::db::lobby::get::get_lobby_info(lobby_id, redis.clone())
-                .await
-                .unwrap();
             let mine_count =
                 crate::games::stacks_sweepers::engine::get_mine_count(lobby_id, redis.clone())
                     .await
@@ -282,7 +279,7 @@ async fn handle_stacks_sweeper_socket(
                 game_state: crate::models::stacks_sweeper::StacksSweeperGameState::Playing,
                 time_remaining: Some(30000), // 30 seconds in milliseconds
                 mines: mine_count,
-                board_size: lobby_info.board_size.unwrap_or(8),
+                board_size: 10, // Fixed 10x10 board size
             };
             broadcast_to_player(player.id, lobby_id, &board_msg, &connections, &redis).await;
         }

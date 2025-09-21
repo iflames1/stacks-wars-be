@@ -531,7 +531,7 @@ fn risk_scale(d: f64, hard_density: f64, gamma: f64) -> f64 {
 }
 
 /// Preview function: full clear multiplier for chosen board size + difficulty.
-pub fn calc_target_multiplier(n: usize, d: f64) -> f64 {
+pub fn _calc_target_multiplier(n: usize, d: f64) -> f64 {
     let base = 2.0; // Hard 5x5 full clear anchor
     let beta = 0.1; // board size growth factor
     let hard_density = 0.4;
@@ -569,6 +569,7 @@ pub fn calc_cashout_multiplier(n: usize, d: f64, r: usize) -> f64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CellState {
+    Hidden,
     Flagged,
     Mine,
     Gem,
