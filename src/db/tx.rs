@@ -54,7 +54,7 @@ pub async fn validate_payment_tx(
         .get("events")
         .and_then(|v| v.as_array())
         .unwrap_or(&empty_vec);
-    println!("{:#?}", events);
+    tracing::info!("Processing {:#?}", events);
     let mut matched = None;
 
     for event in events {
@@ -63,13 +63,15 @@ pub async fn validate_payment_tx(
             continue;
         };
 
-        if event_type != "stx_asset" {
-            tracing::debug!("Skipping event: not stx_asset, got {event_type}");
+        if event_type != "stx_asset" && event_type != "fungible_token_asset" {
+            tracing::debug!(
+                "Skipping event: not stx_asset or fungible_token_asset, got {event_type}"
+            );
             continue;
         }
 
         let Some(asset) = event.get("asset") else {
-            tracing::warn!("stx_asset event missing 'asset' field");
+            tracing::warn!("stx_asset/fungible_token_asset event missing 'asset' field");
             continue;
         };
 

@@ -674,6 +674,7 @@ fn start_turn_timer(
                     if let Err(e) = remove_current_player(lobby_id, player_id, redis.clone()).await
                     {
                         tracing::error!("Failed to remove timed out player from current: {}", e);
+                        return;
                     }
 
                     // Get updated current players and calculate position for stats
