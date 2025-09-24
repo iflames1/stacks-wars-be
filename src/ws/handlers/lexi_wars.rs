@@ -270,12 +270,12 @@ async fn handle_lexi_wars_socket(
                     broadcast_to_player(player.id, lobby_id, &turn_msg, &connections, &redis).await;
                 }
             }
-        }
-
-        // Send current rule if available
-        if let Ok(Some(current_rule)) = get_current_rule(lobby_id, redis.clone()).await {
-            let rule_msg = LexiWarsServerMessage::Rule { rule: current_rule };
-            broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
+            if current_turn_id == player.id {
+                if let Ok(Some(current_rule)) = get_current_rule(lobby_id, redis.clone()).await {
+                    let rule_msg = LexiWarsServerMessage::Rule { rule: current_rule };
+                    broadcast_to_player(player.id, lobby_id, &rule_msg, &connections, &redis).await;
+                }
+            }
         }
 
         tracing::debug!("Sent reconnection state to player {}", player.id);

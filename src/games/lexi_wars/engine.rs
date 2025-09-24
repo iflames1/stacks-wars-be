@@ -509,24 +509,19 @@ pub async fn handle_incoming_messages(
                                         tracing::error!("Failed to set next current rule: {}", e);
                                     }
 
-                                    // Broadcast rule to all players
+                                    // Send rule to the next player (current turn)
                                     let rule_msg = LexiWarsServerMessage::Rule {
                                         rule: next_rule.description.clone(),
                                     };
 
-                                    // Get all lobby players for broadcasting
-                                    if let Ok(players) =
-                                        get_lobby_players(lobby_id, None, redis.clone()).await
-                                    {
-                                        broadcast_to_lobby(
-                                            &rule_msg,
-                                            &players,
-                                            lobby_id,
-                                            connections,
-                                            &redis,
-                                        )
-                                        .await;
-                                    }
+                                    broadcast_to_player(
+                                        next_player_id,
+                                        lobby_id,
+                                        &rule_msg,
+                                        connections,
+                                        &redis,
+                                    )
+                                    .await;
                                 }
 
                                 // Broadcast word entry to all players
@@ -921,11 +916,12 @@ async fn start_game(
                 )
                 .await?;
 
-                // Broadcast the rule to all players
+                // Send the rule to the current player
                 let rule_msg = LexiWarsServerMessage::Rule {
                     rule: first_rule.description,
                 };
-                broadcast_to_lobby(&rule_msg, &players, lobby_id, connections, &redis).await;
+                broadcast_to_player(first_player_id, lobby_id, &rule_msg, connections, &redis)
+                    .await;
             }
         }
 
