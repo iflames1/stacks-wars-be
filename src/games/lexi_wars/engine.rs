@@ -28,7 +28,10 @@ use crate::{
     },
     games::lexi_wars::{
         rules::{RuleContext, get_rule_by_index, get_rules},
-        utils::{broadcast_to_lobby, broadcast_to_player, generate_random_letter},
+        utils::{
+            broadcast_to_lobby_and_spectators, broadcast_to_player,
+            broadcast_to_player_and_spectators, generate_random_letter,
+        },
     },
     http::bot::{self, BotLobbyWinnerPayload, RunnerUp},
     models::{
@@ -533,7 +536,7 @@ pub async fn handle_incoming_messages(
                                 if let Ok(players) =
                                     get_lobby_players(lobby_id, None, redis.clone()).await
                                 {
-                                    broadcast_to_lobby(
+                                    broadcast_to_lobby_and_spectators(
                                         &word_entry_msg,
                                         &players,
                                         lobby_id,
@@ -546,12 +549,12 @@ pub async fn handle_incoming_messages(
                                     if let Some(next_player) =
                                         players.iter().find(|p| p.id == next_player_id)
                                     {
-                                        // Broadcast turn change to all players
+                                        // Broadcast turn change to all players and spectators
                                         let next_turn_msg = LexiWarsServerMessage::Turn {
                                             current_turn: next_player.clone(),
                                             countdown: 15,
                                         };
-                                        broadcast_to_lobby(
+                                        broadcast_to_lobby_and_spectators(
                                             &next_turn_msg,
                                             &players,
                                             lobby_id,
@@ -610,10 +613,16 @@ fn start_turn_timer(
             // Check if the turn is still this player's
             match get_current_turn(lobby_id, redis.clone()).await {
                 Ok(Some(current_turn_id)) if current_turn_id == player_id => {
-                    // Send countdown to current player
+                    // Send countdown to current player and spectators
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
-                    broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
-                        .await;
+                    broadcast_to_player_and_spectators(
+                        &countdown_msg,
+                        player_id,
+                        lobby_id,
+                        &connections,
+                        &redis,
+                    )
+                    .await;
 
                     // Send turn info to all players
                     if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
@@ -624,16 +633,29 @@ fn start_turn_timer(
                                 current_turn: current_player.clone(),
                                 countdown: i,
                             };
-                            broadcast_to_lobby(&turn_msg, &players, lobby_id, &connections, &redis)
-                                .await;
+                            broadcast_to_lobby_and_spectators(
+                                &turn_msg,
+                                &players,
+                                lobby_id,
+                                &connections,
+                                &redis,
+                            )
+                            .await;
                         }
                     }
                 }
                 Ok(Some(_)) => {
                     // Turn has already changed, stop timer
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: 15 };
-                    broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
-                        .await;
+
+                    broadcast_to_player_and_spectators(
+                        &countdown_msg,
+                        player_id,
+                        lobby_id,
+                        &connections,
+                        &redis,
+                    )
+                    .await;
                     tracing::info!("Turn changed, stopping timer for player {}", player_id);
                     return;
                 }
@@ -740,7 +762,7 @@ fn start_turn_timer(
                                         current_turn: next_player.clone(),
                                         countdown: 15,
                                     };
-                                    broadcast_to_lobby(
+                                    broadcast_to_lobby_and_spectators(
                                         &next_turn_msg,
                                         &players,
                                         lobby_id,
@@ -931,7 +953,8 @@ async fn start_game(
                 current_turn: first_player.clone(),
                 countdown: 15,
             };
-            broadcast_to_lobby(&turn_msg, &players, lobby_id, connections, &redis).await;
+            broadcast_to_lobby_and_spectators(&turn_msg, &players, lobby_id, connections, &redis)
+                .await;
         }
 
         // Send game started message to all players
@@ -939,7 +962,14 @@ async fn start_game(
             time: 0,
             started: true,
         };
-        broadcast_to_lobby(&game_started_msg, &players, lobby_id, connections, &redis).await;
+        broadcast_to_lobby_and_spectators(
+            &game_started_msg,
+            &players,
+            lobby_id,
+            connections,
+            &redis,
+        )
+        .await;
 
         // Start turn timer for first player
         start_turn_timer(
@@ -1024,13 +1054,14 @@ async fn end_game(
 
     // Send game over messages
     let gameover_msg = LexiWarsServerMessage::GameOver;
-    broadcast_to_lobby(&gameover_msg, &players, lobby_id, connections, &redis).await;
+    broadcast_to_lobby_and_spectators(&gameover_msg, &players, lobby_id, connections, &redis).await;
 
     // Broadcast final standing
     let final_standing_msg = LexiWarsServerMessage::FinalStanding {
         standing: final_standings.iter().cloned().collect(),
     };
-    broadcast_to_lobby(&final_standing_msg, &players, lobby_id, connections, &redis).await;
+    broadcast_to_lobby_and_spectators(&final_standing_msg, &players, lobby_id, connections, &redis)
+        .await;
 
     if let Some(tg_msg_id) = lobby_info.tg_msg_id {
         tokio::spawn(async move {

@@ -625,3 +625,41 @@ pub async fn _update_lexi_wars_player(
 
     Ok(())
 }
+
+pub async fn add_spectator(
+    lobby_id: Uuid,
+    user_id: Uuid,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let spectators_key = RedisKey::lobby_spectators(KeyPart::Id(lobby_id));
+    let _: () = conn
+        .sadd(&spectators_key, user_id.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
+pub async fn remove_spectator(
+    lobby_id: Uuid,
+    user_id: Uuid,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let spectators_key = RedisKey::lobby_spectators(KeyPart::Id(lobby_id));
+    let _: () = conn
+        .srem(&spectators_key, user_id.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}

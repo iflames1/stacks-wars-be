@@ -834,3 +834,23 @@ async fn fetch_lobby_uuids(
     uuids.dedup();
     Ok(uuids)
 }
+
+pub async fn get_spectators(lobby_id: Uuid, redis: RedisClient) -> Result<Vec<Uuid>, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let spectators_key = RedisKey::lobby_spectators(KeyPart::Id(lobby_id));
+    let spectator_id_strings: Vec<String> = conn
+        .smembers(&spectators_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    let spectator_ids: Vec<Uuid> = spectator_id_strings
+        .into_iter()
+        .filter_map(|id_str| Uuid::parse_str(&id_str).ok())
+        .collect();
+
+    Ok(spectator_ids)
+}

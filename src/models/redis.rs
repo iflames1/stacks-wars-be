@@ -53,6 +53,10 @@ impl RedisKey {
         format!("lobbies:{lobby_id}:connected_players")
     }
 
+    pub fn lobby_spectators(lobby_id: KeyPart) -> String {
+        format!("lobbies:{lobby_id}:spectators")
+    }
+
     pub fn lobby_current_players(lobby_id: KeyPart) -> String {
         format!("lobbies:{lobby_id}:current_players")
     }
