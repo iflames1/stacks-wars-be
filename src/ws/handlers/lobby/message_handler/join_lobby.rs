@@ -1,7 +1,7 @@
 use crate::{
     db::lobby::{get::get_lobby_players, join_requests::get_player_join_request, patch},
     models::{
-        game::Player,
+        game::{Player, PlayerState},
         lobby::{JoinState, LobbyServerMessage},
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
@@ -24,12 +24,21 @@ pub async fn join_lobby(
     match get_player_join_request(lobby_id, player.id, redis.clone()).await {
         Ok(Some(join_request)) => {
             if join_request.state == JoinState::Allowed {
-                // Player is allowed to join
-                if let Err(e) = patch::join_lobby(lobby_id, player.id, tx_id, redis.clone()).await {
+                if let Err(e) = patch::join_lobby(
+                    lobby_id,
+                    player.id,
+                    tx_id,
+                    PlayerState::Ready,
+                    redis.clone(),
+                )
+                .await
+                {
                     tracing::error!("Failed to join lobby: {}", e);
                     send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
                         .await;
-                } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+                } else if let Ok(players) =
+                    get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+                {
                     tracing::info!("{} joined lobby {} successfully", player.id, lobby_id);
                     let msg = LobbyServerMessage::PlayerUpdated { players };
                     broadcast_to_lobby(

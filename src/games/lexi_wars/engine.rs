@@ -22,7 +22,7 @@ use crate::{
                 get_connected_players_ids, get_current_players_ids, get_lobby_info,
                 get_lobby_players,
             },
-            patch::update_lobby_state,
+            patch::{add_spectator, update_lobby_state},
             put::{create_current_players, remove_current_player},
         },
     },
@@ -35,7 +35,7 @@ use crate::{
     },
     http::bot::{self, BotLobbyWinnerPayload, RunnerUp},
     models::{
-        game::{LobbyInfo, LobbyState, Player},
+        game::{LobbyInfo, LobbyState, Player, PlayerState},
         lexi_wars::{LexiWarsClientMessage, LexiWarsServerMessage, PlayerStanding},
     },
     state::{ConnectionInfoMap, RedisClient},
@@ -687,6 +687,14 @@ fn start_turn_timer(
                         return;
                     }
 
+                    // Add eliminated player as spectator so they can continue watching
+                    if let Err(e) = add_spectator(lobby_id, player_id, redis.clone()).await {
+                        tracing::error!("Failed to add eliminated player as spectator: {}", e);
+                    }
+                    let spectator_msg = LexiWarsServerMessage::Spectator;
+                    broadcast_to_player(player_id, lobby_id, &spectator_msg, &connections, &redis)
+                        .await;
+
                     // Remove from current players (don't touch connected players)
                     if let Err(e) = remove_current_player(lobby_id, player_id, redis.clone()).await
                     {
@@ -817,13 +825,14 @@ pub fn start_auto_start_timer(
                     }
                 };
 
-            let lobby_players = match get_lobby_players(lobby_id, None, redis.clone()).await {
-                Ok(players) => players,
-                Err(e) => {
-                    tracing::error!("Failed to get lobby players: {}", e);
-                    return;
-                }
-            };
+            let lobby_players =
+                match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
+                    Ok(players) => players,
+                    Err(e) => {
+                        tracing::error!("Failed to get lobby players: {}", e);
+                        return;
+                    }
+                };
 
             let connected_count = connected_player_ids.len();
             let total_players = lobby_players.len();

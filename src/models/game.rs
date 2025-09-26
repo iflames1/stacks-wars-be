@@ -217,10 +217,10 @@ impl Player {
     }
 
     // Helper to create a new player with minimal data
-    pub fn new(user_id: Uuid, tx_id: Option<String>) -> Self {
+    pub fn new(user_id: Uuid, tx_id: Option<String>, state: PlayerState) -> Self {
         Player {
             id: user_id,
-            state: PlayerState::Ready,
+            state,
             rank: None,
             used_words: None,
             tx_id,

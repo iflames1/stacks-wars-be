@@ -25,7 +25,9 @@ pub async fn update_player_state(
     {
         tracing::error!("Failed to update state: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+    } else if let Ok(players) =
+        get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    {
         tracing::info!(
             "Player {} updated state to {:?} in lobby {}",
             player.id,

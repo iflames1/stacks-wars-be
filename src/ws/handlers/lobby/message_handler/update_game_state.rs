@@ -212,7 +212,9 @@ async fn start_countdown(
                     }
                 };
 
-            let players = match get_lobby_players(lobby_id, None, redis.clone()).await {
+            let players = match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone())
+                .await
+            {
                 Ok(players) => players,
                 Err(e) => {
                     tracing::error!("❌ Failed to get lobby players: {}", e);

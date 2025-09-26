@@ -98,13 +98,14 @@ async fn handle_chat_socket(
     .await;
 
     // Check if player is in the lobby and send permission status
-    let is_lobby_member = match get_lobby_players(lobby_id, None, redis.clone()).await {
-        Ok(players) => players.iter().any(|p| p.id == player.id),
-        Err(e) => {
-            tracing::error!("Failed to check lobby membership: {}", e);
-            false
-        }
-    };
+    let is_lobby_member =
+        match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
+            Ok(players) => players.iter().any(|p| p.id == player.id),
+            Err(e) => {
+                tracing::error!("Failed to check lobby membership: {}", e);
+                false
+            }
+        };
 
     let permit_msg = ChatServerMessage::PermitChat {
         allowed: is_lobby_member,

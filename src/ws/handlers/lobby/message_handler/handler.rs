@@ -12,7 +12,7 @@ use crate::{
     models::{
         User,
         chat::ChatServerMessage,
-        game::Player,
+        game::{Player, PlayerState},
         lobby::{JoinState, LobbyClientMessage, LobbyServerMessage, PendingJoin},
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
@@ -106,7 +106,9 @@ async fn notify_chat_about_lobby_changes(
     redis: &RedisClient,
 ) {
     // Get current lobby players
-    if let Ok(lobby_players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+    if let Ok(lobby_players) =
+        get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    {
         let lobby_player_ids: std::collections::HashSet<Uuid> =
             lobby_players.iter().map(|p| p.id).collect();
 

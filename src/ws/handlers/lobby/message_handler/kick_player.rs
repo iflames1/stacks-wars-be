@@ -8,7 +8,7 @@ use crate::{
         user::get::get_user_by_id,
     },
     models::{
-        game::{LobbyState, Player},
+        game::{LobbyState, Player, PlayerState},
         lobby::LobbyServerMessage,
     },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
@@ -67,7 +67,9 @@ pub async fn kick_player(
     if let Err(e) = leave_lobby(lobby_id, player_id, redis.clone(), bot).await {
         tracing::error!("Failed to kick player: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+    } else if let Ok(players) =
+        get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    {
         if let Err(e) = remove_join_request(lobby_id, player_id, redis.clone()).await {
             tracing::warn!(
                 "Failed to remove join request for kicked player {}: {}",

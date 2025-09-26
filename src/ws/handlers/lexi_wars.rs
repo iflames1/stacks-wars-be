@@ -68,7 +68,9 @@ pub async fn lexi_wars_handler(
                     .await;
 
                 // Get lobby data for final standing
-                if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+                if let Ok(players) =
+                    get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+                {
                     // Create final standing from players (they should have ranks)
                     let mut players_with_ranks: Vec<_> =
                         players.into_iter().filter(|p| p.rank.is_some()).collect();
@@ -164,15 +166,13 @@ pub async fn lexi_wars_handler(
         }
     }
 
-    let players = get_lobby_players(lobby_id, None, redis.clone())
+    let players = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
     let players_clone = players.clone();
 
-    let matched_player = players
-        .into_iter()
-        .find(|p| p.id == player_id && p.state == PlayerState::Ready);
+    let matched_player = players.into_iter().find(|p| p.id == player_id);
 
     let is_game_started = get_game_started(lobby_id, redis.clone())
         .await
@@ -326,16 +326,12 @@ async fn handle_lexi_wars_socket(
         if is_reconnecting_to_started_game {
             // Send current turn if available
             if let Ok(Some(current_turn_id)) = get_current_turn(lobby_id, redis.clone()).await {
-                if let Ok(game_players) = get_lobby_players(lobby_id, None, redis.clone()).await {
-                    if let Some(current_player) =
-                        game_players.iter().find(|gp| gp.id == current_turn_id)
-                    {
-                        let turn_msg = LexiWarsServerMessage::Turn {
-                            current_turn: current_player.clone(),
-                            countdown: 15, // Default countdown for reconnection
-                        };
-                        broadcast_to_player(p.id, lobby_id, &turn_msg, &connections, &redis).await;
-                    }
+                if let Some(current_player) = players.iter().find(|gp| gp.id == current_turn_id) {
+                    let turn_msg = LexiWarsServerMessage::Turn {
+                        current_turn: current_player.clone(),
+                        countdown: 15, // Default countdown for reconnection
+                    };
+                    broadcast_to_player(p.id, lobby_id, &turn_msg, &connections, &redis).await;
                 }
             }
 
@@ -415,23 +411,13 @@ async fn handle_lexi_wars_socket(
         if is_reconnecting_to_started_game {
             // Send current turn info
             if let Ok(Some(current_turn_id)) = get_current_turn(lobby_id, redis.clone()).await {
-                if let Ok(game_players) = get_lobby_players(lobby_id, None, redis.clone()).await {
-                    if let Some(current_player) =
-                        game_players.iter().find(|gp| gp.id == current_turn_id)
-                    {
-                        let turn_msg = LexiWarsServerMessage::Turn {
-                            current_turn: current_player.clone(),
-                            countdown: 15, // Default countdown for spectator
-                        };
-                        broadcast_to_player(
-                            spectator_id,
-                            lobby_id,
-                            &turn_msg,
-                            &connections,
-                            &redis,
-                        )
+                if let Some(current_player) = players.iter().find(|gp| gp.id == current_turn_id) {
+                    let turn_msg = LexiWarsServerMessage::Turn {
+                        current_turn: current_player.clone(),
+                        countdown: 15, // Default countdown for spectator
+                    };
+                    broadcast_to_player(spectator_id, lobby_id, &turn_msg, &connections, &redis)
                         .await;
-                    }
                 }
             }
             // Spectators can see rules too

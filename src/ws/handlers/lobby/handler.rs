@@ -16,6 +16,7 @@ use crate::{
             countdown::get_lobby_countdown,
             get::{get_lobby_info, get_lobby_players},
             join_requests::get_player_join_request,
+            patch::{join_lobby, leave_lobby},
         },
         user::get::get_user_by_id,
     },
@@ -45,7 +46,7 @@ pub async fn lobby_ws_handler(
     let chat_connections = state.chat_connections.clone();
     let bot = state.bot.clone();
 
-    let players = get_lobby_players(lobby_id, None, redis.clone())
+    let players = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -66,6 +67,20 @@ pub async fn lobby_ws_handler(
     let user = get_user_by_id(player_id, redis.clone())
         .await
         .map_err(|e| e.to_response())?;
+
+    // Join lobby as idle player (no tx_id needed for idle connection)
+    if let Err(e) = join_lobby(
+        lobby_id,
+        player_id,
+        None,
+        PlayerState::NotReady,
+        redis.clone(),
+    )
+    .await
+    {
+        tracing::error!("Failed to add idle player to lobby: {}", e);
+        return Err(e.to_response());
+    }
 
     let idle_player = Player {
         id: user.id,
@@ -302,7 +317,8 @@ async fn handle_lobby_socket(
     store_connection_and_send_queued_messages(player.id, lobby_id, sender, &connections, &redis)
         .await;
 
-    if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+    if let Ok(players) = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(
             lobby_id,
@@ -321,13 +337,23 @@ async fn handle_lobby_socket(
         &connections,
         &chat_connections,
         redis.clone(),
-        bot,
+        bot.clone(),
     )
     .await;
 
     remove_connection(player.id, &connections).await;
 
-    if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+    // Remove idle players from lobby when they disconnect
+    if player.state == PlayerState::NotReady {
+        if let Err(e) = leave_lobby(lobby_id, player.id, redis.clone(), bot.clone()).await {
+            tracing::error!("Failed to remove idle player from lobby: {}", e);
+        } else {
+            tracing::info!("Removed idle player {} from lobby {}", player.id, lobby_id);
+        }
+    }
+
+    if let Ok(players) = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    {
         let msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(lobby_id, &msg, &connections, Some(&chat_connections), redis)
             .await;

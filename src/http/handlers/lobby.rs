@@ -230,12 +230,18 @@ pub async fn join_lobby_handler(
         AppError::Unauthorized("Invalid user ID in token".into()).to_response()
     })?;
 
-    join_lobby(lobby_id, user_id, payload.tx_id, state.redis.clone())
-        .await
-        .map_err(|e| {
-            tracing::error!("Error joining lobby {lobby_id}: {}", e);
-            e.to_response()
-        })?;
+    join_lobby(
+        lobby_id,
+        user_id,
+        payload.tx_id,
+        PlayerState::Ready,
+        state.redis.clone(),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Error joining lobby {lobby_id}: {}", e);
+        e.to_response()
+    })?;
 
     tracing::info!("Success joining lobby {lobby_id}");
     Ok(Json("success"))

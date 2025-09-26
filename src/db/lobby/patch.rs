@@ -20,6 +20,7 @@ pub async fn join_lobby(
     lobby_id: Uuid,
     user_id: Uuid,
     tx_id: Option<String>,
+    player_state: PlayerState,
     redis: RedisClient,
 ) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -43,7 +44,17 @@ pub async fn join_lobby(
         .await
         .map_err(AppError::RedisCommandError)?
     {
-        return Err(AppError::BadRequest("User already in lobby".into()));
+        // Check if existing player is already Ready
+        let player_map: HashMap<String, String> = conn
+            .hgetall(&player_key)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        if let Ok(existing_player) = Player::from_redis_hash(&player_map) {
+            if existing_player.state == PlayerState::Ready {
+                return Err(AppError::BadRequest("User already in lobby".into()));
+            }
+        }
     }
 
     // Only validate transaction and update pool if entry amount > 0 (not sponsored)
@@ -67,8 +78,7 @@ pub async fn join_lobby(
         // For sponsored lobbies (entry_amount = 0), no transaction validation or pool update needed
     }
 
-    // Create player with minimal data (just ID and tx_id)
-    let new_player = Player::new(user_id, tx_id);
+    let new_player = Player::new(user_id, tx_id, player_state.clone());
     let player_hash = new_player.to_redis_hash();
     let player_fields: Vec<(&str, &str)> = player_hash
         .iter()
@@ -80,10 +90,12 @@ pub async fn join_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let _: () = conn
-        .hincr(&lobby_key, "participants", 1)
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    if player_state == PlayerState::Ready {
+        let _: () = conn
+            .hincr(&lobby_key, "participants", 1)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
 
     Ok(())
 }
