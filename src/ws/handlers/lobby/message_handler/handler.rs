@@ -318,7 +318,7 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::UpdateLobbyState { new_state } => {
-                                update_game_state(new_state, lobby_id, player, connections, &redis)
+                                update_game_state(new_state, lobby_id, player, connections, &redis, &bot)
                                     .await
                             }
                         }

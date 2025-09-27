@@ -39,18 +39,22 @@ pub async fn join_lobby(
     let (lobby, _creator_id, _game_id) = LobbyInfo::from_redis_hash_partial(&lobby_map)?;
 
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
+    let mut existing_player_state: Option<PlayerState> = None;
+
     if conn
         .exists(&player_key)
         .await
         .map_err(AppError::RedisCommandError)?
     {
-        // Check if existing player is already Ready
+        // Check existing player state
         let player_map: HashMap<String, String> = conn
             .hgetall(&player_key)
             .await
             .map_err(AppError::RedisCommandError)?;
 
         if let Ok(existing_player) = Player::from_redis_hash(&player_map) {
+            existing_player_state = Some(existing_player.state.clone());
+
             if existing_player.state == PlayerState::Ready {
                 return Err(AppError::BadRequest("User already in lobby".into()));
             }
@@ -90,7 +94,11 @@ pub async fn join_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    if player_state == PlayerState::Ready {
+    let should_increment_participants = player_state == PlayerState::Ready
+        && (existing_player_state.is_none()
+            || existing_player_state == Some(PlayerState::NotReady));
+
+    if should_increment_participants {
         let _: () = conn
             .hincr(&lobby_key, "participants", 1)
             .await
@@ -201,15 +209,29 @@ pub async fn leave_lobby(
         return Err(AppError::BadRequest("User not in lobby".into()));
     }
 
+    // Get player state before deletion to check if we need to decrement participant count
+    let player_map: HashMap<String, String> = conn
+        .hgetall(&player_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    let was_ready = if let Ok(player) = Player::from_redis_hash(&player_map) {
+        player.state == PlayerState::Ready
+    } else {
+        false
+    };
+
     let _: () = conn
         .del(&player_key)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let _: () = conn
-        .hincr(&lobby_key, "participants", -1)
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    if was_ready {
+        let _: () = conn
+            .hincr(&lobby_key, "participants", -1)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
 
     // Only update pool amount for paid lobbies (entry_amount > 0) where player actually paid
     if let Some(_addr) = &info.contract_address {

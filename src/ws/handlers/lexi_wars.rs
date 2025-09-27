@@ -263,7 +263,7 @@ pub async fn lexi_wars_handler(
                 )
             }))
         }
-        // Case 3: Not a lobby member and game hasn't started - add as spectator
+        // Case 3: Not a lobby member and game hasn't started - add as spectator. TODO we should probably disconnect
         (None, false) => {
             tracing::info!(
                 "User {} trying to join lobby {} but is not a member and game hasn't started",
@@ -300,7 +300,7 @@ async fn handle_lexi_wars_socket(
     connections: ConnectionInfoMap,
     lobby_info: LobbyInfo,
     redis: RedisClient,
-    is_reconnecting_to_started_game: bool,
+    game_started: bool,
     bot: teloxide::Bot,
 ) {
     let (sender, receiver) = socket.split();
@@ -316,6 +316,7 @@ async fn handle_lexi_wars_socket(
             lobby_info.clone(),
             players.clone(),
             connected_player_ids.clone(),
+            game_started,
             &connections,
             &redis,
             &bot,
@@ -323,7 +324,7 @@ async fn handle_lexi_wars_socket(
         .await;
 
         // Handle player reconnection state
-        if is_reconnecting_to_started_game {
+        if game_started {
             // Send current turn if available
             if let Ok(Some(current_turn_id)) = get_current_turn(lobby_id, redis.clone()).await {
                 if let Some(current_player) = players.iter().find(|gp| gp.id == current_turn_id) {
@@ -408,7 +409,7 @@ async fn handle_lexi_wars_socket(
         broadcast_to_player(spectator_id, lobby_id, &spectator_msg, &connections, &redis).await;
 
         // Send current game state to spectator
-        if is_reconnecting_to_started_game {
+        if game_started {
             // Send current turn info
             if let Ok(Some(current_turn_id)) = get_current_turn(lobby_id, redis.clone()).await {
                 if let Some(current_player) = players.iter().find(|gp| gp.id == current_turn_id) {
@@ -490,6 +491,7 @@ async fn setup_player_and_lobby(
     lobby_info: LobbyInfo,
     players: Vec<Player>,
     connected_player_ids: Vec<Uuid>,
+    game_started: bool,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
     telegram_bot: &teloxide::Bot,
@@ -497,10 +499,6 @@ async fn setup_player_and_lobby(
     let lobby_id = lobby_info.id;
 
     // Initialize game state if not exists
-    let game_started = get_game_started(lobby_id, redis.clone())
-        .await
-        .unwrap_or(false);
-
     if !game_started {
         // Initialize rule context if not set
         if get_rule_context(lobby_id, redis.clone())

@@ -10,9 +10,8 @@ use crate::{
             player_words::add_player_used_word,
             state::{
                 add_eliminated_player, clear_lobby_game_state, get_current_turn,
-                get_eliminated_players, get_game_started, get_rule_context, get_rule_index,
-                set_current_rule, set_current_turn, set_game_started, set_rule_context,
-                set_rule_index,
+                get_eliminated_players, get_rule_context, get_rule_index, set_current_rule,
+                set_current_turn, set_game_started, set_rule_context, set_rule_index,
             },
             words::{add_used_word, is_valid_word, is_word_used_in_lobby},
         },
@@ -270,24 +269,6 @@ pub async fn handle_incoming_messages(
                             .await;
                         }
                         LexiWarsClientMessage::WordEntry { word } => {
-                            // Check if game has started before processing word entries
-                            let game_started = match get_game_started(lobby_id, redis.clone()).await
-                            {
-                                Ok(started) => started,
-                                Err(e) => {
-                                    tracing::error!("Failed to check game started: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            if !game_started {
-                                tracing::info!(
-                                    "Game not started yet, ignoring word entry from {}",
-                                    player.id
-                                );
-                                continue;
-                            }
-
                             let cleaned_word = word.trim().to_lowercase();
 
                             // Check if it's the player's turn

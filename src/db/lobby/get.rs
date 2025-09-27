@@ -469,6 +469,45 @@ pub async fn hydrate_players(players: Vec<Player>, redis: RedisClient) -> Vec<Pl
     hydrated
 }
 
+pub async fn get_lobby_player(
+    lobby_id: Uuid,
+    user_id: Uuid,
+    redis: RedisClient,
+) -> Result<Player, AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
+
+    if !conn
+        .exists(&player_key)
+        .await
+        .map_err(AppError::RedisCommandError)?
+    {
+        return Err(AppError::NotFound(format!(
+            "Player {} not found in lobby {}",
+            user_id, lobby_id
+        )));
+    }
+
+    let player_map: HashMap<String, String> = conn
+        .hgetall(&player_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    if player_map.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "Player {} not found in lobby {}",
+            user_id, lobby_id
+        )));
+    }
+
+    let player = Player::from_redis_hash(&player_map)?;
+    Ok(player)
+}
+
 pub async fn get_lobby_players(
     lobby_id: Uuid,
     players_filter: Option<PlayerState>,

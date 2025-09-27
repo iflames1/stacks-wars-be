@@ -2,7 +2,7 @@ use crate::{
     db::lobby::{
         countdown::{clear_lobby_countdown, set_lobby_countdown},
         get::{get_lobby_info, get_lobby_players},
-        patch::update_lobby_state,
+        patch::{leave_lobby, update_lobby_state},
     },
     models::{
         game::{LobbyState, Player, PlayerState},
@@ -24,6 +24,7 @@ pub async fn update_game_state(
     player: &Player,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
+    bot: &teloxide::Bot,
 ) {
     let lobby_info = match get_lobby_info(lobby_id, redis.clone()).await {
         Ok(info) => info,
@@ -78,8 +79,9 @@ pub async fn update_game_state(
             let redis_clone = redis.clone();
             let conns_clone = connections.clone();
             let player_clone = player.clone();
+            let bot_clone = bot.clone();
             tokio::spawn(async move {
-                start_countdown(lobby_id, player_clone, redis_clone, conns_clone).await;
+                start_countdown(lobby_id, player_clone, redis_clone, conns_clone, bot_clone).await;
             });
 
             //if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
@@ -105,7 +107,13 @@ pub async fn update_game_state(
     }
 }
 
-async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionInfoMap) {
+async fn close_lobby_connections(
+    lobby_id: Uuid,
+    player_ids: &[Uuid],
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+    bot: &teloxide::Bot,
+) {
     let connections_guard = connections.lock().await;
 
     let mut target_connections = Vec::new();
@@ -116,6 +124,15 @@ async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionIn
     }
 
     drop(connections_guard);
+
+    let idle_players =
+        match get_lobby_players(lobby_id, Some(PlayerState::NotReady), redis.clone()).await {
+            Ok(players) => players,
+            Err(e) => {
+                tracing::error!("Failed to get idle players for cleanup: {}", e);
+                vec![]
+            }
+        };
 
     for (player_id, connection_info) in target_connections {
         {
@@ -133,6 +150,24 @@ async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionIn
             let _ = sender.send(Message::Close(Some(close_frame))).await;
         }
     }
+
+    // Remove all idle players from the lobby when game starts
+    for idle_player in idle_players {
+        if let Err(e) = leave_lobby(lobby_id, idle_player.id, redis.clone(), bot.clone()).await {
+            tracing::error!(
+                "Failed to remove idle player {} from lobby {}: {}",
+                idle_player.id,
+                lobby_id,
+                e
+            );
+        } else {
+            tracing::info!(
+                "Removed idle player {} from lobby {} (game starting)",
+                idle_player.id,
+                lobby_id
+            );
+        }
+    }
 }
 
 async fn start_countdown(
@@ -140,6 +175,7 @@ async fn start_countdown(
     player: Player,
     redis: RedisClient,
     connections: ConnectionInfoMap,
+    bot: teloxide::Bot,
 ) {
     // Initialize countdown state in Redis
     if let Err(e) = set_lobby_countdown(lobby_id, 15, redis.clone()).await {
@@ -258,7 +294,8 @@ async fn start_countdown(
                 }
 
                 // Close WebSocket connections with proper close frame
-                close_lobby_connections(&all_player_ids, &connections).await;
+                close_lobby_connections(lobby_id, &all_player_ids, &connections, &redis, &bot)
+                    .await;
             }
         }
     }

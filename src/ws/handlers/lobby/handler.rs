@@ -14,7 +14,7 @@ use crate::{
         game::state::get_game_started,
         lobby::{
             countdown::get_lobby_countdown,
-            get::{get_lobby_info, get_lobby_players},
+            get::{get_lobby_info, get_lobby_player, get_lobby_players},
             join_requests::get_player_join_request,
             patch::{join_lobby, leave_lobby},
         },
@@ -343,12 +343,24 @@ async fn handle_lobby_socket(
 
     remove_connection(player.id, &connections).await;
 
-    // Remove idle players from lobby when they disconnect
-    if player.state == PlayerState::NotReady {
-        if let Err(e) = leave_lobby(lobby_id, player.id, redis.clone(), bot.clone()).await {
-            tracing::error!("Failed to remove idle player from lobby: {}", e);
-        } else {
-            tracing::info!("Removed idle player {} from lobby {}", player.id, lobby_id);
+    match get_lobby_player(lobby_id, player.id, redis.clone()).await {
+        Ok(current_player) => {
+            // Only remove player from lobby if they are still NotReady (idle)
+            if current_player.state == PlayerState::NotReady {
+                if let Err(e) = leave_lobby(lobby_id, player.id, redis.clone(), bot.clone()).await {
+                    tracing::error!("Failed to remove idle player from lobby: {}", e);
+                } else {
+                    tracing::info!("Removed idle player {} from lobby {}", player.id, lobby_id);
+                }
+            } else {
+                tracing::info!(
+                    "Player {} has changed to Ready state, not removing from lobby on disconnect",
+                    player.id
+                );
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Player {} no longer in lobby: {}", player.id, e);
         }
     }
 
