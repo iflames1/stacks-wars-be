@@ -498,10 +498,10 @@ pub async fn handle_incoming_messages(
                                         rule: next_rule.description.clone(),
                                     };
 
-                                    broadcast_to_player(
+                                    broadcast_to_player_and_spectators(
+                                        &rule_msg,
                                         next_player_id,
                                         lobby_id,
-                                        &rule_msg,
                                         connections,
                                         &redis,
                                     )
@@ -596,14 +596,8 @@ fn start_turn_timer(
                 Ok(Some(current_turn_id)) if current_turn_id == player_id => {
                     // Send countdown to current player and spectators
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
-                    broadcast_to_player_and_spectators(
-                        &countdown_msg,
-                        player_id,
-                        lobby_id,
-                        &connections,
-                        &redis,
-                    )
-                    .await;
+                    broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
+                        .await;
 
                     // Send turn info to all players
                     if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
@@ -629,14 +623,8 @@ fn start_turn_timer(
                     // Turn has already changed, stop timer
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: 15 };
 
-                    broadcast_to_player_and_spectators(
-                        &countdown_msg,
-                        player_id,
-                        lobby_id,
-                        &connections,
-                        &redis,
-                    )
-                    .await;
+                    broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
+                        .await;
                     tracing::info!("Turn changed, stopping timer for player {}", player_id);
                     return;
                 }
@@ -932,8 +920,14 @@ async fn start_game(
                 let rule_msg = LexiWarsServerMessage::Rule {
                     rule: first_rule.description,
                 };
-                broadcast_to_player(first_player_id, lobby_id, &rule_msg, connections, &redis)
-                    .await;
+                broadcast_to_player_and_spectators(
+                    &rule_msg,
+                    first_player_id,
+                    lobby_id,
+                    connections,
+                    &redis,
+                )
+                .await;
             }
         }
 
