@@ -311,6 +311,12 @@ async fn handle_lexi_wars_socket(
         store_connection_and_send_queued_messages(p.id, lobby_id, sender, &connections, &redis)
             .await;
 
+        let start_msg = LexiWarsServerMessage::Start {
+            time: if game_started { 0 } else { 15 },
+            started: game_started,
+        };
+        broadcast_to_player(p.id, lobby_id, &start_msg, &connections, &redis).await;
+
         setup_player_and_lobby(
             p,
             lobby_info.clone(),
@@ -403,6 +409,12 @@ async fn handle_lexi_wars_socket(
             &redis,
         )
         .await;
+
+        let start_msg = LexiWarsServerMessage::Start {
+            time: if game_started { 0 } else { 15 },
+            started: game_started,
+        };
+        broadcast_to_player(spectator_id, lobby_id, &start_msg, &connections, &redis).await;
 
         // Send spectator message to indicate their status
         let spectator_msg = LexiWarsServerMessage::Spectator;
