@@ -20,6 +20,7 @@ pub async fn join_lobby(
     lobby_id: Uuid,
     user_id: Uuid,
     tx_id: Option<String>,
+    player_state: PlayerState,
     redis: RedisClient,
 ) -> Result<(), AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
@@ -38,12 +39,26 @@ pub async fn join_lobby(
     let (lobby, _creator_id, _game_id) = LobbyInfo::from_redis_hash_partial(&lobby_map)?;
 
     let player_key = RedisKey::lobby_player(KeyPart::Id(lobby_id), KeyPart::Id(user_id));
+    let mut existing_player_state: Option<PlayerState> = None;
+
     if conn
         .exists(&player_key)
         .await
         .map_err(AppError::RedisCommandError)?
     {
-        return Err(AppError::BadRequest("User already in lobby".into()));
+        // Check existing player state
+        let player_map: HashMap<String, String> = conn
+            .hgetall(&player_key)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+
+        if let Ok(existing_player) = Player::from_redis_hash(&player_map) {
+            existing_player_state = Some(existing_player.state.clone());
+
+            if existing_player.state == PlayerState::Joined {
+                return Err(AppError::BadRequest("User already in lobby".into()));
+            }
+        }
     }
 
     // Only validate transaction and update pool if entry amount > 0 (not sponsored)
@@ -67,8 +82,7 @@ pub async fn join_lobby(
         // For sponsored lobbies (entry_amount = 0), no transaction validation or pool update needed
     }
 
-    // Create player with minimal data (just ID and tx_id)
-    let new_player = Player::new(user_id, tx_id);
+    let new_player = Player::new(user_id, tx_id, player_state.clone());
     let player_hash = new_player.to_redis_hash();
     let player_fields: Vec<(&str, &str)> = player_hash
         .iter()
@@ -80,10 +94,16 @@ pub async fn join_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let _: () = conn
-        .hincr(&lobby_key, "participants", 1)
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    let should_increment_participants = player_state == PlayerState::Joined
+        && (existing_player_state.is_none()
+            || existing_player_state == Some(PlayerState::NotJoined));
+
+    if should_increment_participants {
+        let _: () = conn
+            .hincr(&lobby_key, "participants", 1)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
 
     Ok(())
 }
@@ -189,15 +209,29 @@ pub async fn leave_lobby(
         return Err(AppError::BadRequest("User not in lobby".into()));
     }
 
+    // Get player state before deletion to check if we need to decrement participant count
+    let player_map: HashMap<String, String> = conn
+        .hgetall(&player_key)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    let was_ready = if let Ok(player) = Player::from_redis_hash(&player_map) {
+        player.state == PlayerState::Joined
+    } else {
+        false
+    };
+
     let _: () = conn
         .del(&player_key)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let _: () = conn
-        .hincr(&lobby_key, "participants", -1)
-        .await
-        .map_err(AppError::RedisCommandError)?;
+    if was_ready {
+        let _: () = conn
+            .hincr(&lobby_key, "participants", -1)
+            .await
+            .map_err(AppError::RedisCommandError)?;
+    }
 
     // Only update pool amount for paid lobbies (entry_amount > 0) where player actually paid
     if let Some(_addr) = &info.contract_address {
@@ -620,6 +654,44 @@ pub async fn _update_lexi_wars_player(
         .collect();
     let _: () = conn
         .hset_multiple(&player_key, &hset_args)
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
+pub async fn add_spectator(
+    lobby_id: Uuid,
+    user_id: Uuid,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let spectators_key = RedisKey::lobby_spectators(KeyPart::Id(lobby_id));
+    let _: () = conn
+        .sadd(&spectators_key, user_id.to_string())
+        .await
+        .map_err(AppError::RedisCommandError)?;
+
+    Ok(())
+}
+
+pub async fn remove_spectator(
+    lobby_id: Uuid,
+    user_id: Uuid,
+    redis: RedisClient,
+) -> Result<(), AppError> {
+    let mut conn = redis.get().await.map_err(|e| match e {
+        bb8::RunError::User(err) => AppError::RedisCommandError(err),
+        bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
+    })?;
+
+    let spectators_key = RedisKey::lobby_spectators(KeyPart::Id(lobby_id));
+    let _: () = conn
+        .srem(&spectators_key, user_id.to_string())
         .await
         .map_err(AppError::RedisCommandError)?;
 

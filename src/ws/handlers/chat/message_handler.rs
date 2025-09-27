@@ -7,7 +7,7 @@ use crate::{
     db::{chat::post::store_chat_message, lobby::get::get_lobby_players},
     models::{
         chat::{ChatClientMessage, ChatMessage, ChatServerMessage},
-        game::Player,
+        game::{Player, PlayerState},
     },
     state::{ChatConnectionInfoMap, RedisClient},
     ws::handlers::chat::utils::{queue_chat_message_for_player, send_chat_message_to_player},
@@ -38,24 +38,29 @@ pub async fn handle_incoming_chat_messages(
                                     .await;
                             }
                             ChatClientMessage::Chat { text } => {
-                                let lobby_players =
-                                    match get_lobby_players(lobby_id, None, redis.clone()).await {
-                                        Ok(players) => players,
-                                        Err(e) => {
-                                            tracing::error!("Failed to get lobby players: {}", e);
-                                            let error_msg = ChatServerMessage::Error {
-                                                message: "Failed to verify lobby membership"
-                                                    .to_string(),
-                                            };
-                                            send_chat_message_to_player(
-                                                player.id,
-                                                &error_msg,
-                                                chat_connections,
-                                            )
-                                            .await;
-                                            continue;
-                                        }
-                                    };
+                                let lobby_players = match get_lobby_players(
+                                    lobby_id,
+                                    Some(PlayerState::Joined),
+                                    redis.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(players) => players,
+                                    Err(e) => {
+                                        tracing::error!("Failed to get lobby players: {}", e);
+                                        let error_msg = ChatServerMessage::Error {
+                                            message: "Failed to verify lobby membership"
+                                                .to_string(),
+                                        };
+                                        send_chat_message_to_player(
+                                            player.id,
+                                            &error_msg,
+                                            chat_connections,
+                                        )
+                                        .await;
+                                        continue;
+                                    }
+                                };
 
                                 let is_lobby_member =
                                     lobby_players.iter().any(|p| p.id == player.id);

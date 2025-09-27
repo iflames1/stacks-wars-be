@@ -10,9 +10,8 @@ use crate::{
             player_words::add_player_used_word,
             state::{
                 add_eliminated_player, clear_lobby_game_state, get_current_turn,
-                get_eliminated_players, get_game_started, get_rule_context, get_rule_index,
-                set_current_rule, set_current_turn, set_game_started, set_rule_context,
-                set_rule_index,
+                get_eliminated_players, get_rule_context, get_rule_index, set_current_rule,
+                set_current_turn, set_game_started, set_rule_context, set_rule_index,
             },
             words::{add_used_word, is_valid_word, is_word_used_in_lobby},
         },
@@ -22,17 +21,20 @@ use crate::{
                 get_connected_players_ids, get_current_players_ids, get_lobby_info,
                 get_lobby_players,
             },
-            patch::update_lobby_state,
+            patch::{add_spectator, update_lobby_state},
             put::{create_current_players, remove_current_player},
         },
     },
     games::lexi_wars::{
         rules::{RuleContext, get_rule_by_index, get_rules},
-        utils::{broadcast_to_lobby, broadcast_to_player, generate_random_letter},
+        utils::{
+            broadcast_to_lobby_and_spectators, broadcast_to_player,
+            broadcast_to_player_and_spectators, generate_random_letter,
+        },
     },
     http::bot::{self, BotLobbyWinnerPayload, RunnerUp},
     models::{
-        game::{LobbyInfo, LobbyState, Player},
+        game::{LobbyInfo, LobbyState, Player, PlayerState},
         lexi_wars::{LexiWarsClientMessage, LexiWarsServerMessage, PlayerStanding},
     },
     state::{ConnectionInfoMap, RedisClient},
@@ -267,24 +269,6 @@ pub async fn handle_incoming_messages(
                             .await;
                         }
                         LexiWarsClientMessage::WordEntry { word } => {
-                            // Check if game has started before processing word entries
-                            let game_started = match get_game_started(lobby_id, redis.clone()).await
-                            {
-                                Ok(started) => started,
-                                Err(e) => {
-                                    tracing::error!("Failed to check game started: {}", e);
-                                    continue;
-                                }
-                            };
-
-                            if !game_started {
-                                tracing::info!(
-                                    "Game not started yet, ignoring word entry from {}",
-                                    player.id
-                                );
-                                continue;
-                            }
-
                             let cleaned_word = word.trim().to_lowercase();
 
                             // Check if it's the player's turn
@@ -509,24 +493,19 @@ pub async fn handle_incoming_messages(
                                         tracing::error!("Failed to set next current rule: {}", e);
                                     }
 
-                                    // Broadcast rule to all players
+                                    // Send rule to the next player (current turn)
                                     let rule_msg = LexiWarsServerMessage::Rule {
                                         rule: next_rule.description.clone(),
                                     };
 
-                                    // Get all lobby players for broadcasting
-                                    if let Ok(players) =
-                                        get_lobby_players(lobby_id, None, redis.clone()).await
-                                    {
-                                        broadcast_to_lobby(
-                                            &rule_msg,
-                                            &players,
-                                            lobby_id,
-                                            connections,
-                                            &redis,
-                                        )
-                                        .await;
-                                    }
+                                    broadcast_to_player_and_spectators(
+                                        &rule_msg,
+                                        next_player_id,
+                                        lobby_id,
+                                        connections,
+                                        &redis,
+                                    )
+                                    .await;
                                 }
 
                                 // Broadcast word entry to all players
@@ -538,7 +517,7 @@ pub async fn handle_incoming_messages(
                                 if let Ok(players) =
                                     get_lobby_players(lobby_id, None, redis.clone()).await
                                 {
-                                    broadcast_to_lobby(
+                                    broadcast_to_lobby_and_spectators(
                                         &word_entry_msg,
                                         &players,
                                         lobby_id,
@@ -551,12 +530,12 @@ pub async fn handle_incoming_messages(
                                     if let Some(next_player) =
                                         players.iter().find(|p| p.id == next_player_id)
                                     {
-                                        // Broadcast turn change to all players
+                                        // Broadcast turn change to all players and spectators
                                         let next_turn_msg = LexiWarsServerMessage::Turn {
                                             current_turn: next_player.clone(),
                                             countdown: 15,
                                         };
-                                        broadcast_to_lobby(
+                                        broadcast_to_lobby_and_spectators(
                                             &next_turn_msg,
                                             &players,
                                             lobby_id,
@@ -615,7 +594,7 @@ fn start_turn_timer(
             // Check if the turn is still this player's
             match get_current_turn(lobby_id, redis.clone()).await {
                 Ok(Some(current_turn_id)) if current_turn_id == player_id => {
-                    // Send countdown to current player
+                    // Send countdown to current player and spectators
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: i };
                     broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
                         .await;
@@ -629,14 +608,21 @@ fn start_turn_timer(
                                 current_turn: current_player.clone(),
                                 countdown: i,
                             };
-                            broadcast_to_lobby(&turn_msg, &players, lobby_id, &connections, &redis)
-                                .await;
+                            broadcast_to_lobby_and_spectators(
+                                &turn_msg,
+                                &players,
+                                lobby_id,
+                                &connections,
+                                &redis,
+                            )
+                            .await;
                         }
                     }
                 }
                 Ok(Some(_)) => {
                     // Turn has already changed, stop timer
                     let countdown_msg = LexiWarsServerMessage::Countdown { time: 15 };
+
                     broadcast_to_player(player_id, lobby_id, &countdown_msg, &connections, &redis)
                         .await;
                     tracing::info!("Turn changed, stopping timer for player {}", player_id);
@@ -669,6 +655,14 @@ fn start_turn_timer(
                         tracing::error!("Failed to eliminate player: {}", e);
                         return;
                     }
+
+                    // Add eliminated player as spectator so they can continue watching
+                    if let Err(e) = add_spectator(lobby_id, player_id, redis.clone()).await {
+                        tracing::error!("Failed to add eliminated player as spectator: {}", e);
+                    }
+                    let spectator_msg = LexiWarsServerMessage::Spectator;
+                    broadcast_to_player(player_id, lobby_id, &spectator_msg, &connections, &redis)
+                        .await;
 
                     // Remove from current players (don't touch connected players)
                     if let Err(e) = remove_current_player(lobby_id, player_id, redis.clone()).await
@@ -745,7 +739,7 @@ fn start_turn_timer(
                                         current_turn: next_player.clone(),
                                         countdown: 15,
                                     };
-                                    broadcast_to_lobby(
+                                    broadcast_to_lobby_and_spectators(
                                         &next_turn_msg,
                                         &players,
                                         lobby_id,
@@ -800,13 +794,14 @@ pub fn start_auto_start_timer(
                     }
                 };
 
-            let lobby_players = match get_lobby_players(lobby_id, None, redis.clone()).await {
-                Ok(players) => players,
-                Err(e) => {
-                    tracing::error!("Failed to get lobby players: {}", e);
-                    return;
-                }
-            };
+            let lobby_players =
+                match get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await {
+                    Ok(players) => players,
+                    Err(e) => {
+                        tracing::error!("Failed to get lobby players: {}", e);
+                        return;
+                    }
+                };
 
             let connected_count = connected_player_ids.len();
             let total_players = lobby_players.len();
@@ -921,11 +916,18 @@ async fn start_game(
                 )
                 .await?;
 
-                // Broadcast the rule to all players
+                // Send the rule to the current player
                 let rule_msg = LexiWarsServerMessage::Rule {
                     rule: first_rule.description,
                 };
-                broadcast_to_lobby(&rule_msg, &players, lobby_id, connections, &redis).await;
+                broadcast_to_player_and_spectators(
+                    &rule_msg,
+                    first_player_id,
+                    lobby_id,
+                    connections,
+                    &redis,
+                )
+                .await;
             }
         }
 
@@ -935,7 +937,8 @@ async fn start_game(
                 current_turn: first_player.clone(),
                 countdown: 15,
             };
-            broadcast_to_lobby(&turn_msg, &players, lobby_id, connections, &redis).await;
+            broadcast_to_lobby_and_spectators(&turn_msg, &players, lobby_id, connections, &redis)
+                .await;
         }
 
         // Send game started message to all players
@@ -943,7 +946,14 @@ async fn start_game(
             time: 0,
             started: true,
         };
-        broadcast_to_lobby(&game_started_msg, &players, lobby_id, connections, &redis).await;
+        broadcast_to_lobby_and_spectators(
+            &game_started_msg,
+            &players,
+            lobby_id,
+            connections,
+            &redis,
+        )
+        .await;
 
         // Start turn timer for first player
         start_turn_timer(
@@ -1028,13 +1038,14 @@ async fn end_game(
 
     // Send game over messages
     let gameover_msg = LexiWarsServerMessage::GameOver;
-    broadcast_to_lobby(&gameover_msg, &players, lobby_id, connections, &redis).await;
+    broadcast_to_lobby_and_spectators(&gameover_msg, &players, lobby_id, connections, &redis).await;
 
     // Broadcast final standing
     let final_standing_msg = LexiWarsServerMessage::FinalStanding {
         standing: final_standings.iter().cloned().collect(),
     };
-    broadcast_to_lobby(&final_standing_msg, &players, lobby_id, connections, &redis).await;
+    broadcast_to_lobby_and_spectators(&final_standing_msg, &players, lobby_id, connections, &redis)
+        .await;
 
     if let Some(tg_msg_id) = lobby_info.tg_msg_id {
         tokio::spawn(async move {

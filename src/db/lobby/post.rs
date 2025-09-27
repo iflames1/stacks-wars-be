@@ -11,7 +11,7 @@ use crate::{
     errors::AppError,
     http::bot::{self, BotNewLobbyPayload},
     models::{
-        game::{LobbyInfo, LobbyPoolInput, LobbyState, Player},
+        game::{LobbyInfo, LobbyPoolInput, LobbyState, Player, PlayerState},
         redis::{KeyPart, RedisKey},
     },
     state::RedisClient,
@@ -38,7 +38,7 @@ pub async fn create_lobby(
     })?;
 
     // Create player with minimal data
-    let lobby_player = Player::new(creator_user.id, Some(tx_id.clone()));
+    let lobby_player = Player::new(creator_user.id, Some(tx_id.clone()), PlayerState::Joined);
     let creator_last_ping = lobby_player.last_ping;
 
     let lobby_info = LobbyInfo {

@@ -61,7 +61,7 @@ pub enum LexiWarsServerMessage {
         started: bool,
     },
     StartFailed,
-    AlreadyStarted,
+    Spectator,
 }
 
 impl LexiWarsServerMessage {
@@ -85,7 +85,7 @@ impl LexiWarsServerMessage {
             LexiWarsServerMessage::WarsPoint { .. } => true,
             LexiWarsServerMessage::Start { started: true, .. } => true, // Game actually started
             LexiWarsServerMessage::StartFailed => true,
-            LexiWarsServerMessage::AlreadyStarted => true,
+            LexiWarsServerMessage::Spectator => true,
         }
     }
 }

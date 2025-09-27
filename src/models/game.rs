@@ -72,18 +72,11 @@ impl GameType {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Standing {
-    pub wallet_address: String,
-    pub rank: usize,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PlayerState {
-    NotReady,
-    Ready,
+    NotJoined,
+    Joined,
 }
 
 impl FromStr for PlayerState {
@@ -91,8 +84,8 @@ impl FromStr for PlayerState {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "notready" => Ok(PlayerState::NotReady),
-            "ready" => Ok(PlayerState::Ready),
+            "notjoined" | "notJoined" => Ok(PlayerState::NotJoined),
+            "joined" => Ok(PlayerState::Joined),
             other => Err(format!("Unknown PlayerState: {}", other)),
         }
     }
@@ -217,10 +210,10 @@ impl Player {
     }
 
     // Helper to create a new player with minimal data
-    pub fn new(user_id: Uuid, tx_id: Option<String>) -> Self {
+    pub fn new(user_id: Uuid, tx_id: Option<String>, state: PlayerState) -> Self {
         Player {
             id: user_id,
-            state: PlayerState::Ready,
+            state,
             rank: None,
             used_words: None,
             tx_id,
@@ -476,8 +469,8 @@ pub struct PlayerQuery {
 
 pub fn parse_player_state(param: Option<String>) -> Option<PlayerState> {
     param.and_then(|s| match s.to_lowercase().as_str() {
-        "ready" => Some(PlayerState::Ready),
-        "notready" | "not_ready" => Some(PlayerState::NotReady),
+        "joined" => Some(PlayerState::Joined),
+        "notjoined" | "notJoined" => Some(PlayerState::NotJoined),
         other => {
             tracing::warn!("Invalid player_state filter: {}", other);
             None

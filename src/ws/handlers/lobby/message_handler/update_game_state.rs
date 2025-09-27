@@ -2,7 +2,7 @@ use crate::{
     db::lobby::{
         countdown::{clear_lobby_countdown, set_lobby_countdown},
         get::{get_lobby_info, get_lobby_players},
-        patch::update_lobby_state,
+        patch::{leave_lobby, update_lobby_state},
     },
     models::{
         game::{LobbyState, Player, PlayerState},
@@ -24,6 +24,7 @@ pub async fn update_game_state(
     player: &Player,
     connections: &ConnectionInfoMap,
     redis: &RedisClient,
+    bot: &teloxide::Bot,
 ) {
     let lobby_info = match get_lobby_info(lobby_id, redis.clone()).await {
         Ok(info) => info,
@@ -59,43 +60,18 @@ pub async fn update_game_state(
         );
         let game_starting = LobbyServerMessage::LobbyState {
             state: new_state.clone(),
-            ready_players: None,
+            joined_players: None,
             started: false,
         };
         broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone()).await;
         if new_state == LobbyState::Starting {
-            // invalid block
-            //let not_ready = get_lobby_players(lobby_id, Some(PlayerState::NotReady), redis.clone())
-            //    .await
-            //    .unwrap_or_default();
-
-            //if !not_ready.is_empty() {
-            //    let msg = LobbyServerMessage::PlayersNotReady { players: not_ready };
-            //    send_to_player(player.id, lobby_id, &connections, &msg, &redis).await;
-            //    return; // don't start the game
-            //}
-
             let redis_clone = redis.clone();
             let conns_clone = connections.clone();
             let player_clone = player.clone();
+            let bot_clone = bot.clone();
             tokio::spawn(async move {
-                start_countdown(lobby_id, player_clone, redis_clone, conns_clone).await;
+                start_countdown(lobby_id, player_clone, redis_clone, conns_clone, bot_clone).await;
             });
-
-            //if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
-            //    if info.state == LobbyState::InProgress {
-            //        let game_starting = LobbyServerMessage::LobbyState {
-            //            state: LobbyState::InProgress,
-            //            ready_players: None,
-            //        };
-            //        broadcast_to_lobby(lobby_id, &game_starting, &connections, None, redis.clone())
-            //            .await;
-            //    } else {
-            //        tracing::info!(
-            //            "Game state was reverted before start, skipping LobbyState message"
-            //        );
-            //    }
-            //}
         } else {
             // If game state is not starting, clear any existing countdown
             if let Err(e) = clear_lobby_countdown(lobby_id, redis.clone()).await {
@@ -105,7 +81,13 @@ pub async fn update_game_state(
     }
 }
 
-async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionInfoMap) {
+async fn close_lobby_connections(
+    lobby_id: Uuid,
+    player_ids: &[Uuid],
+    connections: &ConnectionInfoMap,
+    redis: &RedisClient,
+    bot: &teloxide::Bot,
+) {
     let connections_guard = connections.lock().await;
 
     let mut target_connections = Vec::new();
@@ -116,6 +98,15 @@ async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionIn
     }
 
     drop(connections_guard);
+
+    let idle_players =
+        match get_lobby_players(lobby_id, Some(PlayerState::NotJoined), redis.clone()).await {
+            Ok(players) => players,
+            Err(e) => {
+                tracing::error!("Failed to get idle players for cleanup: {}", e);
+                vec![]
+            }
+        };
 
     for (player_id, connection_info) in target_connections {
         {
@@ -133,6 +124,24 @@ async fn close_lobby_connections(player_ids: &[Uuid], connections: &ConnectionIn
             let _ = sender.send(Message::Close(Some(close_frame))).await;
         }
     }
+
+    // Remove all idle players from the lobby when game starts
+    for idle_player in idle_players {
+        if let Err(e) = leave_lobby(lobby_id, idle_player.id, redis.clone(), bot.clone()).await {
+            tracing::error!(
+                "Failed to remove idle player {} from lobby {}: {}",
+                idle_player.id,
+                lobby_id,
+                e
+            );
+        } else {
+            tracing::info!(
+                "Removed idle player {} from lobby {} (game starting)",
+                idle_player.id,
+                lobby_id
+            );
+        }
+    }
 }
 
 async fn start_countdown(
@@ -140,6 +149,7 @@ async fn start_countdown(
     player: Player,
     redis: RedisClient,
     connections: ConnectionInfoMap,
+    bot: teloxide::Bot,
 ) {
     // Initialize countdown state in Redis
     if let Err(e) = set_lobby_countdown(lobby_id, 15, redis.clone()).await {
@@ -166,7 +176,7 @@ async fn start_countdown(
 
                     let msg = LobbyServerMessage::LobbyState {
                         state: info.state,
-                        ready_players: None,
+                        joined_players: None,
                         started: false,
                     };
                     broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
@@ -195,8 +205,8 @@ async fn start_countdown(
     // Final state confirmation
     if let Ok(info) = get_lobby_info(lobby_id, redis.clone()).await {
         if info.state == LobbyState::Starting {
-            let ready_players =
-                match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
+            let joined_players =
+                match get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await {
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                     Err(e) => {
                         tracing::error!("❌ Failed to get ready players: {}", e);
@@ -212,17 +222,24 @@ async fn start_countdown(
                     }
                 };
 
-            let players = match get_lobby_players(lobby_id, None, redis.clone()).await {
-                Ok(players) => players,
-                Err(e) => {
-                    tracing::error!("❌ Failed to get lobby players: {}", e);
-                    send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
+            let players =
+                match get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await {
+                    Ok(players) => players,
+                    Err(e) => {
+                        tracing::error!("❌ Failed to get lobby players: {}", e);
+                        send_error_to_player(
+                            player.id,
+                            lobby_id,
+                            e.to_string(),
+                            &connections,
+                            &redis,
+                        )
                         .await;
-                    vec![]
-                }
-            };
+                        vec![]
+                    }
+                };
 
-            tracing::info!("Game started with {} ready players", ready_players.len());
+            tracing::info!("Game started with {} ready players", joined_players.len());
 
             // Update lobby state to InProgress after countdown completes
             if let Err(e) =
@@ -236,7 +253,7 @@ async fn start_countdown(
 
             let msg = LobbyServerMessage::LobbyState {
                 state: LobbyState::InProgress,
-                ready_players: Some(ready_players.clone()),
+                joined_players: Some(joined_players.clone()),
                 started: false,
             };
             broadcast_to_lobby(lobby_id, &msg, &connections, None, redis.clone()).await;
@@ -246,7 +263,7 @@ async fn start_countdown(
                 tracing::error!("Failed to clear countdown for lobby {}: {}", lobby_id, e);
             }
 
-            if ready_players.len() > 1 {
+            if joined_players.len() > 1 {
                 // Get all player IDs from the lobby for disconnection
                 let all_player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
@@ -256,7 +273,8 @@ async fn start_countdown(
                 }
 
                 // Close WebSocket connections with proper close frame
-                close_lobby_connections(&all_player_ids, &connections).await;
+                close_lobby_connections(lobby_id, &all_player_ids, &connections, &redis, &bot)
+                    .await;
             }
         }
     }

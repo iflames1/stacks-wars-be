@@ -7,7 +7,10 @@ use crate::{
         },
         user::patch::decrease_wars_point,
     },
-    models::{game::Player, lobby::LobbyServerMessage},
+    models::{
+        game::{Player, PlayerState},
+        lobby::LobbyServerMessage,
+    },
     state::{ChatConnectionInfoMap, ConnectionInfoMap, RedisClient},
     ws::handlers::lobby::message_handler::{
         broadcast_to_lobby,
@@ -27,7 +30,9 @@ pub async fn leave_lobby(
     if let Err(e) = patch::leave_lobby(lobby_id, player.id, redis.clone(), bot).await {
         tracing::error!("Failed to leave lobby: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
-    } else if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+    } else if let Ok(players) =
+        get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
+    {
         tracing::info!("Player {} left lobby {}", player.id, lobby_id);
 
         // Remove join request when leaving

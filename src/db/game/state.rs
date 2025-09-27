@@ -302,6 +302,7 @@ pub async fn clear_lobby_game_state(lobby_id: Uuid, redis: RedisClient) -> Resul
         RedisKey::lobby_current_rule(KeyPart::Id(lobby_id)),
         RedisKey::lobby_used_words(KeyPart::Id(lobby_id)),
         RedisKey::lobby_current_players(KeyPart::Id(lobby_id)),
+        RedisKey::lobby_spectators(KeyPart::Id(lobby_id)),
     ];
 
     let _: () = conn.del(&keys).await.map_err(AppError::RedisCommandError)?;
