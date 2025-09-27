@@ -19,21 +19,21 @@ pub struct JoinRequest {
     pub state: JoinState,
 }
 
-#[derive(Serialize)]
-pub struct PaginatedResponse<T> {
-    pub data: Vec<T>,
-    pub pagination: PaginationMeta,
-}
+//#[derive(Serialize)]
+//pub struct PaginatedResponse<T> {
+//    pub data: Vec<T>,
+//    pub pagination: PaginationMeta,
+//}
 
-#[derive(Serialize)]
-pub struct PaginationMeta {
-    pub page: u32,
-    pub limit: u32,
-    pub total_count: u32,
-    pub total_pages: u32,
-    pub has_next: bool,
-    pub has_previous: bool,
-}
+//#[derive(Serialize)]
+//pub struct PaginationMeta {
+//    pub page: u32,
+//    pub limit: u32,
+//    pub total_count: u32,
+//    pub total_pages: u32,
+//    pub has_next: bool,
+//    pub has_previous: bool,
+//}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]

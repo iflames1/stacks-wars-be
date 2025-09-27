@@ -72,13 +72,6 @@ impl GameType {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Standing {
-    pub wallet_address: String,
-    pub rank: usize,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum PlayerState {
