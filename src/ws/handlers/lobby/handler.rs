@@ -46,7 +46,7 @@ pub async fn lobby_ws_handler(
     let chat_connections = state.chat_connections.clone();
     let bot = state.bot.clone();
 
-    let players = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone())
+    let players = get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 
@@ -73,7 +73,7 @@ pub async fn lobby_ws_handler(
         lobby_id,
         player_id,
         None,
-        PlayerState::NotReady,
+        PlayerState::NotJoined,
         redis.clone(),
     )
     .await
@@ -84,7 +84,7 @@ pub async fn lobby_ws_handler(
 
     let idle_player = Player {
         id: user.id,
-        state: PlayerState::NotReady,
+        state: PlayerState::NotJoined,
         rank: None,
         used_words: None,
         tx_id: None,
@@ -144,8 +144,8 @@ async fn handle_lobby_socket(
             }
 
             // Always broadcast the current game state
-            let ready_players =
-                match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
+            let joined_players =
+                match get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await {
                     Ok(players) => players.into_iter().map(|p| p.id).collect::<Vec<_>>(),
                     Err(e) => {
                         tracing::error!("❌ Failed to get ready players: {}", e);
@@ -172,7 +172,7 @@ async fn handle_lobby_socket(
 
             let game_state_msg = LobbyServerMessage::LobbyState {
                 state: lobby_info.state.clone(),
-                ready_players: Some(ready_players),
+                joined_players: Some(joined_players),
                 started,
             };
 
@@ -317,7 +317,7 @@ async fn handle_lobby_socket(
     store_connection_and_send_queued_messages(player.id, lobby_id, sender, &connections, &redis)
         .await;
 
-    if let Ok(players) = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    if let Ok(players) = get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
     {
         let join_msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(
@@ -345,8 +345,8 @@ async fn handle_lobby_socket(
 
     match get_lobby_player(lobby_id, player.id, redis.clone()).await {
         Ok(current_player) => {
-            // Only remove player from lobby if they are still NotReady (idle)
-            if current_player.state == PlayerState::NotReady {
+            // Only remove player from lobby if they are still NotJoined (idle)
+            if current_player.state == PlayerState::NotJoined {
                 if let Err(e) = leave_lobby(lobby_id, player.id, redis.clone(), bot.clone()).await {
                     tracing::error!("Failed to remove idle player from lobby: {}", e);
                 } else {
@@ -354,7 +354,7 @@ async fn handle_lobby_socket(
                 }
             } else {
                 tracing::info!(
-                    "Player {} has changed to Ready state, not removing from lobby on disconnect",
+                    "Player {} has changed to Joined state, not removing from lobby on disconnect",
                     player.id
                 );
             }
@@ -364,7 +364,7 @@ async fn handle_lobby_socket(
         }
     }
 
-    if let Ok(players) = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+    if let Ok(players) = get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
     {
         let msg = LobbyServerMessage::PlayerUpdated { players };
         handler::broadcast_to_lobby(lobby_id, &msg, &connections, Some(&chat_connections), redis)

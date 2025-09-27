@@ -55,7 +55,7 @@ pub async fn join_lobby(
         if let Ok(existing_player) = Player::from_redis_hash(&player_map) {
             existing_player_state = Some(existing_player.state.clone());
 
-            if existing_player.state == PlayerState::Ready {
+            if existing_player.state == PlayerState::Joined {
                 return Err(AppError::BadRequest("User already in lobby".into()));
             }
         }
@@ -94,9 +94,9 @@ pub async fn join_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let should_increment_participants = player_state == PlayerState::Ready
+    let should_increment_participants = player_state == PlayerState::Joined
         && (existing_player_state.is_none()
-            || existing_player_state == Some(PlayerState::NotReady));
+            || existing_player_state == Some(PlayerState::NotJoined));
 
     if should_increment_participants {
         let _: () = conn
@@ -216,7 +216,7 @@ pub async fn leave_lobby(
         .map_err(AppError::RedisCommandError)?;
 
     let was_ready = if let Ok(player) = Player::from_redis_hash(&player_map) {
-        player.state == PlayerState::Ready
+        player.state == PlayerState::Joined
     } else {
         false
     };

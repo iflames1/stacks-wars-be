@@ -107,7 +107,7 @@ async fn notify_chat_about_lobby_changes(
 ) {
     // Get current lobby players
     if let Ok(lobby_players) =
-        get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+        get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
     {
         let lobby_player_ids: std::collections::HashSet<Uuid> =
             lobby_players.iter().map(|p| p.id).collect();
@@ -318,8 +318,15 @@ pub async fn handle_incoming_messages(
                                 .await
                             }
                             LobbyClientMessage::UpdateLobbyState { new_state } => {
-                                update_game_state(new_state, lobby_id, player, connections, &redis, &bot)
-                                    .await
+                                update_game_state(
+                                    new_state,
+                                    lobby_id,
+                                    player,
+                                    connections,
+                                    &redis,
+                                    &bot,
+                                )
+                                .await
                             }
                         }
                     } else {

@@ -234,7 +234,7 @@ pub async fn join_lobby_handler(
         lobby_id,
         user_id,
         payload.tx_id,
-        PlayerState::Ready,
+        PlayerState::Joined,
         state.redis.clone(),
     )
     .await

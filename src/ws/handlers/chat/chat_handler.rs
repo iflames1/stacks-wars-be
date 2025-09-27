@@ -64,7 +64,7 @@ pub async fn chat_handler(
 
     let player = Player {
         id: user.id,
-        state: PlayerState::NotReady,
+        state: PlayerState::NotJoined,
         rank: None,
         used_words: None,
         tx_id: None,
@@ -99,7 +99,7 @@ async fn handle_chat_socket(
 
     // Check if player is in the lobby and send permission status
     let is_lobby_member =
-        match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
+        match get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await {
             Ok(players) => players.iter().any(|p| p.id == player.id),
             Err(e) => {
                 tracing::error!("Failed to check lobby membership: {}", e);

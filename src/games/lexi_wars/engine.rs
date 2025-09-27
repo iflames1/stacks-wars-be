@@ -807,7 +807,7 @@ pub fn start_auto_start_timer(
                 };
 
             let lobby_players =
-                match get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await {
+                match get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await {
                     Ok(players) => players,
                     Err(e) => {
                         tracing::error!("Failed to get lobby players: {}", e);

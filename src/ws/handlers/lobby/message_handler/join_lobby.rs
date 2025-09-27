@@ -28,7 +28,7 @@ pub async fn join_lobby(
                     lobby_id,
                     player.id,
                     tx_id,
-                    PlayerState::Ready,
+                    PlayerState::Joined,
                     redis.clone(),
                 )
                 .await
@@ -37,7 +37,7 @@ pub async fn join_lobby(
                     send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis)
                         .await;
                 } else if let Ok(players) =
-                    get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+                    get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
                 {
                     tracing::info!("{} joined lobby {} successfully", player.id, lobby_id);
                     let msg = LobbyServerMessage::PlayerUpdated { players };

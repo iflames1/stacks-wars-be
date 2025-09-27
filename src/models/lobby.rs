@@ -103,7 +103,7 @@ pub enum LobbyServerMessage {
     #[serde(rename_all = "camelCase")]
     LobbyState {
         state: LobbyState,
-        ready_players: Option<Vec<Uuid>>,
+        joined_players: Option<Vec<Uuid>>,
         started: bool,
     },
 
@@ -111,7 +111,7 @@ pub enum LobbyServerMessage {
     PendingPlayers {
         pending_players: Vec<PendingJoin>,
     },
-    PlayersNotReady {
+    PlayersNotJoined {
         players: Vec<Player>,
     },
     Allowed,
@@ -150,7 +150,7 @@ impl LobbyServerMessage {
             LobbyServerMessage::Error { .. } => true,
             LobbyServerMessage::Allowed { .. } => true,
             LobbyServerMessage::LobbyState { .. } => true,
-            LobbyServerMessage::PlayersNotReady { .. } => true,
+            LobbyServerMessage::PlayersNotJoined { .. } => true,
             LobbyServerMessage::PlayerKicked { .. } => true,
             LobbyServerMessage::Rejected { .. } => true,
             LobbyServerMessage::PendingPlayers { .. } => true,

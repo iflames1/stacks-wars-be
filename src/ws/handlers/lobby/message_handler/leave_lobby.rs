@@ -31,7 +31,7 @@ pub async fn leave_lobby(
         tracing::error!("Failed to leave lobby: {}", e);
         send_error_to_player(player.id, lobby_id, e.to_string(), &connections, &redis).await;
     } else if let Ok(players) =
-        get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+        get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
     {
         tracing::info!("Player {} left lobby {}", player.id, lobby_id);
 

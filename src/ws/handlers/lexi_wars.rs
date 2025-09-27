@@ -69,7 +69,7 @@ pub async fn lexi_wars_handler(
 
                 // Get lobby data for final standing
                 if let Ok(players) =
-                    get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+                    get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
                 {
                     // Create final standing from players (they should have ranks)
                     let mut players_with_ranks: Vec<_> =
@@ -166,7 +166,7 @@ pub async fn lexi_wars_handler(
         }
     }
 
-    let players = get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone())
+    let players = get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone())
         .await
         .map_err(|e| e.to_response())?;
 

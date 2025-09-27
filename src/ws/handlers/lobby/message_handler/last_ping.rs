@@ -31,7 +31,7 @@ pub async fn last_ping(
     match update_player_last_ping(lobby_id, player.id, ts, is_creator, redis.clone()).await {
         Ok(()) => {
             if let Ok(players) =
-                get_lobby_players(lobby_id, Some(PlayerState::Ready), redis.clone()).await
+                get_lobby_players(lobby_id, Some(PlayerState::Joined), redis.clone()).await
             {
                 let msg = LobbyServerMessage::PlayerUpdated { players };
                 broadcast_to_lobby(lobby_id, &msg, connections, None, redis.clone()).await;

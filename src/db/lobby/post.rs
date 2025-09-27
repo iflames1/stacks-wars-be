@@ -38,7 +38,7 @@ pub async fn create_lobby(
     })?;
 
     // Create player with minimal data
-    let lobby_player = Player::new(creator_user.id, Some(tx_id.clone()), PlayerState::Ready);
+    let lobby_player = Player::new(creator_user.id, Some(tx_id.clone()), PlayerState::Joined);
     let creator_last_ping = lobby_player.last_ping;
 
     let lobby_info = LobbyInfo {

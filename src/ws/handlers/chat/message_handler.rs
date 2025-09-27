@@ -40,7 +40,7 @@ pub async fn handle_incoming_chat_messages(
                             ChatClientMessage::Chat { text } => {
                                 let lobby_players = match get_lobby_players(
                                     lobby_id,
-                                    Some(PlayerState::Ready),
+                                    Some(PlayerState::Joined),
                                     redis.clone(),
                                 )
                                 .await
