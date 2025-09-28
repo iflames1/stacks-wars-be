@@ -14,9 +14,13 @@ use bb8_redis::RedisConnectionManager;
 use middleware::{cors_layer, create_global_rate_limiter, rate_limit_middleware};
 use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap};
 use std::{net::SocketAddr, time::Duration};
-use teloxide::Bot;
+use teloxide::{Bot, prelude::*};
+use tokio::signal;
 
-use crate::games::init::initialize_games;
+use crate::{
+    games::init::initialize_games,
+    http::bot_commands::{Command, handle_command},
+};
 
 pub async fn start_server() {
     dotenvy::dotenv().ok();
@@ -49,9 +53,16 @@ pub async fn start_server() {
     let state = AppState {
         connections,
         chat_connections,
-        redis: redis_pool,
-        bot,
+        redis: redis_pool.clone(),
+        bot: bot.clone(),
     };
+
+    // Start Telegram bot command handler
+    let bot_clone = bot.clone();
+    let redis_clone = redis_pool.clone();
+    tokio::spawn(async move {
+        start_bot_command_handler(bot_clone, redis_clone).await;
+    });
 
     // Create rate limiters
     let global_rate_limiter = create_global_rate_limiter();
@@ -74,10 +85,60 @@ pub async fn start_server() {
         .await
         .expect("Failed to bind address");
 
-    axum::serve(
+    tracing::info!("Server listening on port {}", port);
+
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await
-    .unwrap();
+    .with_graceful_shutdown(shutdown_signal());
+
+    if let Err(e) = server.await {
+        tracing::error!("Server error: {}", e);
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            tracing::info!("Ctrl+C received, shutting down");
+        },
+        _ = terminate => {
+            tracing::info!("SIGTERM received, shutting down");
+        },
+    }
+}
+
+async fn start_bot_command_handler(bot: Bot, redis: bb8::Pool<RedisConnectionManager>) {
+    tracing::info!("Starting Telegram bot command handler");
+
+    let handler = Update::filter_message()
+        .filter_command::<Command>()
+        .endpoint(move |bot: Bot, msg: Message, cmd: Command| {
+            let redis_clone = redis.clone();
+            async move { handle_command(bot, msg, cmd, redis_clone).await }
+        });
+
+    Dispatcher::builder(bot, handler)
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 }
