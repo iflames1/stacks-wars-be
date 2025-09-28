@@ -137,7 +137,7 @@ async fn start_bot_command_handler(bot: Bot, redis: bb8::Pool<RedisConnectionMan
         });
 
     Dispatcher::builder(bot, handler)
-        .default_handler(|_| async {}) // Silently ignore non-command messages
+        .default_handler(|_| async {})
         .enable_ctrlc_handler()
         .build()
         .dispatch()
