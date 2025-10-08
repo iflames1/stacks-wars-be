@@ -61,11 +61,10 @@ pub async fn join_lobby(
         }
     }
 
-    // Only validate transaction and update pool if entry amount > 0 (not sponsored)
     if let Some(addr) = &lobby.contract_address {
         let entry_amount = lobby.entry_amount.unwrap_or(0.0);
 
-        if entry_amount > 0.0 {
+        if entry_amount > 0.0 && player_state != PlayerState::NotJoined {
             let tx = tx_id.clone().ok_or_else(|| {
                 AppError::BadRequest("Missing transaction ID for paid lobby".into())
             })?;
@@ -79,7 +78,6 @@ pub async fn join_lobby(
                 .await
                 .map_err(AppError::RedisCommandError)?;
         }
-        // For sponsored lobbies (entry_amount = 0), no transaction validation or pool update needed
     }
 
     let new_player = Player::new(user_id, tx_id, player_state.clone());
