@@ -207,13 +207,13 @@ pub async fn leave_lobby(
         return Err(AppError::BadRequest("User not in lobby".into()));
     }
 
-    // Get player state before deletion to check if we need to decrement participant count
+    // Get player state before deletion to check if we need to decrement participant count and pool
     let player_map: HashMap<String, String> = conn
         .hgetall(&player_key)
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    let was_ready = if let Ok(player) = Player::from_redis_hash(&player_map) {
+    let joined = if let Ok(player) = Player::from_redis_hash(&player_map) {
         player.state == PlayerState::Joined
     } else {
         false
@@ -224,19 +224,19 @@ pub async fn leave_lobby(
         .await
         .map_err(AppError::RedisCommandError)?;
 
-    if was_ready {
+    if joined {
         let _: () = conn
             .hincr(&lobby_key, "participants", -1)
             .await
             .map_err(AppError::RedisCommandError)?;
     }
 
-    // Only update pool amount for paid lobbies (entry_amount > 0) where player actually paid
+    // Only update pool amount for paid lobbies (entry_amount > 0) where player actually paid (not idle)
     if let Some(_addr) = &info.contract_address {
         let entry_amount = info.entry_amount.unwrap_or(0.0);
 
-        if entry_amount > 0.0 {
-            // Regular paid lobby - refund player by decreasing pool
+        if entry_amount > 0.0 && joined {
+            // Regular paid lobby - refund player by decreasing pool (only if they weren't idle)
             let _: () = conn
                 .hincr(&lobby_key, "current_amount", -(entry_amount as i64))
                 .await
