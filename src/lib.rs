@@ -33,11 +33,11 @@ pub async fn start_server() {
     let bot = Bot::new(bot_token);
 
     let redis_pool = Pool::builder()
-        .max_size(100)
-        .min_idle(Some(20))
-        .connection_timeout(Duration::from_secs(5))
-        .max_lifetime(Some(Duration::from_secs(300)))
-        .idle_timeout(Some(Duration::from_secs(30)))
+        .max_size(5)
+        .min_idle(Some(1))
+        .connection_timeout(Duration::from_secs(10))
+        .max_lifetime(Some(Duration::from_secs(120)))
+        .idle_timeout(Some(Duration::from_secs(15)))
         .build(manager)
         .await
         .unwrap();
