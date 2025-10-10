@@ -47,8 +47,8 @@ pub async fn get_token_info(contract_address: String) -> Result<TokenInfo, AppEr
         AppError::BadRequest(format!("Invalid JSON response: {}", e))
     })?;
 
-    // Calculate minimum amount for $30 worth of tokens
-    let minimum_usd_value = 30.0;
+    // Calculate minimum amount for $10 worth of tokens
+    let minimum_usd_value = 10.0;
     let minimum_amount = if token_data.metrics.price_usd > 0.0 {
         let min_token_amount = minimum_usd_value / token_data.metrics.price_usd;
 
