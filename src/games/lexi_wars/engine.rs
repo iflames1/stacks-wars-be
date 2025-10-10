@@ -681,34 +681,60 @@ fn start_turn_timer(
                             }
                         };
 
+                    let connected_player_ids =
+                        match get_connected_players_ids(lobby_id, redis.clone()).await {
+                            Ok(ids) => ids,
+                            Err(e) => {
+                                tracing::error!("Failed to get connected players: {}", e);
+                                return;
+                            }
+                        };
+
+                    // Broadcast updated players count
+                    let players_count_msg = LexiWarsServerMessage::PlayersCount {
+                        connected_players: connected_player_ids.len(),
+                        remaining_players: remaining_players.len(),
+                    };
+                    if let Ok(players) = get_lobby_players(lobby_id, None, redis.clone()).await {
+                        broadcast_to_lobby_and_spectators(
+                            &players_count_msg,
+                            &players,
+                            lobby_id,
+                            &connections,
+                            &redis,
+                        )
+                        .await;
+                    }
+
                     let position = remaining_players.len() + 1;
 
                     // Get lobby info and connected players count for prize calculation
                     if let Ok(lobby_info) = get_lobby_info(lobby_id, redis.clone()).await {
-                        if let Ok(connected_players) =
-                            get_connected_players_ids(lobby_id, redis.clone()).await
-                        {
-                            let connected_players_count = connected_players.len();
+                        let connected_players_count = connected_player_ids.len();
 
-                            // Send stats to eliminated player
-                            send_rank_prize_and_wars_point(
-                                player_id,
-                                lobby_id,
-                                &lobby_info,
-                                connected_players_count,
-                                position,
-                                &connections,
-                                &redis,
-                            )
-                            .await;
-                        }
+                        // Send stats to eliminated player
+                        send_rank_prize_and_wars_point(
+                            player_id,
+                            lobby_id,
+                            &lobby_info,
+                            connected_players_count,
+                            position,
+                            &connections,
+                            &redis,
+                        )
+                        .await;
                     }
 
                     if remaining_players.len() <= 1 {
                         // Game over
-                        if let Err(e) =
-                            end_game(lobby_id, &connections, redis.clone(), telegram_bot.clone())
-                                .await
+                        if let Err(e) = end_game(
+                            lobby_id,
+                            connected_player_ids,
+                            &connections,
+                            redis.clone(),
+                            telegram_bot.clone(),
+                        )
+                        .await
                         {
                             tracing::error!("Failed to end game: {}", e);
                         }
@@ -816,8 +842,14 @@ pub fn start_auto_start_timer(
             // If all players are connected, start immediately
             if connected_count == total_players {
                 tracing::info!("All players connected, starting game early");
-                if let Err(e) =
-                    start_game(lobby_id, &connections, redis.clone(), telegram_bot.clone()).await
+                if let Err(e) = start_game(
+                    lobby_id,
+                    connected_player_ids,
+                    &connections,
+                    redis.clone(),
+                    telegram_bot.clone(),
+                )
+                .await
                 {
                     tracing::error!("Failed to start game: {}", e);
                 }
@@ -849,9 +881,14 @@ pub fn start_auto_start_timer(
                         "Sufficient players connected ({}%), starting game",
                         (connected_count * 100) / total_players
                     );
-                    if let Err(e) =
-                        start_game(lobby_id, &connections, redis.clone(), telegram_bot.clone())
-                            .await
+                    if let Err(e) = start_game(
+                        lobby_id,
+                        connected_player_ids,
+                        &connections,
+                        redis.clone(),
+                        telegram_bot.clone(),
+                    )
+                    .await
                     {
                         tracing::error!("Failed to start game: {}", e);
                     }
@@ -886,15 +923,13 @@ pub fn start_auto_start_timer(
 
 async fn start_game(
     lobby_id: Uuid,
+    connected_player_ids: Vec<Uuid>,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
     telegram_bot: teloxide::Bot,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Set game as started
     set_game_started(lobby_id, true, redis.clone()).await?;
-
-    // Get connected players (only those who are actually connected)
-    let connected_player_ids = get_connected_players_ids(lobby_id, redis.clone()).await?;
 
     // Create current players - initially same as connected players
     create_current_players(lobby_id, connected_player_ids.clone(), redis.clone()).await?;
@@ -955,6 +990,20 @@ async fn start_game(
         )
         .await;
 
+        // Broadcast initial players count
+        let players_count_msg = LexiWarsServerMessage::PlayersCount {
+            connected_players: connected_player_ids.len(),
+            remaining_players: connected_player_ids.len(),
+        };
+        broadcast_to_lobby_and_spectators(
+            &players_count_msg,
+            &players,
+            lobby_id,
+            connections,
+            &redis,
+        )
+        .await;
+
         // Start turn timer for first player
         start_turn_timer(
             first_player_id,
@@ -976,6 +1025,7 @@ async fn start_game(
 
 async fn end_game(
     lobby_id: Uuid,
+    connected_player_ids: Vec<Uuid>,
     connections: &ConnectionInfoMap,
     redis: RedisClient,
     telegram_bot: Bot,
@@ -986,8 +1036,7 @@ async fn end_game(
     // Get all players for final standing and broadcast
     let players = get_lobby_players(lobby_id, None, redis.clone()).await?;
     let lobby_info = get_lobby_info(lobby_id, redis.clone()).await?;
-    let connected_players = get_connected_players_ids(lobby_id, redis.clone()).await?;
-    let connected_players_count = connected_players.len();
+    let connected_players_count = connected_player_ids.len();
 
     // Handle remaining player(s) - give them final ranking
     if let Ok(remaining_players) = get_current_players_ids(lobby_id, redis.clone()).await {

@@ -62,6 +62,11 @@ pub enum LexiWarsServerMessage {
     },
     StartFailed,
     Spectator,
+    #[serde(rename_all = "camelCase")]
+    PlayersCount {
+        connected_players: usize,
+        remaining_players: usize,
+    },
 }
 
 impl LexiWarsServerMessage {
@@ -86,6 +91,7 @@ impl LexiWarsServerMessage {
             LexiWarsServerMessage::Start { started: true, .. } => true, // Game actually started
             LexiWarsServerMessage::StartFailed => true,
             LexiWarsServerMessage::Spectator => true,
+            LexiWarsServerMessage::PlayersCount { .. } => true,
         }
     }
 }
