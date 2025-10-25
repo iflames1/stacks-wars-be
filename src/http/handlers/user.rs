@@ -11,7 +11,7 @@ use crate::{
     db::user::{
         get::get_user_by_id,
         patch::{update_display_name, update_username},
-        post::create_user,
+        post::create_user_v2,
     },
     errors::AppError,
     models::User,
@@ -27,7 +27,7 @@ pub async fn create_user_handler(
     State(state): State<AppState>,
     Json(payload): Json<CreateUserPayload>,
 ) -> Result<Json<String>, (StatusCode, String)> {
-    match create_user(payload.wallet_address.clone(), state.redis.clone()).await {
+    match create_user_v2(payload.wallet_address.clone(), state.postgres.clone()).await {
         Ok(token) => {
             tracing::info!(
                 "User created with wallet address: {}",

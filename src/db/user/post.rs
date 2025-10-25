@@ -1,19 +1,21 @@
 use std::collections::HashMap;
 
 use crate::{
-    auth::generate_jwt,
-    db::user::get::_get_all_users,
+    auth::{generate_jwt, generate_jwt_v2},
+    db::{season::get::get_current_season, user::get::_get_all_users},
     errors::AppError,
     models::{
         User,
         redis::{KeyPart, RedisKey},
+        user::{UserV2, UserWarsPoints},
     },
     state::RedisClient,
 };
 use redis::AsyncCommands;
+use sqlx::PgPool;
 use uuid::Uuid;
 
-pub async fn create_user(wallet_address: String, redis: RedisClient) -> Result<String, AppError> {
+pub async fn _create_user(wallet_address: String, redis: RedisClient) -> Result<String, AppError> {
     let mut conn = redis.get().await.map_err(|e| match e {
         bb8::RunError::User(err) => AppError::RedisCommandError(err),
         bb8::RunError::TimedOut => AppError::RedisPoolError("Redis connection timed out".into()),
@@ -148,4 +150,129 @@ pub async fn _hydrate_users_points(redis: RedisClient) -> Result<(), AppError> {
     );
 
     Ok(())
+}
+
+pub async fn create_user_v2(wallet_address: String, postgres: PgPool) -> Result<String, AppError> {
+    // Check if user already exists
+    let existing_user = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<String>,
+            f64,
+            chrono::NaiveDateTime,
+            chrono::NaiveDateTime,
+        ),
+    >(
+        "SELECT id, wallet_address, username, display_name, trust_rating, created_at, updated_at
+        FROM users
+        WHERE wallet_address = $1",
+    )
+    .bind(&wallet_address)
+    .fetch_optional(&postgres)
+    .await
+    .map_err(|e| AppError::DatabaseError(format!("Failed to query user: {}", e)))?;
+
+    if let Some((
+        id,
+        wallet_address,
+        username,
+        display_name,
+        trust_rating,
+        created_at,
+        updated_at,
+    )) = existing_user
+    {
+        // Get current season ID
+        let current_season_id: i32 = get_current_season(postgres.clone()).await?;
+
+        let wars_points = sqlx::query_as::<_, UserWarsPoints>(
+            "SELECT id, user_id, season_id, points, rank_badge, created_at, updated_at
+                    FROM user_wars_points
+                    WHERE user_id = $1 AND season_id = $2",
+        )
+        .bind(id)
+        .bind(current_season_id)
+        .fetch_one(&postgres)
+        .await
+        .map_err(|e| AppError::DatabaseError(format!("Failed to fetch user wars points: {}", e)))?;
+
+        let user = UserV2 {
+            id,
+            wallet_address,
+            username,
+            display_name,
+            trust_rating,
+            created_at,
+            updated_at,
+            wars_point: wars_points,
+        };
+
+        let token = generate_jwt_v2(&user)?;
+        return Ok(token);
+    }
+
+    // Create new user
+    let user_id = Uuid::new_v4();
+
+    // Start a transaction
+    let mut tx = postgres
+        .begin()
+        .await
+        .map_err(|e| AppError::DatabaseError(format!("Failed to start transaction: {}", e)))?;
+
+    // Insert user
+    sqlx::query(
+        "INSERT INTO users (id, wallet_address, trust_rating)
+            VALUES ($1, $2, $3)",
+    )
+    .bind(user_id)
+    .bind(&wallet_address)
+    .bind(10.0) // Default trust rating
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| AppError::DatabaseError(format!("Failed to create user: {}", e)))?;
+
+    // Insert user_wars_points entry for current season
+    let wars_point_id = Uuid::new_v4();
+
+    // Get current season ID
+    let current_season_id: i32 = get_current_season(postgres.clone()).await?;
+
+    let wars_points = sqlx::query_as::<_, UserWarsPoints>(
+        "INSERT INTO user_wars_points (id, user_id, season_id, points)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, user_id, season_id, points, rank_badge, created_at, updated_at",
+    )
+    .bind(wars_point_id)
+    .bind(user_id)
+    .bind(current_season_id)
+    .bind(0.0) // Initial points
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| AppError::DatabaseError(format!("Failed to create user wars points: {}", e)))?;
+
+    // Commit transaction
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
+
+    // Fetch the created user with all details
+    let user = UserV2 {
+        id: user_id,
+        wallet_address,
+        username: None,
+        display_name: None,
+        trust_rating: 10.0,
+        created_at: chrono::Utc::now().naive_utc(),
+        updated_at: chrono::Utc::now().naive_utc(),
+        wars_point: wars_points,
+    };
+
+    let token = generate_jwt_v2(&user)?;
+    tracing::info!("Created new user: {}", user.id);
+
+    Ok(token)
 }

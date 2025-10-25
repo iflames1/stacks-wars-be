@@ -12,6 +12,7 @@ use axum::{Router, middleware as axum_middleware};
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use middleware::{cors_layer, create_global_rate_limiter, rate_limit_middleware};
+use sqlx::postgres::PgPoolOptions;
 use state::{AppState, ChatConnectionInfoMap, ConnectionInfoMap};
 use std::{net::SocketAddr, time::Duration};
 use teloxide::{Bot, prelude::*};
@@ -31,6 +32,25 @@ pub async fn start_server() {
 
     let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN must be set");
     let bot = Bot::new(bot_token);
+
+    // Initialize PostgreSQL connection pool
+    let postgres_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let postgres_pool = PgPoolOptions::new()
+        .max_connections(50)
+        .min_connections(10)
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(1800))
+        .connect(&postgres_url)
+        .await
+        .expect("Failed to create PostgreSQL pool");
+    //let postgres_pool = PgPoolOptions::new()
+    //    .max_connections(5)
+    //    .connect(&postgres_url)
+    //    .await
+    //    .expect("Failed to connect to Postgres");
+
+    tracing::info!("PostgreSQL connection pool established");
 
     let redis_pool = Pool::builder()
         .max_size(100)
@@ -54,6 +74,7 @@ pub async fn start_server() {
         connections,
         chat_connections,
         redis: redis_pool.clone(),
+        postgres: postgres_pool.clone(),
         bot: bot.clone(),
     };
 

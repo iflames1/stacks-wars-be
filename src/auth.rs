@@ -9,7 +9,10 @@ use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, deco
 
 use crate::{
     errors::AppError,
-    models::{User, user::Claims},
+    models::{
+        User,
+        user::{Claims, UserV2},
+    },
 };
 pub struct AuthClaims(pub Claims);
 
@@ -49,6 +52,23 @@ impl AuthClaims {
 }
 
 pub fn generate_jwt(user: &User) -> Result<String, AppError> {
+    let expiration = (Utc::now() + Duration::days(7)).timestamp() as usize;
+    let claims = Claims {
+        sub: user.id.to_string(),
+        wallet: user.wallet_address.clone(),
+        exp: expiration,
+    };
+
+    let secret = std::env::var("JWT_SECRET").map_err(|e| AppError::EnvError(e.to_string()))?;
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
+    .map_err(AppError::JwtError)
+}
+
+pub fn generate_jwt_v2(user: &UserV2) -> Result<String, AppError> {
     let expiration = (Utc::now() + Duration::days(7)).timestamp() as usize;
     let claims = Claims {
         sub: user.id.to_string(),

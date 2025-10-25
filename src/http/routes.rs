@@ -14,6 +14,7 @@ use crate::{
             kick_player_handler, leave_lobby_handler, update_claim_state_handler,
             update_lobby_state_handler, update_player_state_handler,
         },
+        season::add_season_handler,
         token_info::{get_testnet_token_info_handler, get_token_info_handler},
         user::{
             create_user_handler, get_user_handler, update_display_name_handler,
@@ -33,6 +34,7 @@ pub fn create_http_routes(state: AppState) -> Router {
         .route("/user", post(create_user_handler))
         .route("/game", post(create_game_handler))
         .route("/lobby", post(create_lobby_handler))
+        .route("/season", patch(add_season_handler))
         .route("/lobby/{lobby_id}/join", patch(join_lobby_handler))
         .route("/lobby/{lobby_id}/leave", patch(leave_lobby_handler))
         .route("/user/username", patch(update_username_handler))

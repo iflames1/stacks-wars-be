@@ -28,6 +28,9 @@ pub enum AppError {
     #[error("Env error: {0}")]
     EnvError(String),
 
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
     #[error("Internal server error")]
     InternalError,
 
@@ -46,6 +49,7 @@ impl AppError {
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
             AppError::EnvError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AppError::DatabaseError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             AppError::InternalError => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Unexpected server error".into(),

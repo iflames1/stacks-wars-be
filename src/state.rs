@@ -2,6 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use futures::stream::SplitSink;
+use sqlx::PgPool;
 use std::{collections::HashMap, sync::Arc};
 use teloxide::Bot;
 use tokio::sync::Mutex;
@@ -12,6 +13,7 @@ pub struct AppState {
     pub connections: ConnectionInfoMap,
     pub chat_connections: ChatConnectionInfoMap,
     pub redis: RedisClient,
+    pub postgres: PgPool,
     pub bot: Bot,
 }
 
